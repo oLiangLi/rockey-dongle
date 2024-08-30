@@ -242,6 +242,9 @@ rLANG_DECLARE_PRIVATE_CONTEXT(rlCryptoChaCha20Ctx, 144);
 rLANG_DECLARE_PRIVATE_CONTEXT(rlCryptoPoly1305Ctx, 80);
 rLANG_DECLARE_PRIVATE_CONTEXT(rlCryptoChaChaPolyCtx, 256);
 
+/* for dongle */
+rLANGEXPORT void rLANGAPI rlCryptoEd25519PubkeyEx(uint8_t out_public_key[32], const uint8_t az_[32]);
+
 /* Definite output, only related to seedBytes/randBytes calls  */
 rLANGEXPORT void rLANGAPI rlCryptoRandBytes(void* p, int size);
 rLANGEXPORT void rLANGAPI rlCryptoSeedBytes(const void* p, int size);

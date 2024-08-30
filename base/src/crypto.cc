@@ -5499,4 +5499,20 @@ rLANGEXPORT void rLANGAPI rlCryptoSeedBytes(const void* p, int size) {
   rlCryptoSha512CtxUpdate(&global_entropy, p, size);
 }
 
+/* for dongle */
+rLANGEXPORT void rLANGAPI rlCryptoEd25519PubkeyEx(uint8_t out_public_key[32], const uint8_t az_[32]) {
+  ge_p3 A;
+  uint8_t az[32];
+
+  memcpy(az, az_, sizeof(az));
+
+  az[0] &= 248;
+  az[31] &= 63;
+  az[31] |= 64;
+
+  ge_scalarmult_base(&A, az);
+  ge_p3_tobytes(out_public_key, &A);
+  cipher_cleanse(az, sizeof(az));
+}
+
 rLANG_DECLARE_END
