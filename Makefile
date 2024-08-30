@@ -41,9 +41,22 @@ SO_INSTALL_MODE ?= 644
 
 ##
 ##
+##
+wORLD_DEFAULT_DONGLE ?= RockeyARM
+wORLD_DONGLE ?= $(wORLD_DEFAULT_DONGLE)
+
+##
+##
+##
 dongle:
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi prepare R=1
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi install-platform R=1
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=$(wORLD_DONGLE) wORLD_CONFIG=arm-none-eabi prepare R=1
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=$(wORLD_DONGLE) wORLD_CONFIG=arm-none-eabi install-platform R=1
+
+##
+##
+##
+clean-dongle:
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=$(wORLD_DONGLE) wORLD_CONFIG=arm-none-eabi clean-all R=1
 
 ##
 ##
@@ -85,9 +98,6 @@ clean-linux:
 
 clean-windows:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=windows clean-all
-
-clean-dongle:
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi clean-all R=1
 
 typescript:
 	$(info typescript compile ... 1)

@@ -1,4 +1,9 @@
 ifeq ("$(X4C_BUILD)","native")
-install: build-all
--include $(my-dir)/*/xModule.mk
+
+ifeq ("$(X4C_BOARD)","")
+$(error select board please ....)
+endif ## X4C_BOARD ...
+
+install-platform: build-all
+-include $(my-dir)/$(X4C_BOARD)/xModule.mk
 endif ## native ...

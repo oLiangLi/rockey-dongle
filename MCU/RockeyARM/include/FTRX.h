@@ -207,5 +207,23 @@ extern WORD  sha1(BYTE * pdata ,int len, BYTE * phash);
 extern WORD  sm3(BYTE * pdata ,int len, BYTE * phash);
 //seed种子码运算
 extern WORD  seed(BYTE * pseed ,int len, BYTE * presult);
+//TDES运算，秘钥传byte数组
+extern WORD  tdes_raw(BYTE* pdata ,int len, int mode, BYTE* pkey);
+//RSA运算，私钥传值
+extern WORD  rsa_pri_raw(RSA_PRIVATE_KEY * pPri, BYTE* pIn, WORD len, BYTE* pOut, WORD* plen_Out, WORD mode);
+
+extern WORD  sm4_raw(BYTE* pdata ,int len, int mode, BYTE* pkey);
+
+extern WORD  ecc_sign_raw(ECCSM2_PRIVATE_KEY * pPri, BYTE* pIn, WORD len, BYTE* pOut, WORD* plen_Out);
+extern WORD  sm2_sign_raw(ECCSM2_PRIVATE_KEY * pPri, BYTE* pIn, WORD len, BYTE* pOut, WORD* plen_Out);
+//设置到期时间
+extern WORD  set_expiretime(DWORD Time);
+
+//sm2加密运算
+extern WORD  sm2_encrypt(ECCSM2_PUBLIC_KEY* pEPK, BYTE* pIn, WORD len, BYTE* pOut);
+//sm2解密运算(基于密钥文件)
+extern WORD  sm2_decrypt(WORD fileid, BYTE* pIn, WORD len, BYTE* pOut, WORD* plen_Out);
+//sm2解密运算(基于外部密钥)
+extern WORD  sm2_decrypt_key(ECCSM2_PRIVATE_KEY * pPri, BYTE* pIn, WORD len, BYTE* pOut, WORD* plen_Out);
 
 #endif
