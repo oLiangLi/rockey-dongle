@@ -1,6 +1,9 @@
 #include <base/base.h>
+#ifndef __EMSCRIPTEN__
+#include <RockeyARM/Dongle_API.h>
+#endif /* __EMSCRIPTEN__ */
 
-#if defined(__linux__) || defined(__CYGWIN__) || defined(_WIN32)
+#if (defined(__linux__) && defined(__amd64__))  || defined(__CYGWIN__) || defined(_WIN32)
 #define USING_OPENSSL_TESTING 1
 #endif /* _WIN32 */
 
@@ -24,10 +27,14 @@
 
 rLANG_DECLARE_MACHINE
 
-int Start(int argc, char* argv[]) {
-#if defined(USING_OPENSSL_TESTING) && USING_OPENSSL_TESTING
-  constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Hello");
+namespace {
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Foobar");
+} // namespace ...
 
+int Start(int argc, char* argv[]) {
+  rlLOGI(TAG, "Hello RockeyARM World!");
+
+#if defined(USING_OPENSSL_TESTING) && USING_OPENSSL_TESTING
   rlLOGI(
       TAG, "\n\n%s%s%s\n\n",  //@ third_party/TASSL-1.1.1/LICENSE
       "This product includes software developed by the OpenSSL Project\n",
@@ -39,6 +46,11 @@ int Start(int argc, char* argv[]) {
 
   OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
 #endif /* defined(USING_OPENSSL_TESTING) && USING_OPENSSL_TESTING */
+
+#ifndef __EMSCRIPTEN__
+  int count = 0, result = Dongle_Enum(NULL, &count);
+  rlLOGI(TAG, "Dongle_Enum return %d => %d", result, count);
+#endif /* __EMSCRIPTEN__ */
 
   return 0;
 }

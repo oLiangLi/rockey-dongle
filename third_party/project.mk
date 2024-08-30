@@ -37,6 +37,13 @@ ifeq ("$(X4C_ARCH)-$(X4C_BUILD)","amd64-linux")
 ##
 ##
 ##
+X4C_COMMON_CFLAGS   += -I$(wORLD_ROOT)/third_party/RockeyARM/amd64-linux/include
+X4C_COMMON_CXXFLAGS += -I$(wORLD_ROOT)/third_party/RockeyARM/amd64-linux/include
+X4C_COMMON_LDFLAGS  += -L$(wORLD_ROOT)/third_party/RockeyARM/amd64-linux/lib -lRockeyARM
+
+##
+##
+##
 X4C_COMMON_CFLAGS   += -I$(THIRD_PARTY_INSTALL_PREFIX)/include
 X4C_COMMON_CXXFLAGS += -I$(THIRD_PARTY_INSTALL_PREFIX)/include
 X4C_COMMON_LDFLAGS  += -L$(THIRD_PARTY_INSTALL_PREFIX)/lib -lssl -lcrypto
@@ -61,10 +68,24 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install -i
 	touch $@
 
-endif ## linux build Tassl ...
+endif ## linux build Tassl && RockeyARM ...
+
+ifeq ("$(X4C_ARCH)-$(X4C_BUILD)","aarch64-linux")
+X4C_COMMON_CFLAGS   += -I$(wORLD_ROOT)/third_party/RockeyARM/aarch64-linux/include
+X4C_COMMON_CXXFLAGS += -I$(wORLD_ROOT)/third_party/RockeyARM/aarch64-linux/include
+X4C_COMMON_LDFLAGS  += -L$(wORLD_ROOT)/third_party/RockeyARM/aarch64-linux/lib -lRockeyARM
+
+endif ## aarch64-linux RockeyARM ...
 
 
 ifeq ("$(X4C_ARCH)-$(X4C_BUILD)","amd64-windows")
+
+##
+##
+##
+X4C_COMMON_CFLAGS   += -I$(wORLD_ROOT)/third_party/RockeyARM/amd64-windows/include
+X4C_COMMON_CXXFLAGS += -I$(wORLD_ROOT)/third_party/RockeyARM/amd64-windows/include
+X4C_COMMON_LDFLAGS  += $(wORLD_ROOT)/third_party/RockeyARM/amd64-windows/lib/Dongle_s.lib /NODEFAULTLIB:LIBCMT.LIB
 
 ##
 ##
@@ -98,4 +119,4 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	install -m $(SO_INSTALL_MODE) $(THIRD_PARTY_INSTALL_PREFIX)/bin/libssl-1_1-x64.dll "$(THIRD_PARTY_INSTALL_BINARY)"
 	touch $@
 
-endif ## windows build Tassl ...
+endif ## windows build Tassl && RockeyARM ...
