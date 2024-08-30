@@ -1,0 +1,30 @@
+## 禁止任何 Linux 隐藏文件提交到代码库中
+.*
+
+## sqlite3 数据库文件
+*.db
+
+##
+node_modules
+
+## 编译生成的二进制 WebAssembly 文件 ...
+/Web/Assembly
+
+## 日志和备份
+*.log
+*.bak
+*~
+
+## ROS 编译会生成这些目录
+build
+install
+log
+
+## vs 工程文件和配置
+/CppProperties.json
+/CMakeSettings.json
+
+## 输出目录等
+/dist
+/out
+

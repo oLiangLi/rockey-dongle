@@ -1,0 +1,25 @@
+##
+##
+##
+$(call x4c_register_filter,x4c_filter_grammar_lalr1 , filter_grammar_lalr1(*.yc,*.ymc,*.jy) )
+
+X_BISON ?= bison
+X4C_GRAMMAR_SKELETON_YC  ?= $(X4C_BUILD_SYSTEM)/tools/script/grammar.yc
+
+define x4c_filter_grammar_lalr1
+	$(foreach __a_file,$(filter %.jy,$(x4c_MODULE_ALL_SOURCE)),$(call x4c_filter_grammar_lalr1_do,$(__a_file),$(X4C_GRAMMAR_SKELETON_YC),--jy))
+	$(foreach __a_file,$(filter %.yc,$(x4c_MODULE_ALL_SOURCE)),$(call x4c_filter_grammar_lalr1_do,$(__a_file),$(X4C_GRAMMAR_SKELETON_YC),--yc))
+	$(foreach __a_file,$(filter %.ymc,$(x4c_MODULE_ALL_SOURCE)),$(call x4c_filter_grammar_lalr1_do,$(__a_file),$(X4C_GRAMMAR_SKELETON_YC),--ymc))
+endef
+
+define x4c_filter_grammar_lalr1_do
+	$(eval $(call x4c_filter_grammar_lalr1_generate_file,$1,$1.INL,$2,$3))
+endef
+
+define x4c_filter_grammar_lalr1_generate_file
+$(LOCAL_MODULE)-prepare : $2
+$2: $1
+	$$(info GRAMMAR $$<)
+	$$(hide) $(X_BISON) -S $3 -o $$@ $$<
+	$$(hide) $(X_NODE) $(X4C_BUILD_SYSTEM)/tools/script/grammar.actions.cjs $4 $$@
+endef

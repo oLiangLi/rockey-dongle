@@ -1,0 +1,1 @@
+-include $(my-dir)/*/xModule.mk

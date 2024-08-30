@@ -1,0 +1,49 @@
+%token TK_CHAR TK_CCL TK_NUMBER TK_EXT
+
+%%
+
+re:
+	series							{ /**@ AC_RE_SERIES  */ }
+	|
+	re '|' series					{ /**@ AC_RE2_SERIES */ }
+	;
+
+series:
+	singleton						{ /**@ AC_SERIES_SINGLETON */  }
+	|
+	series singleton				{ /**@ AC_SERIES2_SINGLETON */ }
+	;
+
+singleton:
+	'(' re ')'						{ /**@ AC_SINGLETON_RE      */ }
+	|
+	singleton '*'					{ /**@ AC_SINGLETON_MKCLOS  */ }
+	|
+	singleton '+'					{ /**@ AC_SINGLETON_MKPOSCL */ }
+	|
+	singleton '?'					{ /**@ AC_SINGLETON_MKOPT   */ }
+	|
+	singleton '{' TK_NUMBER '}'						{ /**@ AC_SINGLETON_MKREP1   */ }
+	|
+	singleton '{' TK_NUMBER ',' '}'					{ /**@ AC_SINGLETON_MKREP1X  */ }
+	|
+	singleton '{' TK_NUMBER ',' TK_NUMBER '}'		{ /**@ AC_SINGLETON_MKREP2EX */ }
+	|
+	TK_CHAR							{ /**@ AC_SINGLETON_CHAR   */ }
+	|
+	TK_CCL							{ /**@ AC_SINGLETON_CCL    */ }
+	|
+	'"' '"'							{ /**@ AC_SINGLETON_EMPTY  */ }
+	|
+	'"' string '"'					{ /**@ AC_SINGLETON_STRING */ }
+	|
+	TK_EXT							{ /**@ AC_SINGLETON_EXT    */ }
+	|
+	'.'								{ /**@ AC_SINGLETON_ANYCHR */ }
+	;
+
+string:
+	TK_CHAR							{ /**@ AC_STRING_CHAR      */ }
+	|
+	string TK_CHAR					{ /**@ AC_STRING2_CHAR     */ }
+	;
