@@ -28,7 +28,7 @@ ifeq ("$(origin x4c-cmd-as)","undefined")
 define x4c-cmd-as
 $2 : $1 
 	$$(hide) $$(info AS $1)
-	$$(hide) $$(X4C_ASM) $$($(strip $3)) -o $$@ $$<
+	$$(hide) $$(X4C_ASM) $$($(strip $3)) -c -o $$@ $$<
 endef
 endif
 

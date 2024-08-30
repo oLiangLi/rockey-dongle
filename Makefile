@@ -1,5 +1,10 @@
 wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
+##
+##
+##
+X4C_NODE ?= /Machine/System/bin/node
+
 .PHONY : wasm wasmjs cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-wasmjs clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
 .PHONY : typescript typescript0 docker all-docker dongle clean-dongle
@@ -38,7 +43,7 @@ SO_INSTALL_MODE ?= 644
 ##
 dongle:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi prepare R=1
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi optimize R=1
+	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi install-platform R=1
 
 ##
 ##
