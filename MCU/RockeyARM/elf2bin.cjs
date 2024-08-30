@@ -3,13 +3,14 @@ const crypto = require("crypto");
 const rLANG_MATRIX_TEXT_OFFSET = 0;
 const rlTXT_SIZEMAX = 65520;
 const rlFillHeader = true;
-const rlPaddingFile = true;
+const rlPaddingFile = process.argv[4] === "--padding-file";
 
 function err(m) {
   throw new Error(m);
 }
 
-if (process.argv.length !== 4) err(`usage: node  elf2bin.js $input $output`);
+if (process.argv.length !== 4 && process.argv.length !== 5)
+  err(`usage: node  elf2bin.js $input $output`);
 
 function writeString(buf, off, s) {
   const sBuf = Buffer.from(s);
