@@ -15,11 +15,15 @@ Vector:
 	.long 0, 0, 0, 0
 
 _world_start:
-    .global _world_start
-	LDR R0, =0x68000c00
-	MOV SP, R0
+  .global _world_start
+	#LDR R0, =0x68000c00
+	#MOV SP, R0
+	#LDR R0,=app_entry
+	#BX  R0
+	.long 0xC8C04E1F
 	LDR R0,=app_entry
-	BX  R0
+	.short 0xC8C0
+	.long 0xC8C04E1F
 
 	.section .world.pubkey
 	.align 2
