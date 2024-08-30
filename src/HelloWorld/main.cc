@@ -1,4 +1,10 @@
 #include <base/base.h>
+
+#if defined(__linux__) || defined(__CYGWIN__) || defined(_WIN32)
+#define USING_OPENSSL_TESTING 1
+#endif /* _WIN32 */
+
+#if defined(USING_OPENSSL_TESTING) && USING_OPENSSL_TESTING
 #include <openssl/asn1.h>
 #include <openssl/bio.h>
 #include <openssl/bn.h>
@@ -11,13 +17,15 @@
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/sm2.h>
+#include <openssl/ssl.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
-#include <openssl/ssl.h>
+#endif /* USING_OPENSSL_TESTING */
 
 rLANG_DECLARE_MACHINE
 
 int Start(int argc, char* argv[]) {
+#if defined(USING_OPENSSL_TESTING) && USING_OPENSSL_TESTING
   constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Hello");
 
   rlLOGI(
@@ -30,6 +38,7 @@ int Start(int argc, char* argv[]) {
   }
 
   OPENSSL_init_ssl(OPENSSL_INIT_LOAD_SSL_STRINGS | OPENSSL_INIT_LOAD_CRYPTO_STRINGS, nullptr);
+#endif /* defined(USING_OPENSSL_TESTING) && USING_OPENSSL_TESTING */
 
   return 0;
 }

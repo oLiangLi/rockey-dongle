@@ -100,5 +100,6 @@ X4C_COMMON_CXXFLAGS += $(COMMON_CFLAGS)
 ##
 X4C_BUILD_PROJECT_FILES := \
 	$(wORLD_ROOT)/src/project.mk \
+	$(wORLD_ROOT)/MCU/project.mk \
 	$(wORLD_ROOT)/third_party/project.mk \
-	$(wORLD_ROOT)/MCU/RockeyARM/project.mk
+

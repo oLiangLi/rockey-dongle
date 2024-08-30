@@ -131,7 +131,13 @@ void platformLoggingWrite(int level, uint32_t tag, int line, const void* data, i
 }
 #endif /* _WIN32 */
 
-#if defined(__linux__) || defined(__CYGWIN__)
+#if defined(__linux__) || defined(__CYGWIN__) || defined(X_BUILD_native)
+
+#ifdef X_BUILD_native
+static int gettid() {
+  return -1;
+}
+#endif /* X_BUILD_native */
 
 static void rLANGAPI logWrite(const char* afmt, const char* efmt, const uint8_t* data, int len) {
   if (!afmt)
@@ -270,7 +276,7 @@ rLANGWASMIMPORT(
     "rLANG",
     "jsLogWrite")
 
-    static void rLANGAPI logWrite(int level, const uint8_t* data, int len) {
+static void rLANGAPI logWrite(int level, const uint8_t* data, int len) {
   int k, i;
   char line[72], *p, c1, c2;
 

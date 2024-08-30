@@ -2,7 +2,7 @@ wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
 .PHONY : wasm wasmjs cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-wasmjs clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
-.PHONY : typescript typescript0 docker all-docker
+.PHONY : typescript typescript0 docker all-docker dongle clean-dongle
 
 ##
 ## default build Release version ...
@@ -33,6 +33,12 @@ endif
 ##
 ##
 SO_INSTALL_MODE ?= 644
+
+##
+##
+dongle:
+	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi prepare R=1
+	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi optimize R=1
 
 ##
 ##
@@ -74,6 +80,9 @@ clean-linux:
 
 clean-windows:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=windows clean-all
+
+clean-dongle:
+	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=arm-none-eabi clean-all R=1
 
 typescript:
 	$(info typescript compile ... 1)
