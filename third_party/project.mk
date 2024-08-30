@@ -46,7 +46,7 @@ X4C_COMMON_LDFLAGS  += -L$(wORLD_ROOT)/third_party/RockeyARM/amd64-linux/lib -lR
 ##
 X4C_COMMON_CFLAGS   += -I$(THIRD_PARTY_INSTALL_PREFIX)/include
 X4C_COMMON_CXXFLAGS += -I$(THIRD_PARTY_INSTALL_PREFIX)/include
-X4C_COMMON_LDFLAGS  += -L$(THIRD_PARTY_INSTALL_PREFIX)/lib -lssl -lcrypto
+X4C_COMMON_LDFLAGS  += -L$(THIRD_PARTY_INSTALL_PREFIX)/lib -lssl -lcrypto -ldl
 
 ##
 ##

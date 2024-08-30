@@ -49,7 +49,7 @@ int Start(int argc, char* argv[]) {
 
 #ifndef __EMSCRIPTEN__
   int count = 0, result = Dongle_Enum(NULL, &count);
-  rlLOGI(TAG, "Dongle_Enum return %d => %d", result, count);
+  rlLOGI(TAG, "Dongle_Enum return %x => %d", result, count);
 #endif /* __EMSCRIPTEN__ */
 
   return 0;
