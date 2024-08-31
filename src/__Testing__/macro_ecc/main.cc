@@ -1,25 +1,5 @@
 #include <base/base.h>
-
-#if defined(__RockeyARM__)
-#define uECC_PLATFORM uECC_arm_thumb
-#endif /* __RockeyARM__ */
-
-/**
- *!
- */
-// #define uECC_VLI_NATIVE_LITTLE_ENDIAN 1
-
-/**
- *!
- */
-#define uECC_SUPPORTS_secp160r1 0
-#define uECC_SUPPORTS_secp192r1 0
-#define uECC_SUPPORTS_secp224r1 0
-#define uECC_SUPPORTS_secp256r1 1
-#define uECC_SUPPORTS_secp256k1 1
-
 #include <third_party/micro-ecc/uECC.h>
-#include <third_party/micro-ecc/uECC.c>
 
 rLANG_DECLARE_MACHINE
 
@@ -36,7 +16,7 @@ void InitRNG() {
 }
 
 int TestingRNG(uint8_t* dest, unsigned size) {
-  uint8_t last[64];  
+  uint8_t last[64];
 
   while (size >= 64) {
     rlCryptoChaCha20Block(state, dest);
@@ -67,7 +47,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
     int Exec() {
       int err = 0;
-      uint8_t check_pubkey[64], compress_pubkey[33];      
+      uint8_t check_pubkey[64], compress_pubkey[33];
 
       auto secp256r1 = uECC_secp256r1();
       auto secp256k1 = uECC_secp256k1();
@@ -191,13 +171,6 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 rLANG_DECLARE_END
 
 int main() {
-#ifdef _WIN32
-  constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DEBUG");
-  while (!::IsDebuggerPresent()) {
-    rlLOGI(TAG, "Wait ... pid = %d ...", ::GetCurrentProcessId());
-    Sleep(1000);
-  }
-#endif /* WIN32 */
   uint64_t InOutBuf[(3 << 10) / 8] = {0};
   uint64_t ExtendBuf[(1 << 10) / 8] = {0};
   return machine::dongle::Start(InOutBuf, ExtendBuf);
