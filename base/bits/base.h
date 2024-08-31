@@ -23,10 +23,10 @@
 #if !defined(rLANG_DECLARE_MACHINE) && defined(__cplusplus)
 #define rLANG_DECLARE_MACHINE namespace machine {
 #define rLANG_DECLARE_END }
-#elif !defined(rLANG_DECLARE_BEGIN)
+#elif !defined(rLANG_DECLARE_MACHINE)
 #define rLANG_DECLARE_MACHINE
 #define rLANG_DECLARE_END
-#endif /* rLANG_DECLARE_BEGIN */
+#endif /* rLANG_DECLARE_MACHINE */
 
 #if !defined(rLANG_LIKELY) && (defined(__GNUC__) || defined(__clang__))
 #define rLANG_LIKELY(x) (__builtin_expect(!!(x), 1))

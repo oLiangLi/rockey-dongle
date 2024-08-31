@@ -6,6 +6,7 @@ ROCKEYARM_COMMON_CFLAGS := -mcpu=cortex-m0 -mthumb -ffunction-sections -fdata-se
 ROCKEYARM_COMMON_CFLAGS += -O1 -Os -DrLANG_CONFIG_MIMIMAL_LEVEL=9 -fstack-usage -nostdlib 
 ROCKEYARM_COMMON_CFLAGS += -funsigned-char -fshort-enums -fshort-wchar
 ROCKEYARM_COMMON_CFLAGS += -I$(LOCAL_PATH)/RockeyARM/include
+ROCKEYARM_COMMON_CFLAGS += -D__RockeyARM__
 
 ROCKEYARM_COMMON_LDFLAGS := -nostartfiles -Wl,-nostdlib -nostdlib  -Wl,--cref -Wl,--gc-section
 ROCKEYARM_COMMON_LDFLAGS += $(LOCAL_PATH)/RockeyARM/lib/FTRX.a

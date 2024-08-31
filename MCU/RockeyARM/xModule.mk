@@ -8,7 +8,7 @@ LOCAL_MODULE := rockey_dongle
 LOCAL_LDFLAGS  := -Ttext=0 -Wl,-e,_world_start -T$(LOCAL_PATH)/linker.ld -Wl,-Map=$(X4C_OUTPUT)/rockey-dongle.map
 
 $(call add_general_source_files_under, $(LOCAL_PATH))
-$(call module_depends, dongleEntry base)
+$(call module_depends, __Testing__micro_ecc__ base)
 $(call build-executable)
 
 .PHONY : install-rockey-dongle
