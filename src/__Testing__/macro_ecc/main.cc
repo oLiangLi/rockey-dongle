@@ -191,6 +191,13 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 rLANG_DECLARE_END
 
 int main() {
+#ifdef _WIN32
+  constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DEBUG");
+  while (!::IsDebuggerPresent()) {
+    rlLOGI(TAG, "Wait ... pid = %d ...", ::GetCurrentProcessId());
+    Sleep(1000);
+  }
+#endif /* WIN32 */
   uint64_t InOutBuf[(3 << 10) / 8] = {0};
   uint64_t ExtendBuf[(1 << 10) / 8] = {0};
   return machine::dongle::Start(InOutBuf, ExtendBuf);
