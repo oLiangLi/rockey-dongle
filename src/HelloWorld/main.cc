@@ -1,4 +1,5 @@
 #include <base/base.h>
+#include <locale.h>
 #ifndef __EMSCRIPTEN__
 #include <RockeyARM/Dongle_API.h>
 #endif /* __EMSCRIPTEN__ */
@@ -58,5 +59,6 @@ int Start(int argc, char* argv[]) {
 rLANG_DECLARE_END
 
 int main(int argc, char* argv[]) {
+  setlocale(LC_ALL, "zh_CN.UTF-8");
   return machine::Start(argc, argv);
 }
