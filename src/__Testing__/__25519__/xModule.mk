@@ -1,7 +1,7 @@
 LOCAL_PATH := $(my-dir)
 
 $(call clear-local-vars)
-LOCAL_MODULE := dongleEntry
+LOCAL_MODULE := __Testing_25519__
 
 $(call add_general_source_files_under, $(LOCAL_PATH))
 $(call module_depends, base)
