@@ -9,7 +9,7 @@ enum class PIN_STATE  : uint8_t { kAnonymous, kNormal, kAdminstrator };
 enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdminstrator };
 
 enum class LED_STATE : uint8_t { kOff, kOn, kBlink };
-enum class SECRET_STORAGE_TYPE : uint8_t { kData, kRSA, kP256, kSM2, kSM4 };
+enum class SECRET_STORAGE_TYPE : uint8_t { kData, kRSA, kP256, kSM2, kSM4, kTDES };
 
 struct PKEY_LICENCE {
   int32_t count_limit_ = -1;
@@ -52,6 +52,15 @@ class Dongle {
   using BYTE = unsigned char;
 
  public:
+  template <size_t N = 32, typename T = uint8_t>
+  void CopyReverse(void* to, const void* from) {
+    T* target = static_cast<T*>(to);
+    const T* source = static_cast<const T*>(from);
+    for (size_t i = 0; i < N; ++i)
+      target[i] = source[N - 1 - i];
+  }
+
+ public:
   virtual uint32_t GetLastError(void) = 0;
 
  public:
@@ -80,24 +89,25 @@ class Dongle {
   virtual int ReadDataFile(int id, size_t offset, void* buffer, size_t size) = 0;
 
  public:  // PKEY STORAGE ...
-  /* SECRET_STORAGE_TYPE::kRSA || SECRET_STORAGE_TYPE::P256 || SECRET_STORAGE_TYPE::SM2 */
-  virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int id, const PKEY_LICENCE licence = {}) = 0;
+  /* SECRET_STORAGE_TYPE::kRSA || SECRET_STORAGE_TYPE::kP256 || SECRET_STORAGE_TYPE::kSM2 */
+  virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE licence = {}) = 0;
 
   /* SECRET_STORAGE_TYPE::kRSA */
-  virtual int GenerateRSA(int id, int size /* 2048 */, uint32_t* modulus, uint8_t public_[]) = 0;
-  virtual int ImportRSA(int id,
-                        int size /* 2048 */,
-                        uint32_t modules,
-                        const uint8_t pubilc_[],
-                        const uint8_t private_[]) = 0;
+  virtual int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[]) = 0;
+  virtual int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) = 0;
 
-  /* SECRET_STORAGE_TYPE::P256 */
+  /* SECRET_STORAGE_TYPE::kP256 */
   virtual int GenerateP256(int id, uint8_t X[32], uint8_t Y[32]) = 0;
-  virtual int ImportP256(int id, const uint8_t K[32]) = 0;
+  virtual int ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) = 0;
 
-  /* SECRET_STORAGE_TYPE::SM2  */
+  /* SECRET_STORAGE_TYPE::kSM2  */
   virtual int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32]) = 0;
-  virtual int ImportSM2(int id, const uint8_t K[32]) = 0;
+  virtual int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) = 0;
+
+ public:  // SessionKey ...
+  /* SECRET_STORAGE_TYPE::kSM4 || SECRET_STORAGE_TYPE::kTDES */
+  virtual int CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE type) = 0;
+  virtual int WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) = 0;
 
  public:  // RSA ...
   virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) = 0;
@@ -144,6 +154,10 @@ class Dongle {
  public:  // HASH ...
   virtual int SHA1(const void* input, size_t size, uint8_t md[20]) = 0;
   virtual int SM3(const void* input, size_t size, uint8_t md[32]) = 0;
+
+ public:  // TDES ...
+  virtual int TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
+  virtual int TDESECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
 
  public:  // SM4 ...
   virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
