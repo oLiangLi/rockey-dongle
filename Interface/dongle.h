@@ -93,15 +93,15 @@ class Dongle {
   virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE licence = {}) = 0;
 
   /* SECRET_STORAGE_TYPE::kRSA */
-  virtual int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[]) = 0;
+  virtual int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_ = nullptr) = 0;
   virtual int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) = 0;
 
   /* SECRET_STORAGE_TYPE::kP256 */
-  virtual int GenerateP256(int id, uint8_t X[32], uint8_t Y[32]) = 0;
+  virtual int GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr) = 0;
   virtual int ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) = 0;
 
   /* SECRET_STORAGE_TYPE::kSM2  */
-  virtual int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32]) = 0;
+  virtual int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr) = 0;
   virtual int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) = 0;
 
  public:  // SessionKey ...

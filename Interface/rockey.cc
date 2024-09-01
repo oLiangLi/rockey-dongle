@@ -117,13 +117,15 @@ class Rockey final : public Dongle {
 
     return CheckError(create_file(type, id, reinterpret_cast<uint8_t*>(&attr), sizeof(attr)));
   }
-  int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[]) override {
+  int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_) override {
     RSA_PRIVATE_KEY pkey;
     if (0 != CheckError(rsa_genkey(id, &pkey)))
       return -1;
 
     *modulus = pkey.modulus;
     memcpy(public_, pkey.publicExponent, pkey.bits / 8);
+    if (private_)
+      memcpy(private_, pkey.exponent, pkey.bits / 8);
     return pkey.bits;
   }
   int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) override {
@@ -137,12 +139,14 @@ class Rockey final : public Dongle {
     return CheckError(write_file(FILE_PRIKEY_RSA, id, 0, sizeof(pkey), reinterpret_cast<uint8_t*>(&pkey)));
   }
 
-  int GenerateP256(int id, uint8_t X[32], uint8_t Y[32]) override {
+  int GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_) override {
     ECCSM2_KEY_PAIR pkey;
     if (0 != CheckError(ecc_genkey(id, &pkey)))
       return -1;
     CopyReverse<32>(X, pkey.Pubkey.XCoordinate);
     CopyReverse<32>(Y, pkey.Pubkey.YCoordinate);
+    if (private_)
+      CopyReverse<32>(private_, pkey.Prikey.PrivateKey);
     return 0;
   }
 
@@ -155,12 +159,14 @@ class Rockey final : public Dongle {
     return CheckError(write_file(FILE_PRIKEY_ECCSM2, id, 0, sizeof(pkey), reinterpret_cast<uint8_t*>(&pkey)));
   }
 
-  int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32]) override {
+  int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_) override {
     ECCSM2_KEY_PAIR pkey;
     if (0 != CheckError(sm2_genkey(id, &pkey)))
       return -1;
     CopyReverse<32>(X, pkey.Pubkey.XCoordinate);
     CopyReverse<32>(Y, pkey.Pubkey.YCoordinate);
+    if (private_)
+      CopyReverse<32>(private_, pkey.Prikey.PrivateKey);
     return 0;
   }
   int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) override {
