@@ -111,7 +111,7 @@ class Dongle {
 
  public:  // RSA ...
   virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) = 0;
-  virtual int RSAPublic(int size,
+  virtual int RSAPublic(int bits,
                         uint32_t modules,
                         const uint8_t public_[],
                         const uint8_t* in,
@@ -148,8 +148,7 @@ class Dongle {
                          const uint8_t Y[32],
                          const uint8_t text[],
                          size_t size_text,
-                         uint8_t cipher[],
-                         size_t* size_cipher) = 0;
+                         uint8_t cipher[]) = 0;
 
  public:  // HASH ...
   virtual int SHA1(const void* input, size_t size, uint8_t md[20]) = 0;

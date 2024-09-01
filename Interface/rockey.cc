@@ -185,13 +185,18 @@ class Rockey final : public Dongle {
       return -EINVAL;
     if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
       return -EINVAL;
-    return CheckError(write_file(FILE_KEY, id, 0, size, static_cast<uint8_t*>(buffer)));
+    return CheckError(write_file(FILE_KEY, id, 0, size, static_cast<uint8_t*>(const_cast<void*>(buffer))));
   }
 
   int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) override {
-    return -ENOSYS;
+    WORD sizeOut = *size_out;
+    if (0 !=
+        CheckError(rsa_pri(id, const_cast<uint8_t*>(in), size_in, out, &sizeOut, encrypt ? MODE_ENCODE : MODE_DECODE)))
+      return -1;
+    *size_out = sizeOut;
+    return 0;
   }
-  int RSAPublic(int size,
+  int RSAPublic(int bits,
                 uint32_t modules,
                 const uint8_t public_[],
                 const uint8_t* in,
@@ -199,39 +204,98 @@ class Rockey final : public Dongle {
                 uint8_t out[],
                 size_t* size_out,
                 bool encrypt) override {
-    return -ENOSYS;
+    WORD sizeOut = *size_out;
+    if (bits != 2048)
+      return -EINVAL;
+
+    RSA_PUBLIC_KEY pubkey;
+    pubkey.bits = bits;
+    pubkey.modulus = modules;
+    memcpy(pubkey.exponent, public_, bits / 8);
+    if (0 != CheckError(rsa_pub(const_cast<uint8_t*>(in), size_in, &pubkey, out, &sizeOut,
+                                encrypt ? MODE_ENCODE : MODE_DECODE)))
+      return -1;
+    *size_out = sizeOut;
+    return 0;
   }
 
-  int P256Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) override { return -ENOSYS; }
+  int P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) override {
+    WORD len_sign = 64;
+    uint8_t sign[64], hash[32];
+    CopyReverse<32>(hash, hash_);
+    if (0 != CheckError(ecc_sign(id, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
+      return -1;
+    CopyReverse<32>(R, &sign[0]);
+    CopyReverse<32>(S, &sign[32]);
+    return 0;
+  }
   int P256Verify(const uint8_t X[32],
                  const uint8_t Y[32],
-                 const uint8_t hash[32],
+                 const uint8_t hash_[32],
                  const uint8_t R[32],
                  const uint8_t S[32]) override {
-    return -ENOSYS;
+    ECCSM2_PUBLIC_KEY pubkey;
+    uint8_t hash[32], sign[64];
+
+    pubkey.bits = 256;
+    CopyReverse<32>(pubkey.XCoordinate, X);
+    CopyReverse<32>(pubkey.YCoordinate, Y);
+    CopyReverse<32>(hash, hash_);
+    CopyReverse<32>(&sign[0], R);
+    CopyReverse<32>(&sign[32], S);
+    return CheckError(ecc_verify(&pubkey, hash, 32, sign));
   }
 
-  int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) override { return -ENOSYS; }
+  int SM2Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) override {
+    WORD len_sign = 64;
+    uint8_t sign[64], hash[32];
+    CopyReverse<32>(hash, hash_);
+    if (0 != CheckError(sm2_sign(id, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
+      return -1;
+    CopyReverse<32>(R, &sign[0]);
+    CopyReverse<32>(S, &sign[32]);
+    return 0;
+  }
 
   int SM2Verify(const uint8_t X[32],
                 const uint8_t Y[32],
-                const uint8_t hash[32],
+                const uint8_t hash_[32],
                 const uint8_t R[32],
                 const uint8_t S[32]) override {
-    return -ENOSYS;
+    ECCSM2_PUBLIC_KEY pubkey;
+    uint8_t hash[32], sign[64];
+
+    pubkey.bits = 0x8100;
+    CopyReverse<32>(pubkey.XCoordinate, X);
+    CopyReverse<32>(pubkey.YCoordinate, Y);
+    CopyReverse<32>(hash, hash_);
+    CopyReverse<32>(&sign[0], R);
+    CopyReverse<32>(&sign[32], S);
+    return CheckError(sm2_verify(&pubkey, hash, 32, sign));
   }
 
+  ///
+  /// TODO: 研究下 SM2Decrypt/SM2Encrypt 的数据格式, 最终生成国密uKey兼容的格式 ...
+  ///
   int SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) override {
-    return -ENOSYS;
+    WORD sizeOut = *size_text;
+    if (0 != CheckError(sm2_decrypt(id, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut)))
+      return -1;
+    *size_text = sizeOut;
+    return 0;
   }
 
   int SM2Encrypt(const uint8_t X[32],
                  const uint8_t Y[32],
                  const uint8_t text[],
                  size_t size_text,
-                 uint8_t cipher[],
-                 size_t* size_cipher) override {
-    return -ENOSYS;
+                 uint8_t cipher[]) override {
+    ECCSM2_PUBLIC_KEY pubkey;
+
+    pubkey.bits = 0x8100;
+    CopyReverse<32>(pubkey.XCoordinate, X);
+    CopyReverse<32>(pubkey.YCoordinate, Y);
+    return CheckError(sm2_encrypt(&pubkey, const_cast<uint8_t*>(text), size_text, cipher));
   }
 
  public:
