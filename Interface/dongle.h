@@ -16,6 +16,23 @@ struct PKEY_LICENCE {
   PERMISSION permission_ = PERMISSION::kAnonymous;
   bool global_decrease_ = false;
   bool logout_force_ = false;
+
+  PKEY_LICENCE& SetLimit(int32_t limit) {
+    count_limit_ = limit;
+    return *this;
+  }
+  PKEY_LICENCE& SetPermission(PERMISSION permission) {
+    permission_ = permission;
+    return *this;
+  }
+  PKEY_LICENCE& SetGlobalDecrease(bool config = true) {
+    global_decrease_ = config;
+    return *this;
+  }
+  PKEY_LICENCE& SetLogoutForce(bool config = true) {
+    logout_force_ = config;
+    return *this;
+  }
 };
 
 struct DONGLE_INFO {
@@ -30,20 +47,25 @@ struct DONGLE_INFO {
 
 class Dongle {
  public:
+  using DWORD = unsigned int;
+  using WORD = unsigned short;
+  using BYTE = unsigned char;
+
+ public:
   virtual uint32_t GetLastError(void) = 0;
 
  public:
   virtual int RandBytes(uint8_t* buffer, size_t size) = 0;
 
  public:
-  virtual int GetRealTime(uint32_t* time) = 0;
-  virtual int GetExpireTime(uint32_t* time) = 0;
-  virtual int GetTickCount(uint32_t* ticks) = 0;
+  virtual int GetRealTime(DWORD* time) = 0;
+  virtual int GetExpireTime(DWORD* time) = 0;
+  virtual int GetTickCount(DWORD* ticks) = 0;
 
  public:
   virtual int GetDongleInfo(DONGLE_INFO* info) = 0;
   virtual int GetPINState(PIN_STATE* state) = 0;
-  virtual int SetLEDState(LED_STATE* state) = 0;
+  virtual int SetLEDState(LED_STATE  state) = 0;
 
  public:
   virtual int ReadShareMemory(uint8_t buffer[32]) = 0;
@@ -100,7 +122,7 @@ class Dongle {
           /**
            *! RockeyARM Not implements yet ...
            */
-  virtual int P256ECDH(int id, const uint8_t X[32], const uint8_t Y[32], uint8_t secret[32]) = 0;
+  /* virtual int P256ECDH(int id, const uint8_t X[32], const uint8_t Y[32], uint8_t secret[32]) = 0; */
 
  public:  // SM2 ECDSA ...
   virtual int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
@@ -140,9 +162,8 @@ class Dongle {
 
 class RockeyARM : public Dongle {
  public:
-  rLANG_DECLARE_HANDLE(Handle);
-  rLANG_DECLARE_PRIVATE_CONTEXT(MemoryHolder, 4 * sizeof(size_t));
-  static int CreateDongle(MemoryHolder memory, Dongle** dongle);
+  rLANG_DECLARE_PRIVATE_CONTEXT(MemoryHolder, 2 * sizeof(size_t));
+  static int CreateDongle(MemoryHolder* memory, Dongle** dongle);
 
  public:
   static int EnumDongle(DONGLE_INFO* info, uint32_t* error);
@@ -155,7 +176,7 @@ class RockeyARM : public Dongle {
   virtual int Reset();
 
  public:
-  virtual int VerifyPIN(PIN_STATE type, const char* pin, int* remain_count);
+  virtual int VerifyPIN(PIN_STATE type, const char* pin, int* remain);
   virtual int ChangePIN(PIN_STATE type, const char* old, const char* pin, int count);
   virtual int ResetUserPIN(const char* admin);
 
@@ -175,6 +196,7 @@ class RockeyARM : public Dongle {
   ~RockeyARM() override;
 
  protected:
+  rLANG_DECLARE_HANDLE(Handle);
   RockeyARM(Handle handle) : handle_(handle) {}
   uint32_t last_error_ = 0;
   Handle handle_;
