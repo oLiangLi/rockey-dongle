@@ -721,6 +721,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
     AES_KEY encrypt_key_;
     AES_KEY decrypt_key_;
+    uint32_t tag;
 
     int Exec() {
       uint32_t state[16];
@@ -751,10 +752,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("$AES@");
   memset(Context, 0, sizeof(Context_t));
+  
   int result = Context->Exec();
 #ifndef X_BUILD_native
   rlLOGXI(TAG, Context, sizeof(Context_t), "Test result: %d", result);
 #endif /* X_BUILD_native */
+  Context->tag = TAG;
 
   return 10086 - result;
 }

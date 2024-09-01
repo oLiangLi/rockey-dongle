@@ -1,5 +1,10 @@
 #include <base/base.h>
-#include <third_party/micro-ecc/uECC.h>
+
+#ifdef _MSC_VER
+#pragma warning(disable: 4244)
+#endif /* _MSC_VER*/
+
+#include <third_party/micro-ecc/uECC.c>
 
 rLANG_DECLARE_MACHINE
 
