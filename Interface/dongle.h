@@ -111,6 +111,15 @@ class Dongle {
 
  public:  // RSA ...
   virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) = 0;
+  virtual int RSAPrivate(int bits,
+                         uint32_t modules,
+                         const uint8_t public_[],
+                         const uint8_t private_[],
+                         const uint8_t* in,
+                         size_t size_in,
+                         uint8_t out[],
+                         size_t* size_out,
+                         bool encrypt) = 0;
   virtual int RSAPublic(int bits,
                         uint32_t modules,
                         const uint8_t public_[],
@@ -122,20 +131,16 @@ class Dongle {
 
  public:  // P256 ECDSA ...
   virtual int P256Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
+  virtual int P256Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
   virtual int P256Verify(const uint8_t X[32],
                          const uint8_t Y[32],
                          const uint8_t hash[32],
                          const uint8_t R[32],
                          const uint8_t S[32]) = 0;
 
- public:  // P256 ECDH ...
-          /**
-           *! RockeyARM Not implements yet ...
-           */
-  /* virtual int P256ECDH(int id, const uint8_t X[32], const uint8_t Y[32], uint8_t secret[32]) = 0; */
-
  public:  // SM2 ECDSA ...
   virtual int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
+  virtual int SM2Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
   virtual int SM2Verify(const uint8_t X[32],
                         const uint8_t Y[32],
                         const uint8_t hash[32],
@@ -144,6 +149,11 @@ class Dongle {
 
  public:  // SM2 ECIES ...
   virtual int SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) = 0;
+  virtual int SM2Decrypt(const uint8_t private_[32],
+                         const uint8_t cipher[],
+                         size_t size_cipher,
+                         uint8_t text[],
+                         size_t* size_text) = 0;
   virtual int SM2Encrypt(const uint8_t X[32],
                          const uint8_t Y[32],
                          const uint8_t text[],
