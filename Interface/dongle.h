@@ -59,6 +59,19 @@ class Dongle {
     for (size_t i = 0; i < N; ++i)
       target[i] = source[N - 1 - i];
   }
+  template <size_t N, typename T = uint8_t>
+  struct SecretBuffer {
+    ~SecretBuffer() { memset(buffer_, 0, sizeof(buffer_)); }
+    size_t size() const { return N; }
+    operator T*() { return buffer_; }
+    operator const T*() const { return buffer_; }
+    T* operator->() { return buffer_; }
+    const T* operator->() const { return buffer_; }
+    T& operator[](size_t i) { return buffer_[i]; }
+    const T& operator[](size_t i) const { return buffer_[i]; }
+
+    T buffer_[N];
+  };
 
  public:
   virtual uint32_t GetLastError(void) = 0;

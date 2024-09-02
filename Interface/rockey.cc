@@ -119,24 +119,24 @@ class Rockey final : public Dongle {
     return CheckError(create_file(type, id, reinterpret_cast<uint8_t*>(&attr), sizeof(attr)));
   }
   int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_) override {
-    RSA_PRIVATE_KEY pkey;
-    if (0 != CheckError(rsa_genkey(id, &pkey)))
+    SecretBuffer<1,RSA_PRIVATE_KEY> pkey;
+    if (0 != CheckError(rsa_genkey(id, pkey)))
       return -1;
 
-    *modulus = pkey.modulus;
-    memcpy(public_, pkey.publicExponent, pkey.bits / 8);
+    *modulus = pkey->modulus;
+    memcpy(public_, pkey->publicExponent, pkey->bits / 8);
     if (private_)
-      memcpy(private_, pkey.exponent, pkey.bits / 8);
-    return pkey.bits;
+      memcpy(private_, pkey->exponent, pkey->bits / 8);
+    return pkey->bits;
   }
   int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) override {
     if (bits != 2048)
       return -EINVAL;
-    RSA_PRIVATE_KEY pkey;
-    pkey.bits = bits;
-    pkey.modulus = modules;
-    memcpy(pkey.publicExponent, public_, bits / 8);
-    memcpy(pkey.exponent, private_, bits / 8);
+    SecretBuffer<1,RSA_PRIVATE_KEY> pkey;
+    pkey->bits = bits;
+    pkey->modulus = modules;
+    memcpy(pkey->publicExponent, public_, bits / 8);
+    memcpy(pkey->exponent, private_, bits / 8);
     return CheckError(write_file(FILE_PRIKEY_RSA, id, 0, sizeof(pkey), reinterpret_cast<uint8_t*>(&pkey)));
   }
 
@@ -215,12 +215,12 @@ class Rockey final : public Dongle {
     WORD sizeOut = *size_out;
     if (bits != 2048)
       return -EINVAL;
-    RSA_PRIVATE_KEY pkey;
-    pkey.bits = bits;
-    pkey.modulus = modules;
-    memcpy(pkey.publicExponent, public_, bits / 8);
-    memcpy(pkey.exponent, private_, bits / 8);
-    if (0 != CheckError(rsa_pri_raw(&pkey, const_cast<uint8_t*>(in), size_in, out, &sizeOut,
+    SecretBuffer<1,RSA_PRIVATE_KEY> pkey;
+    pkey->bits = bits;
+    pkey->modulus = modules;
+    memcpy(pkey->publicExponent, public_, bits / 8);
+    memcpy(pkey->exponent, private_, bits / 8);
+    if (0 != CheckError(rsa_pri_raw(pkey, const_cast<uint8_t*>(in), size_in, out, &sizeOut,
                                     encrypt ? MODE_ENCODE : MODE_DECODE)))
       return -1;
     *size_out = sizeOut;
@@ -262,12 +262,12 @@ class Rockey final : public Dongle {
   int P256Sign(const uint8_t private_[32], const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) override {
     WORD len_sign = 64;
     uint8_t sign[64], hash[32];
-    ECCSM2_PRIVATE_KEY pkey;
+    SecretBuffer<1,ECCSM2_PRIVATE_KEY> pkey;
 
-    pkey.bits = 256;
+    pkey->bits = 256;
     CopyReverse<32>(hash, hash_);
-    CopyReverse<32>(pkey.PrivateKey, private_);
-    if (0 != CheckError(ecc_sign_raw(&pkey, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
+    CopyReverse<32>(pkey->PrivateKey, private_);
+    if (0 != CheckError(ecc_sign_raw(pkey, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
       return -1;
     CopyReverse<32>(R, &sign[0]);
     CopyReverse<32>(S, &sign[32]);
@@ -303,12 +303,12 @@ class Rockey final : public Dongle {
   int SM2Sign(const uint8_t private_[32], const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) override {
     WORD len_sign = 64;
     uint8_t sign[64], hash[32];
-    ECCSM2_PRIVATE_KEY pkey;
+    SecretBuffer<1,ECCSM2_PRIVATE_KEY> pkey;
 
-    pkey.bits = 0x8100;
+    pkey->bits = 0x8100;
     CopyReverse<32>(hash, hash_);
-    CopyReverse<32>(pkey.PrivateKey, private_);
-    if (0 != CheckError(sm2_sign_raw(&pkey, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
+    CopyReverse<32>(pkey->PrivateKey, private_);
+    if (0 != CheckError(sm2_sign_raw(pkey, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
       return -1;
     CopyReverse<32>(R, &sign[0]);
     CopyReverse<32>(S, &sign[32]);
@@ -345,10 +345,10 @@ class Rockey final : public Dongle {
                  uint8_t text[],
                  size_t* size_text) override {
     WORD sizeOut = *size_text;
-    ECCSM2_PRIVATE_KEY pkey;
-    pkey.bits = 0x8100;
-    CopyReverse<32>(pkey.PrivateKey, private_);
-    if (0 != CheckError(sm2_decrypt_key(&pkey, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut)))
+    SecretBuffer<1,ECCSM2_PRIVATE_KEY> pkey;
+    pkey->bits = 0x8100;
+    CopyReverse<32>(pkey->PrivateKey, private_);
+    if (0 != CheckError(sm2_decrypt_key(pkey, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut)))
       return -1;
     *size_text = sizeOut;
     return 0;
