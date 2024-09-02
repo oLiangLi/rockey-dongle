@@ -19,19 +19,7 @@ class Rockey final : public Dongle {
     ::DONGLE_INFO dongle;
     if (0 != CheckError(get_keyinfo(&dongle)))
       return -1;
-    info->ver_ = dongle.m_Ver;
-    info->type_ = dongle.m_Type;
-    rLANG_ABIREQUIRE(sizeof(info->birthday_) == sizeof(dongle.m_BirthDay));
-    memcpy(info->birthday_, dongle.m_BirthDay, sizeof(dongle.m_BirthDay));
-    info->agentId_ = dongle.m_Agent;
-    info->pid_ = dongle.m_PID;
-    info->uid_ = dongle.m_UserID;
-
-    info->hid_[0] = info->hid_[1] = info->hid_[2] = 0;  // 0.0.0 => RockeyARM ...
-    info->hid_[3] = dongle.m_IsMother ? 1 : 0;
-    memcpy(&info->hid_[4], dongle.m_HID, sizeof(dongle.m_HID));
-    rLANG_ABIREQUIRE(8 == sizeof(dongle.m_HID) && 12 == sizeof(info->hid_));
-
+    RockeyARM::GetDongleInfo(info, dongle);
     return 0;
   }
 
@@ -404,7 +392,7 @@ class Rockey final : public Dongle {
 };
 
 
-int RockeyARM::CreateDongle(MemoryHolder* memory, Dongle** dongle) {
+int RockeyARM::RockeyDongle(MemoryHolder* memory, Dongle** dongle) {
   rLANG_ABIREQUIRE(sizeof(Rockey) <= sizeof(RockeyARM::MemoryHolder));
   *dongle = new (memory) Rockey();
   return 0;

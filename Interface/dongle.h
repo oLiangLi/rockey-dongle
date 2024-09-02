@@ -199,13 +199,31 @@ class Dongle {
 class RockeyARM : public Dongle {
  public:
   rLANG_DECLARE_PRIVATE_CONTEXT(MemoryHolder, 2 * sizeof(size_t));
-  static int CreateDongle(MemoryHolder* memory, Dongle** dongle);
+  static int RockeyDongle(MemoryHolder* memory, Dongle** dongle);
+  template <typename T>
+  static void GetDongleInfo(DONGLE_INFO* info, const T& dongle) {
+    rLANG_ABIREQUIRE(sizeof(info->birthday_) == sizeof(dongle.m_BirthDay));
+    rLANG_ABIREQUIRE(8 == sizeof(dongle.m_HID) && 12 == sizeof(info->hid_));
+
+    info->ver_ = dongle.m_Ver;
+    info->type_ = dongle.m_Type;
+
+    memcpy(info->birthday_, dongle.m_BirthDay, sizeof(dongle.m_BirthDay));
+    info->agentId_ = dongle.m_Agent;
+    info->pid_ = dongle.m_PID;
+    info->uid_ = dongle.m_UserID;
+
+    info->hid_[0] = info->hid_[1] = info->hid_[2] = 0;  // 0.0.0 => RockeyARM ...
+    info->hid_[3] = dongle.m_IsMother ? 1 : 0;
+    memcpy(&info->hid_[4], dongle.m_HID, sizeof(dongle.m_HID)); 
+  }
 
  public:
-  static int EnumDongle(DONGLE_INFO* info, uint32_t* error);
-  static std::unique_ptr<RockeyARM> OpenDongle(int index, uint32_t* error);
+  static int EnumDongle(DONGLE_INFO* info, size_t size, uint32_t* error = nullptr);
+  int CheckError(uint32_t error);
 
  public:
+  virtual int Open(int index);
   virtual int Close();
 
  public:
@@ -229,11 +247,125 @@ class RockeyARM : public Dongle {
   virtual int LimitSeedCount(int count);
 
  public:
+  uint32_t GetLastError(void) override { return last_error_; }
+
+ public:
+  int RandBytes(uint8_t* buffer, size_t size) override;
+  int GetRealTime(DWORD* time) override;
+  int GetExpireTime(DWORD* time) override;
+  int GetTickCount(DWORD* ticks) override;
+
+ public:
+  int GetDongleInfo(DONGLE_INFO* info) override;
+  int GetPINState(PIN_STATE* state) override;
+  int SetLEDState(LED_STATE state) override;
+
+
+ public:
+  int ReadShareMemory(uint8_t buffer[32]) override;
+  int WriteShareMemory(const uint8_t buffer[32]) override;
+
+ public:
+  int DeleteFile(SECRET_STORAGE_TYPE type, int id) override;
+
+  /* SECRET_STORAGE_TYPE::kData */
+  int CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION write) override;
+  int WriteDataFile(int id, size_t offset, const void* buffer, size_t size) override;
+  int ReadDataFile(int id, size_t offset, void* buffer, size_t size) override;
+
+ public:  // PKEY STORAGE ...
+  /* SECRET_STORAGE_TYPE::kRSA || SECRET_STORAGE_TYPE::kP256 || SECRET_STORAGE_TYPE::kSM2 */
+  int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE licence = {}) override;
+
+  /* SECRET_STORAGE_TYPE::kRSA */
+  int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_ = nullptr) override;
+  int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) override;
+
+  /* SECRET_STORAGE_TYPE::kP256 */
+  int GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr) override;
+  int ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) override;
+
+  /* SECRET_STORAGE_TYPE::kSM2  */
+  int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr) override;
+  int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) override;
+
+ public:  // SessionKey ...
+  /* SECRET_STORAGE_TYPE::kSM4 || SECRET_STORAGE_TYPE::kTDES */
+  int CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE type) override;
+  int WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) override;
+
+ public:  // RSA ...
+  int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) override;
+  int RSAPrivate(int bits,
+                 uint32_t modules,
+                 const uint8_t public_[],
+                 const uint8_t private_[],
+                 const uint8_t* in,
+                 size_t size_in,
+                 uint8_t out[],
+                 size_t* size_out,
+                 bool encrypt) override;
+  int RSAPublic(int bits,
+                uint32_t modules,
+                const uint8_t public_[],
+                const uint8_t* in,
+                size_t size_in,
+                uint8_t out[],
+                size_t* size_out,
+                bool encrypt) override;
+
+ public:  // P256 ECDSA ...
+  int P256Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) override;
+  int P256Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) override;
+  int P256Verify(const uint8_t X[32],
+                 const uint8_t Y[32],
+                 const uint8_t hash[32],
+                 const uint8_t R[32],
+                 const uint8_t S[32]) override;
+
+ public:  // SM2 ECDSA ...
+  int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) override;
+  int SM2Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) override;
+  int SM2Verify(const uint8_t X[32],
+                const uint8_t Y[32],
+                const uint8_t hash[32],
+                const uint8_t R[32],
+                const uint8_t S[32]) override;
+
+ public:  // SM2 ECIES ...
+  int SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) override;
+  int SM2Decrypt(const uint8_t private_[32],
+                         const uint8_t cipher[],
+                         size_t size_cipher,
+                         uint8_t text[],
+                         size_t* size_text) override;
+  int SM2Encrypt(const uint8_t X[32],
+                         const uint8_t Y[32],
+                         const uint8_t text[],
+                         size_t size_text,
+                         uint8_t cipher[]) override;
+
+ public:  // HASH ...
+  int SHA1(const void* input, size_t size, uint8_t md[20]) override;
+  int SM3(const void* input, size_t size, uint8_t md[32]) override;
+
+ public:  // TDES ...
+  int TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) override;
+  int TDESECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) override;
+
+ public:  // SM4 ...
+  int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) override;
+  int SM4ECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) override;
+
+ public:  // PRIVATE SEED ...
+  int SEED(const void* input, size_t size, uint8_t result[16]) override;
+
+ public:
+  rLANG_DECLARE_HANDLE(Handle);
+  RockeyARM(Handle handle) : handle_(handle) {}
   ~RockeyARM() override;
 
  protected:
-  rLANG_DECLARE_HANDLE(Handle);
-  RockeyARM(Handle handle) : handle_(handle) {}
   uint32_t last_error_ = 0;
   Handle handle_;
 };
