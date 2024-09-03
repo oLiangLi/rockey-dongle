@@ -1,11 +1,25 @@
 #include <Interface/dongle.h>
+extern "C" {
 #include <MCU/RockeyARM/include/FTRX.h>
-#include <new>
+}
 
 rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
+int Dongle::RandBytes(uint8_t* buffer, size_t size) {
+  return CheckError(get_random(buffer, size));
+}
+
+int Dongle::CheckError(DWORD error) {
+  if (ERR_SUCCESS == error)
+    return 0;
+  last_error_ = error;
+  return -1;
+}
+
+
+#if 0
 class Rockey final : public Dongle {
  public:
   uint32_t GetLastError(void) override { return last_error_; }
@@ -397,6 +411,7 @@ int RockeyARM::RockeyDongle(MemoryHolder* memory, Dongle** dongle) {
   *dongle = new (memory) Rockey();
   return 0;
 }
+#endif
 
 
 } // namespace dongle

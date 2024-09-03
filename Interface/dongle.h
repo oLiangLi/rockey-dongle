@@ -45,6 +45,86 @@ struct DONGLE_INFO {
   uint8_t hid_[12];
 };
 
+rLANG_DECLARE_HANDLE(ROCKEY_HANDLE);
+
+#ifndef __RockeyARM__
+#define ROCKEY_METHOD virtual
+#define ROCKEY_OVERRIDE override
+#else /* */
+#define ROCKEY_METHOD
+#define ROCKEY_OVERRIDE
+#endif /* __RockeyARM__ */
+
+class Dongle {
+ public:
+  using DWORD = unsigned int;
+  using WORD = unsigned short;
+  using BYTE = unsigned char;
+
+ public:
+  template <size_t N = 32, typename T = uint8_t>
+  void CopyReverse(void* to, const void* from) {
+    T* target = static_cast<T*>(to);
+    const T* source = static_cast<const T*>(from);
+    for (size_t i = 0; i < N; ++i)
+      target[i] = source[N - 1 - i];
+  }
+  template <size_t N, typename T = uint8_t>
+  struct SecretBuffer {
+    ~SecretBuffer() {
+      memset(buffer_, 0, sizeof(buffer_));
+    }
+    size_t size() const { return N; }
+    operator T*() { return buffer_; }
+    operator const T*() const { return buffer_; }
+    T* operator->() { return buffer_; }
+    const T* operator->() const { return buffer_; }
+    T& operator[](size_t i) { return buffer_[i]; }
+    const T& operator[](size_t i) const { return buffer_[i]; }
+
+    T buffer_[N];
+  };
+
+ public:
+  Dongle() = default;
+#ifndef __RockeyARM__
+  Dongle(ROCKEY_HANDLE handle) : handle_(handle) {}
+#endif /* __RockeyARM__ */
+
+  ROCKEY_METHOD ~Dongle() = default;
+
+  Dongle(const Dongle&) = delete;
+  Dongle& operator=(const Dongle&) = delete;
+
+ public:
+  DWORD GetLastError() const { return last_error_; }
+
+ public:
+  ROCKEY_METHOD int RandBytes(uint8_t* buffer, size_t size);
+
+ protected:
+#ifndef __RockeyARM__
+  ROCKEY_HANDLE handle_ = nullptr;
+#endif /* __RockeyARM__ */
+
+  DWORD last_error_ = 0;
+  int CheckError(DWORD error);
+};
+
+class RockeyARM : public Dongle {
+ public:
+  ~RockeyARM() ROCKEY_OVERRIDE;
+
+ public:
+  ROCKEY_METHOD int Close();
+  ROCKEY_METHOD int Open(int index);
+  ROCKEY_METHOD int Enum(DONGLE_INFO info[64]);
+
+
+};
+
+
+#if 0
 class Dongle {
  public:
   using DWORD = unsigned int;
@@ -369,7 +449,7 @@ class RockeyARM : public Dongle {
   uint32_t last_error_ = 0;
   Handle handle_;
 };
-
+#endif /* */
 
 
 
