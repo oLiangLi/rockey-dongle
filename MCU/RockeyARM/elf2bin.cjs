@@ -66,6 +66,8 @@ function Elf2BIN(elfFILE) {
     err(`Invalid ELF file.`);
 
   if (eHdr.e_phnum !== 1) {
+    /* check ldscript ... */
+    /***
     let inv = true;
     if (eHdr.e_phnum === 2) {
       const ePHdrData = Elf32_Phdr(get(eHdr.e_phoff + 32, 32));
@@ -78,6 +80,7 @@ function Elf2BIN(elfFILE) {
     }
 
     if (inv) err(`Invalid ELF file`);
+    ***/
   }
 
   let ePHdrText = Elf32_Phdr(get(eHdr.e_phoff, 32));

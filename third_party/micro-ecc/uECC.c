@@ -149,6 +149,7 @@ struct uECC_Curve_t {
     uECC_word_t n[uECC_MAX_WORDS];
     uECC_word_t G[uECC_MAX_WORDS * 2];
     uECC_word_t b[uECC_MAX_WORDS];
+#if 0 // BX/BLX Not supported by RockeyARM ...
     void (*double_jacobian)(uECC_word_t * X1,
                             uECC_word_t * Y1,
                             uECC_word_t * Z1,
@@ -159,6 +160,7 @@ struct uECC_Curve_t {
     void (*x_side)(uECC_word_t *result, const uECC_word_t *x, uECC_Curve curve);
 #if (uECC_OPTIMIZATION_LEVEL > 0)
     void (*mmod_fast)(uECC_word_t *result, uECC_word_t *product);
+#endif
 #endif
 };
 
@@ -186,6 +188,12 @@ static cmpresult_t uECC_vli_cmp_unsafe(const uECC_word_t *left,
     #include "asm_avr.inc"
 #endif
 
+struct Micro_ECC_RNG_t {
+  operator bool() { return true; }
+  int operator()(uint8_t* dest, unsigned int size);
+} g_rng_function;
+
+#if 0
 #if default_RNG_defined
 static uECC_RNG_Function g_rng_function = &default_RNG;
 #else
@@ -199,6 +207,7 @@ void uECC_set_rng(uECC_RNG_Function rng_function) {
 uECC_RNG_Function uECC_get_rng(void) {
     return g_rng_function;
 }
+#endif /* */
 
 int uECC_curve_private_key_size(uECC_Curve curve) {
     return BITS_TO_BYTES(curve->num_n_bits);
@@ -619,16 +628,27 @@ uECC_VLI_API void uECC_vli_modMult(uECC_word_t *result,
     uECC_vli_mmod(result, product, mod, num_words);
 }
 
-uECC_VLI_API void uECC_vli_modMult_fast(uECC_word_t *result,
+static void vli_mmod_fast_secp256k1(uECC_word_t* result, uECC_word_t* product);
+static void vli_mmod_fast_secp256r1(uECC_word_t* result, uECC_word_t* product);
+uECC_VLI_API void uECC_vli_modMult_fast(uECC_word_t* result,
                                         const uECC_word_t *left,
                                         const uECC_word_t *right,
                                         uECC_Curve curve) {
     uECC_word_t product[2 * uECC_MAX_WORDS];
     uECC_vli_mult(product, left, right, curve->num_words);
-#if (uECC_OPTIMIZATION_LEVEL > 0)
+
+    if (curve->b[0] == 7) {  // secp256k1
+      vli_mmod_fast_secp256k1(result, product);
+    } else { // secp256r1
+      vli_mmod_fast_secp256r1(result, product);
+    }
+
+#if 0
+#if (uECC_OPTIMIZATION_LEVEL > 0)    
     curve->mmod_fast(result, product);
 #else
     uECC_vli_mmod(result, product, curve->p, curve->num_words);
+#endif
 #endif
 }
 
@@ -782,7 +802,14 @@ static void XYcZ_initial_double(uECC_word_t * X1,
     uECC_vli_set(Y2, Y1, num_words);
 
     apply_z(X1, Y1, z, curve);
-    curve->double_jacobian(X1, Y1, z, curve);
+
+    if (curve->b[0] == 7) {  // secp256k1
+      double_jacobian_secp256k1(X1, Y1, z, curve);
+    } else {  // secp256r1
+      double_jacobian_default(X1, Y1, z, curve);
+    }
+
+    //curve->double_jacobian(X1, Y1, z, curve);
     apply_z(X2, Y2, z, curve);
 }
 
@@ -1115,8 +1142,14 @@ void uECC_decompress(const uint8_t *compressed, uint8_t *public_key, uECC_Curve 
 #else
     uECC_vli_bytesToNative(point, compressed + 1, curve->num_bytes);
 #endif
-    curve->x_side(y, point, curve);
-    curve->mod_sqrt(y, curve);
+
+    if (curve->b[0] == 7) {
+      x_side_secp256k1(y, point, curve);
+      mod_sqrt_default(y, curve);
+    } else {
+      x_side_default(y, point, curve);
+      mod_sqrt_default(y, curve);
+    }
 
     if ((y[0] & 0x01) != (compressed[0] & 0x01)) {
         uECC_vli_sub(y, curve->p, y, curve->num_words);
@@ -1146,7 +1179,13 @@ uECC_VLI_API int uECC_valid_point(const uECC_word_t *point, uECC_Curve curve) {
     }
 
     uECC_vli_modSquare_fast(tmp1, point + num_words, curve);
-    curve->x_side(tmp2, point, curve); /* tmp2 = x^3 + ax + b */
+    if (curve->b[0] == 7) {
+      x_side_secp256k1(tmp2, point, curve);
+    } else {
+      x_side_default(tmp2, point, curve);
+    }
+
+    //curve->x_side(tmp2, point, curve); /* tmp2 = x^3 + ax + b */
 
     /* Make sure that y^2 == x^3 + ax + b */
     return (int)(uECC_vli_equal(tmp1, tmp2, num_words));
@@ -1571,8 +1610,12 @@ int uECC_verify(const uint8_t *public_key,
     z[0] = 1;
 
     for (i = num_bits - 2; i >= 0; --i) {
-        uECC_word_t index;
-        curve->double_jacobian(rx, ry, z, curve);
+      uECC_word_t index;
+      if (curve->b[0] == 7) {
+        double_jacobian_secp256k1(rx, ry, z, curve);
+      } else {
+        double_jacobian_default(rx, ry, z, curve);
+      }
 
         index = (!!uECC_vli_testBit(u1, i)) | ((!!uECC_vli_testBit(u2, i)) << 1);
         point = points[index];

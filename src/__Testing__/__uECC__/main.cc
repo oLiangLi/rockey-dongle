@@ -4,6 +4,20 @@
 #pragma warning(disable: 4244)
 #endif /* _MSC_VER*/
 
+#if defined(__RockeyARM__)
+#endif /* __RockeyARM__ */
+
+#define uECC_SUPPORTS_secp160r1 0
+#define uECC_SUPPORTS_secp192r1 0
+#define uECC_SUPPORTS_secp224r1 0
+#define uECC_WORD_SIZE 4
+
+
+#if defined(__RockeyARM__)  // uECC_arm_thumb
+#define uECC_PLATFORM 4
+#endif /* __RockeyARM__ */
+
+#include <third_party/micro-ecc/uECC.h>
 #include <third_party/micro-ecc/uECC.c>
 
 rLANG_DECLARE_MACHINE
@@ -20,6 +34,10 @@ void InitRNG() {
   state[3] = 0x6b206574;
 }
 
+}
+
+namespace dongle {
+    
 int TestingRNG(uint8_t* dest, unsigned size) {
   uint8_t last[64];
 
@@ -39,11 +57,78 @@ int TestingRNG(uint8_t* dest, unsigned size) {
   return 1;
 }
 
+void InitCurve() {
+
+#undef BYTES_TO_WORDS_8_V
+#define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
+  do {                                                     \
+    curve_secp256r1.pp[ii + 0] = 0x##d##c##b##a;           \
+    curve_secp256r1.pp[ii + 1] = 0x##h##g##f##e;           \
+  } while (0)
+
+  curve_secp256r1.num_words = curve_secp256k1.num_words = 8;
+  curve_secp256r1.num_bytes = curve_secp256k1.num_bytes = 32;
+  curve_secp256r1.num_n_bits = curve_secp256k1.num_n_bits = 256;
+
+  BYTES_TO_WORDS_8_V(p, 0, FF, FF, FF, FF, FF, FF, FF, FF);
+  BYTES_TO_WORDS_8_V(p, 2, FF, FF, FF, FF, 00, 00, 00, 00);
+  BYTES_TO_WORDS_8_V(p, 4, 00, 00, 00, 00, 00, 00, 00, 00);
+  BYTES_TO_WORDS_8_V(p, 6, 01, 00, 00, 00, FF, FF, FF, FF);
+
+  BYTES_TO_WORDS_8_V(n, 0, 51, 25, 63, FC, C2, CA, B9, F3);
+  BYTES_TO_WORDS_8_V(n, 2, 84, 9E, 17, A7, AD, FA, E6, BC);
+  BYTES_TO_WORDS_8_V(n, 4, FF, FF, FF, FF, FF, FF, FF, FF);
+  BYTES_TO_WORDS_8_V(n, 6, 00, 00, 00, 00, FF, FF, FF, FF);
+
+  BYTES_TO_WORDS_8_V(G, 0, 96, C2, 98, D8, 45, 39, A1, F4);
+  BYTES_TO_WORDS_8_V(G, 2, A0, 33, EB, 2D, 81, 7D, 03, 77);
+  BYTES_TO_WORDS_8_V(G, 4, F2, 40, A4, 63, E5, E6, BC, F8);
+  BYTES_TO_WORDS_8_V(G, 6, 47, 42, 2C, E1, F2, D1, 17, 6B);
+
+  BYTES_TO_WORDS_8_V(G, 8, F5, 51, BF, 37, 68, 40, B6, CB);
+  BYTES_TO_WORDS_8_V(G, 10, CE, 5E, 31, 6B, 57, 33, CE, 2B);
+  BYTES_TO_WORDS_8_V(G, 12, 16, 9E, 0F, 7C, 4A, EB, E7, 8E);
+  BYTES_TO_WORDS_8_V(G, 14, 9B, 7F, 1A, FE, E2, 42, E3, 4F);
+
+  BYTES_TO_WORDS_8_V(b, 0, 4B, 60, D2, 27, 3E, 3C, CE, 3B);
+  BYTES_TO_WORDS_8_V(b, 2, F6, B0, 53, CC, B0, 06, 1D, 65);
+  BYTES_TO_WORDS_8_V(b, 4, BC, 86, 98, 76, 55, BD, EB, B3);
+  BYTES_TO_WORDS_8_V(b, 6, E7, 93, 3A, AA, D8, 35, C6, 5A);
+
+#undef BYTES_TO_WORDS_8_V
+#define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
+  do {                                                     \
+    curve_secp256k1.pp[ii + 0] = 0x##d##c##b##a;           \
+    curve_secp256k1.pp[ii + 1] = 0x##h##g##f##e;           \
+  } while (0)
+
+  BYTES_TO_WORDS_8_V(p, 0, 2F, FC, FF, FF, FE, FF, FF, FF);
+  BYTES_TO_WORDS_8_V(p, 2, FF, FF, FF, FF, FF, FF, FF, FF);
+  BYTES_TO_WORDS_8_V(p, 4, FF, FF, FF, FF, FF, FF, FF, FF);
+  BYTES_TO_WORDS_8_V(p, 6, FF, FF, FF, FF, FF, FF, FF, FF);
+
+  BYTES_TO_WORDS_8_V(n, 0, 41, 41, 36, D0, 8C, 5E, D2, BF);
+  BYTES_TO_WORDS_8_V(n, 2, 3B, A0, 48, AF, E6, DC, AE, BA);
+  BYTES_TO_WORDS_8_V(n, 4, FE, FF, FF, FF, FF, FF, FF, FF);
+  BYTES_TO_WORDS_8_V(n, 6, FF, FF, FF, FF, FF, FF, FF, FF);
+
+  BYTES_TO_WORDS_8_V(G, 0, 98, 17, F8, 16, 5B, 81, F2, 59);
+  BYTES_TO_WORDS_8_V(G, 2, D9, 28, CE, 2D, DB, FC, 9B, 02);
+  BYTES_TO_WORDS_8_V(G, 4, 07, 0B, 87, CE, 95, 62, A0, 55);
+  BYTES_TO_WORDS_8_V(G, 6, AC, BB, DC, F9, 7E, 66, BE, 79);
+
+  BYTES_TO_WORDS_8_V(G, 8, B8, D4, 10, FB, 8F, D0, 47, 9C);
+  BYTES_TO_WORDS_8_V(G, 10, 19, 54, 85, A6, 48, B4, 17, FD);
+  BYTES_TO_WORDS_8_V(G, 12, A8, 08, 11, 0E, FC, FB, A4, 5D);
+  BYTES_TO_WORDS_8_V(G, 14, 65, C4, A3, 26, 77, DA, 3A, 48);
+
+  curve_secp256k1.b[0] = 7;
 }
 
-namespace dongle {
 
 int Start(void* InOutBuf, void* ExtendBuf) {
+  machine::dongle::InitCurve();
+
   struct Context_t {
     uint8_t prikey1[32], pubkey1[64];
     uint8_t prikey2[32], pubkey2[64];
@@ -54,8 +139,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
       int err = 0;
       uint8_t check_pubkey[64], compress_pubkey[33];
 
-      auto secp256r1 = uECC_secp256r1();
-      auto secp256k1 = uECC_secp256k1();
+
+      auto secp256r1 = &curve_secp256r1;
+      auto secp256k1 = &curve_secp256k1;
 
       if (32 != uECC_curve_private_key_size(secp256r1))
         ++err;
@@ -142,7 +228,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rLANG_ABIREQUIRE(sizeof(Context_t) <= 0x400);
 
   int result;
-#ifndef X_BUILD_native
+#if !defined(X_BUILD_native) && 0
   for (int loop = 0; loop < 100; ++loop) {
     result = Context->Exec();
     rlLOGXI(TAG, Context, sizeof(*Context), "%d Context: %d", loop, result);
@@ -152,10 +238,11 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 #endif /* X_BUILD_native */
 
   InitRNG();
-  uECC_set_rng(TestingRNG);
+  //uECC_set_rng(TestingRNG);
   result = Context->Exec();
-#ifndef X_BUILD_native
   rlLOGXI(TAG, Context, sizeof(*Context), "Context: %d", result);
+
+#if !defined(X_BUILD_native) && 0
   for (int loop = 0; loop < 10; ++loop) {
     Context_t copy_context;
     memcpy(&copy_context, Context, sizeof(Context_t));
@@ -175,8 +262,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
 rLANG_DECLARE_END
 
+int Micro_ECC_RNG_t::operator()(uint8_t* dest, unsigned int size) {
+  return machine::dongle::TestingRNG(dest, size);
+}
+
 int main() {
   uint64_t InOutBuf[(3 << 10) / 8] = {0};
-  uint64_t ExtendBuf[(1 << 10) / 8] = {0};
+  uint64_t ExtendBuf[(1 << 10) / 8] = {0};  
   return machine::dongle::Start(InOutBuf, ExtendBuf);
 }

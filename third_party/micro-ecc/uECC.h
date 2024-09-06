@@ -99,6 +99,7 @@ uECC_Curve uECC_secp256r1(void);
 uECC_Curve uECC_secp256k1(void);
 #endif
 
+#if 0
 /* uECC_RNG_Function type
 The RNG function should fill 'size' random bytes into 'dest'. It should return 1 if
 'dest' was filled with random data, or 0 if the random data could not be generated.
@@ -134,6 +135,7 @@ void uECC_set_rng(uECC_RNG_Function rng_function);
 Returns the function that will be used to generate random bytes.
 */
 uECC_RNG_Function uECC_get_rng(void);
+#endif /* uECC_RNG_Function */
 
 /* uECC_curve_private_key_size() function.
 

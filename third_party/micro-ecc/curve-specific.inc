@@ -733,6 +733,9 @@ static void vli_mmod_fast_secp224r1(uint64_t *result, uint64_t *product)
 static void vli_mmod_fast_secp256r1(uECC_word_t *result, uECC_word_t *product);
 #endif
 
+struct uECC_Curve_t curve_secp256r1;
+
+#if 0 // const struct uECC_Curve_t curve_secp256r1
 static const struct uECC_Curve_t curve_secp256r1 = {
     num_words_secp256r1,
     num_bytes_secp256r1,
@@ -769,7 +772,7 @@ static const struct uECC_Curve_t curve_secp256r1 = {
 };
 
 uECC_Curve uECC_secp256r1(void) { return &curve_secp256r1; }
-
+#endif // curve_secp256r1
 
 #if (uECC_OPTIMIZATION_LEVEL > 0 && !asm_mmod_fast_secp256r1)
 /* Computes result = product % curve_p
@@ -1068,6 +1071,9 @@ static void x_side_secp256k1(uECC_word_t *result, const uECC_word_t *x, uECC_Cur
 static void vli_mmod_fast_secp256k1(uECC_word_t *result, uECC_word_t *product);
 #endif
 
+struct uECC_Curve_t curve_secp256k1;
+
+#if 0 // struct uECC_Curve_t curve_secp256k1
 static const struct uECC_Curve_t curve_secp256k1 = {
     num_words_secp256k1,
     num_bytes_secp256k1,
@@ -1104,7 +1110,7 @@ static const struct uECC_Curve_t curve_secp256k1 = {
 };
 
 uECC_Curve uECC_secp256k1(void) { return &curve_secp256k1; }
-
+#endif // curve_secp256k1
 
 /* Double in place */
 static void double_jacobian_secp256k1(uECC_word_t * X1,
