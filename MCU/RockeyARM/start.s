@@ -24,18 +24,3 @@ _world_start:
 	LDR R0,=app_entry
 	.short 0xC8C0
 	.long 0xC8C04E1F
-
-	.section .world.pubkey
-	.align 2
-g_master_pubkey:
-g_master_pubkey_start:
-	.global g_master_pubkey
-	.global g_master_pubkey_end
-	.global g_master_pubkey_start
-	.long 0
-	.long 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-	.long 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-	.long 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-	.long 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0
-g_master_pubkey_end:
-	.long 0xC8C04E1F

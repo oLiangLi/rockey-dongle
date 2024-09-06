@@ -29,12 +29,10 @@ int Check(void* InOutBuf, void* ExtendBuf) {
   rlCryptoX25519Pubkey(Context->pubkey_exchang_, Context->public_ed25519_);
   rlCryptoX25519(Context->shared_secret__, private_, Context->pubkey_exchang_);
 
-#ifndef X_BUILD_native
   rlLOGXI(TAG, Context->public_ed25519_, sizeof(Context->public_ed25519_), "Context->public_ed25519_:");
   rlLOGXI(TAG, Context->public_x25519__, sizeof(Context->public_x25519__), "Context->public_x25519__:");
   rlLOGXI(TAG, Context->pubkey_exchang_, sizeof(Context->pubkey_exchang_), "Context->pubkey_exchang_:");
   rlLOGXI(TAG, Context->shared_secret__, sizeof(Context->shared_secret__), "Context->shared_secret__:");
-#endif /* X_BUILD_native */
 
   std::ignore = Context->TAG_ = TAG;
 
