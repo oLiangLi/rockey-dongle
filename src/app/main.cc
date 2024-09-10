@@ -15,8 +15,11 @@ using DWORD = Dongle::DWORD;
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   struct Context_t {
-    DWORD realTime_, expireTime_, ticks_;
     PERMISSION permission_;
+    DWORD realTime_, expireTime_, ticks_;
+
+    uint8_t share_memory_1_[32];
+    uint8_t share_memory_2_[32];
 
     DONGLE_INFO dongle_info_;
     uint8_t bytes[64];
@@ -31,18 +34,24 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rlLOGI(TAG, "rockey.Enum return %d/%08x", result, rockey.GetLastError());
 
   for (int i = 0; i < result; ++i) {
-    rlLOGXI(TAG, &dongle_info[i], sizeof(DONGLE_INFO), "rockey.Enum %d/%d", i+1, result);
+    rlLOGXI(TAG, &dongle_info[i], sizeof(DONGLE_INFO), "rockey.Enum %d/%d", i + 1, result);
   }
 
   result = rockey.Open(0);
   rlLOGI(TAG, "rockey.Open return %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
+  rlLOGI(TAG, "rockey.RandBytes return %d/%08X", result, rockey.GetLastError());
+
+  result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+  rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
 #else
 
   Dongle rockey;
 
 #endif
 
-  result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes)); 
+  result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
 
   rockey.SetLEDState(LED_STATE::kBlink);
 
@@ -52,6 +61,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rockey.GetDongleInfo(&Context->dongle_info_);
   rockey.GetPINState(&Context->permission_);
 
+  rockey.ReadShareMemory(Context->share_memory_2_);
+  rockey.WriteShareMemory(&Context->bytes[32]);
+  rockey.ReadShareMemory(Context->share_memory_1_);
 
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey.RandBytes return %d/%08x", result, rockey.GetLastError());
 

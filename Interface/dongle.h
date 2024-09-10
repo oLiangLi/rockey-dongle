@@ -59,12 +59,8 @@ class Dongle {
  public:
 #ifndef _WIN32
   using DWORD = unsigned int;
-  using WORD = unsigned short;
-  using BYTE = unsigned char;
 #else  /* _WIN32 */
   using DWORD = ::DWORD;
-  using WORD = ::WORD;
-  using BYTE = ::BYTE;
 #endif /* _WIN32 */
 
  public:
@@ -119,6 +115,7 @@ class Dongle {
 
  public:
   DWORD GetLastError() const { return last_error_; }
+  void ClearLastError() { last_error_ = 0; }
 
  public:
   virtual int RandBytes(uint8_t* buffer, size_t size);
@@ -129,10 +126,44 @@ public:
   virtual int GetTickCount(DWORD* ticks);
 
  public:
-
   virtual int GetDongleInfo(DONGLE_INFO* info);
   virtual int GetPINState(PERMISSION* state);
   virtual int SetLEDState(LED_STATE state);
+
+ public:
+  virtual int ReadShareMemory(uint8_t buffer[32]);
+  virtual int WriteShareMemory(const uint8_t buffer[32]);
+
+ public:
+  virtual int DeleteFile(SECRET_STORAGE_TYPE type, int id);
+
+ public: // DATA FILE ...
+  /* SECRET_STORAGE_TYPE::kData */
+  virtual int CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION write);
+  virtual int WriteDataFile(int id, size_t offset, const void* buffer, size_t size);
+  virtual int ReadDataFile(int id, size_t offset, void* buffer, size_t size);
+
+ public:  // PKEY STORAGE ...
+  /* SECRET_STORAGE_TYPE::kRSA || SECRET_STORAGE_TYPE::kP256 || SECRET_STORAGE_TYPE::kSM2 */
+  virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE licence = {});
+
+  /* SECRET_STORAGE_TYPE::kRSA */
+  virtual int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_ = nullptr);
+  virtual int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]);
+
+  /* SECRET_STORAGE_TYPE::kP256 */
+  virtual int GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr);
+  virtual int ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]);
+
+  /* SECRET_STORAGE_TYPE::kSM2  */
+  virtual int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr);
+  virtual int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]);
+
+ public:  // SessionKey ...
+  /* SECRET_STORAGE_TYPE::kSM4 || SECRET_STORAGE_TYPE::kTDES */
+  virtual int CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE type);
+  virtual int WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type);
+
 
 
 
@@ -169,44 +200,6 @@ class RockeyARM : public Dongle {
 
 #if 0
 class Dongle {
- public:
-  virtual int GetDongleInfo(DONGLE_INFO* info) = 0;
-  virtual int GetPINState(PIN_STATE* state) = 0;
-  virtual int SetLEDState(LED_STATE  state) = 0;
-
- public:
-  virtual int ReadShareMemory(uint8_t buffer[32]) = 0;
-  virtual int WriteShareMemory(const uint8_t buffer[32]) = 0;
-
- public:
-  virtual int DeleteFile(SECRET_STORAGE_TYPE type, int id) = 0;
-
-  /* SECRET_STORAGE_TYPE::kData */
-  virtual int CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION write) = 0;
-  virtual int WriteDataFile(int id, size_t offset, const void* buffer, size_t size) = 0;
-  virtual int ReadDataFile(int id, size_t offset, void* buffer, size_t size) = 0;
-
- public:  // PKEY STORAGE ...
-  /* SECRET_STORAGE_TYPE::kRSA || SECRET_STORAGE_TYPE::kP256 || SECRET_STORAGE_TYPE::kSM2 */
-  virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE licence = {}) = 0;
-
-  /* SECRET_STORAGE_TYPE::kRSA */
-  virtual int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_ = nullptr) = 0;
-  virtual int ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) = 0;
-
-  /* SECRET_STORAGE_TYPE::kP256 */
-  virtual int GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr) = 0;
-  virtual int ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) = 0;
-
-  /* SECRET_STORAGE_TYPE::kSM2  */
-  virtual int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr) = 0;
-  virtual int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) = 0;
-
- public:  // SessionKey ...
-  /* SECRET_STORAGE_TYPE::kSM4 || SECRET_STORAGE_TYPE::kTDES */
-  virtual int CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE type) = 0;
-  virtual int WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) = 0;
-
  public:  // RSA ...
   virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) = 0;
   virtual int RSAPrivate(int bits,
