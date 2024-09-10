@@ -1,11 +1,14 @@
 #include <base/base.h>
 #include <memory>
 
+#ifdef _WIN32
+#include <windows.h>
+#endif /* _WIN32 */
+
 rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
-enum class PIN_STATE  : uint8_t { kAnonymous, kNormal, kAdminstrator };
 enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdminstrator };
 
 enum class LED_STATE : uint8_t { kOff, kOn, kBlink };
@@ -54,79 +57,15 @@ rLANG_DECLARE_HANDLE(ROCKEY_HANDLE);
 
 class Dongle {
  public:
+#ifndef _WIN32
   using DWORD = unsigned int;
   using WORD = unsigned short;
   using BYTE = unsigned char;
-
- public:
-  template <size_t N = 32, typename T = uint8_t>
-  void CopyReverse(void* to, const void* from) {
-    T* target = static_cast<T*>(to);
-    const T* source = static_cast<const T*>(from);
-    for (size_t i = 0; i < N; ++i)
-      target[i] = source[N - 1 - i];
-  }
-  template <size_t N, typename T = uint8_t>
-  struct SecretBuffer {
-    ~SecretBuffer() {
-      memset(buffer_, 0, sizeof(buffer_));
-    }
-    size_t size() const { return N; }
-    operator T*() { return buffer_; }
-    operator const T*() const { return buffer_; }
-    T* operator->() { return buffer_; }
-    const T* operator->() const { return buffer_; }
-    T& operator[](size_t i) { return buffer_[i]; }
-    const T& operator[](size_t i) const { return buffer_[i]; }
-
-    T buffer_[N];
-  };
-
- public:
-  Dongle() = default;
-#ifndef __RockeyARM__
-  Dongle(ROCKEY_HANDLE handle) : handle_(handle) {}
-#endif /* __RockeyARM__ */
-
-  virtual ~Dongle() = default;
-
-  Dongle(const Dongle&) = delete;
-  Dongle& operator=(const Dongle&) = delete;
-
- public:
-  DWORD GetLastError() const { return last_error_; }
-
- public:
-  virtual int RandBytes(uint8_t* buffer, size_t size);
-
- protected:
-#ifndef __RockeyARM__
-  ROCKEY_HANDLE handle_ = nullptr;
-#endif /* __RockeyARM__ */
-
-  DWORD last_error_ = 0;
-  int CheckError(DWORD error);
-};
-
-class RockeyARM : public Dongle {
- public:
-  ~RockeyARM() override;
-
- public:
-  virtual int Close();
-  virtual int Open(int index);
-  virtual int Enum(DONGLE_INFO info[64]);
-
-
-};
-
-
-#if 0
-class Dongle {
- public:
-  using DWORD = unsigned int;
-  using WORD = unsigned short;
-  using BYTE = unsigned char;
+#else  /* _WIN32 */
+  using DWORD = ::DWORD;
+  using WORD = ::WORD;
+  using BYTE = ::BYTE;
+#endif /* _WIN32 */
 
  public:
   template <size_t N = 32, typename T = uint8_t>
@@ -149,18 +88,87 @@ class Dongle {
 
     T buffer_[N];
   };
+  template <typename T>
+  static void GetRockeyDongleInfo(DONGLE_INFO* info, const T& dongle) {
+    rLANG_ABIREQUIRE(sizeof(info->birthday_) == sizeof(dongle.m_BirthDay));
+    rLANG_ABIREQUIRE(8 == sizeof(dongle.m_HID) && 12 == sizeof(info->hid_));
+
+    info->ver_ = dongle.m_Ver;
+    info->type_ = dongle.m_Type;
+
+    memcpy(info->birthday_, dongle.m_BirthDay, sizeof(dongle.m_BirthDay));
+    info->agentId_ = dongle.m_Agent;
+    info->pid_ = dongle.m_PID;
+    info->uid_ = dongle.m_UserID;
+
+    info->hid_[0] = info->hid_[1] = info->hid_[2] = 0;  // 0.0.0 => RockeyARM ...
+    info->hid_[3] = dongle.m_IsMother ? 1 : 0;
+    memcpy(&info->hid_[4], dongle.m_HID, sizeof(dongle.m_HID));
+  }
 
  public:
-  virtual uint32_t GetLastError(void) = 0;
+  Dongle() = default;
+#ifndef __RockeyARM__
+  Dongle(ROCKEY_HANDLE handle) : handle_(handle) {}
+#endif /* __RockeyARM__ */
+
+  virtual ~Dongle() = default;
+
+  Dongle(const Dongle&) = delete;
+  Dongle& operator=(const Dongle&) = delete;
 
  public:
-  virtual int RandBytes(uint8_t* buffer, size_t size) = 0;
+  DWORD GetLastError() const { return last_error_; }
 
  public:
-  virtual int GetRealTime(DWORD* time) = 0;
-  virtual int GetExpireTime(DWORD* time) = 0;
-  virtual int GetTickCount(DWORD* ticks) = 0;
+  virtual int RandBytes(uint8_t* buffer, size_t size);
 
+public:
+  virtual int GetRealTime(DWORD* time);
+  virtual int GetExpireTime(DWORD* time);
+  virtual int GetTickCount(DWORD* ticks);
+
+ public:
+
+  virtual int GetDongleInfo(DONGLE_INFO* info);
+  virtual int GetPINState(PERMISSION* state);
+  virtual int SetLEDState(LED_STATE state);
+
+
+
+ protected:
+#ifndef __RockeyARM__
+  ROCKEY_HANDLE handle_{nullptr};
+  DONGLE_INFO dongle_info_{0};
+#endif /* __RockeyARM__ */
+
+  DWORD last_error_ = 0;
+  int CheckError(DWORD error);
+  int CheckError(DWORD error, const char* expr) {
+    int result = CheckError(error);
+    if (result < 0)
+      rlLOGE(rLANG_WORLD_MAGIC, "DONGLE.EXEC '%s' Error %08X", expr, error);
+    return result;
+  }
+#ifndef DONGLE_CHECK
+#define DONGLE_CHECK(expr) CheckError((expr), #expr)
+#endif /* DONGLE_CHECK */
+};
+
+class RockeyARM : public Dongle {
+ public:
+  ~RockeyARM() override;
+
+ public:
+  virtual int Close();
+  virtual int Open(int index);
+  virtual int Enum(DONGLE_INFO info[64]);
+  virtual int VerifyPIN(PERMISSION perm, const char* pin, int* remain); 
+};
+
+
+#if 0
+class Dongle {
  public:
   virtual int GetDongleInfo(DONGLE_INFO* info) = 0;
   virtual int GetPINState(PIN_STATE* state) = 0;

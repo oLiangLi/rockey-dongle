@@ -8,8 +8,41 @@ rLANG_DECLARE_MACHINE
 namespace dongle {
 
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
-  return CheckError(get_random(buffer, size));
+  return DONGLE_CHECK(get_random(buffer, size));
 }
+
+int Dongle::GetRealTime(DWORD* time) {
+  return DONGLE_CHECK(get_realtime(time));
+}
+int Dongle::GetExpireTime(DWORD* time) {
+  return DONGLE_CHECK(get_expiretime(time));
+}
+int Dongle::GetTickCount(DWORD* ticks) {
+  return DONGLE_CHECK(get_tickcount(ticks));
+}
+
+int Dongle::GetDongleInfo(DONGLE_INFO* info) {
+  ::DONGLE_INFO dongle;
+  if (0 != DONGLE_CHECK(get_keyinfo(&dongle)))
+    return -1;
+  GetRockeyDongleInfo(info, dongle);
+  return 0;
+}
+int Dongle::GetPINState(PERMISSION* state) {
+  DWORD pin = 0;
+  if (0 != DONGLE_CHECK(get_pinstate(&pin)))
+    return -1;
+  *state = pin == PIN_ADMIN  ? PERMISSION::kAdminstrator
+           : pin == PIN_USER ? PERMISSION::kNormal
+                             : PERMISSION::kAnonymous;
+  return 0;
+}
+int Dongle::SetLEDState(LED_STATE state) {
+  return DONGLE_CHECK(led_control(static_cast<uint8_t>(state)));
+}
+
+
+
 
 int Dongle::CheckError(DWORD error) {
   if (ERR_SUCCESS == error)
@@ -22,20 +55,8 @@ int Dongle::CheckError(DWORD error) {
 #if 0
 class Rockey final : public Dongle {
  public:
-  uint32_t GetLastError(void) override { return last_error_; }
 
  public:
-  int RandBytes(uint8_t* buffer, size_t size) override { return CheckError(get_random(buffer, size)); }
-  int GetRealTime(DWORD* time) override { return CheckError(get_realtime(time)); }
-  int GetExpireTime(DWORD* time) override { return CheckError(get_expiretime(time)); }
-  int GetTickCount(DWORD* ticks) override { return CheckError(get_tickcount(ticks)); }
-  int GetDongleInfo(DONGLE_INFO* info) override {
-    ::DONGLE_INFO dongle;
-    if (0 != CheckError(get_keyinfo(&dongle)))
-      return -1;
-    RockeyARM::GetDongleInfo(info, dongle);
-    return 0;
-  }
 
   int GetPINState(PIN_STATE* state) override {
     DWORD pin = 0;
