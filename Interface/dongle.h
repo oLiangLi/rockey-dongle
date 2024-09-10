@@ -47,12 +47,9 @@ struct DONGLE_INFO {
 
 rLANG_DECLARE_HANDLE(ROCKEY_HANDLE);
 
-#ifndef __RockeyARM__
-#define ROCKEY_METHOD virtual
-#define ROCKEY_OVERRIDE override
-#else /* */
-#define ROCKEY_METHOD
-#define ROCKEY_OVERRIDE
+#ifdef __RockeyARM__
+#define virtual /* nothing */ /* Welcome to the Real World! */
+#define override /* nothing */
 #endif /* __RockeyARM__ */
 
 class Dongle {
@@ -91,7 +88,7 @@ class Dongle {
   Dongle(ROCKEY_HANDLE handle) : handle_(handle) {}
 #endif /* __RockeyARM__ */
 
-  ROCKEY_METHOD ~Dongle() = default;
+  virtual ~Dongle() = default;
 
   Dongle(const Dongle&) = delete;
   Dongle& operator=(const Dongle&) = delete;
@@ -100,7 +97,7 @@ class Dongle {
   DWORD GetLastError() const { return last_error_; }
 
  public:
-  ROCKEY_METHOD int RandBytes(uint8_t* buffer, size_t size);
+  virtual int RandBytes(uint8_t* buffer, size_t size);
 
  protected:
 #ifndef __RockeyARM__
@@ -113,12 +110,12 @@ class Dongle {
 
 class RockeyARM : public Dongle {
  public:
-  ~RockeyARM() ROCKEY_OVERRIDE;
+  ~RockeyARM() override;
 
  public:
-  ROCKEY_METHOD int Close();
-  ROCKEY_METHOD int Open(int index);
-  ROCKEY_METHOD int Enum(DONGLE_INFO info[64]);
+  virtual int Close();
+  virtual int Open(int index);
+  virtual int Enum(DONGLE_INFO info[64]);
 
 
 };

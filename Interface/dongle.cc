@@ -9,11 +9,7 @@ constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DONGLE");
 }
 
 namespace dongle {
-
-RockeyARM::~RockeyARM() {
-  Close();
-}
-
+    
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
   return CheckError(Dongle_GenRandom(handle_, static_cast<int>(size), buffer));
 }
@@ -23,6 +19,10 @@ int Dongle::CheckError(DWORD error) {
     return 0;
   last_error_ = error;
   return -1;
+}
+
+RockeyARM::~RockeyARM() {
+  Close();
 }
 
 int RockeyARM::Enum(DONGLE_INFO info[64]) {
@@ -62,7 +62,6 @@ int RockeyARM::Close(){
   std::swap(handle, handle_);
   return CheckError(Dongle_Close(handle));
 }
-
 
 #if 0
 
