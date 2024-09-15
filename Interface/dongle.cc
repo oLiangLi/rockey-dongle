@@ -257,6 +257,8 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
     return -EINVAL;
   }
 
+  rlLOGW(TAG, "RockeyARM::VerifyPIN %d", static_cast<int>(perm));
+
   return DONGLE_CHECK(Dongle_VerifyPIN(handle_, flags, const_cast<char*>(pin), remain));
 }
 

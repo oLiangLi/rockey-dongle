@@ -108,7 +108,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rlLOGI(TAG, "rockey.RandBytes return %d/%08X", result, rockey.GetLastError());
 
   if (Context->permission_ != PERMISSION::kAnonymous) {
-    result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+    result = rockey.VerifyPIN(Context->permission_, nullptr, nullptr);
     rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
   }
 #else  // __RockeyARM__

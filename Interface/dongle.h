@@ -114,7 +114,12 @@ class Dongle {
   Dongle& operator=(const Dongle&) = delete;
 
  public:
-  DWORD GetLastError() const { return last_error_; }
+  DWORD GetLastError(bool reset = true) const {
+    DWORD result = last_error_;
+    if (reset)
+      last_error_ = 0;
+    return result;
+  }
   void ClearLastError() { last_error_ = 0; }
 
  public:
@@ -173,7 +178,7 @@ public:
   DONGLE_INFO dongle_info_{0};
 #endif /* __RockeyARM__ */
 
-  DWORD last_error_ = 0;
+  mutable DWORD last_error_ = 0;
   int CheckError(DWORD error);
   int CheckError(DWORD error, const char* expr) {
     int result = CheckError(error);
