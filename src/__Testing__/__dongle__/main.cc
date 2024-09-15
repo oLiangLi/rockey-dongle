@@ -121,7 +121,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
-  rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.%d return %d/%08x", index, result, rockey.GetLastError());
+  rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.%d return %d/%08x", index, result2, rockey.GetLastError());
   result += result2;
 
   std::ignore = TAG;
