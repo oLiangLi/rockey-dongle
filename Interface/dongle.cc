@@ -31,7 +31,7 @@ int Dongle::GetDongleInfo(DONGLE_INFO* info) {
   return 0;
 }
 int Dongle::GetPINState(PERMISSION* state) {
-  *state = PERMISSION::kAnonymous;
+  /* *state = PERMISSION::kAnonymous; */
   return DONGLE_CHECK(("Dongle_GetPINState(state)", DONGLE_FAILED));
 }
 
@@ -264,6 +264,28 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
 
 int RockeyARM::ResetState() {
   return DONGLE_CHECK(Dongle_ResetState(handle_));
+}
+
+int RockeyARM::UpdateExeFile(const void* file, size_t size) {
+  EXE_FILE_INFO info;
+  if (size >= 0xFFF8)
+    return -E2BIG;
+
+  rlLOGI(TAG, "RockeyARM::UpdateExeFile %zd", size);
+
+  info.m_dwSize = static_cast<WORD>(size);
+  info.m_wFileID = 1;
+  info.m_Priv = 0;
+  info.m_pData = const_cast<uint8_t*>(static_cast<const uint8_t*>(file));
+  return DONGLE_CHECK(Dongle_DownloadExeFile(handle_, &info, 1));
+}
+int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
+  int dummy = 0;
+  if (szBuf > 1024)
+    return -E2BIG;
+  if (!ret)
+    ret = &dummy;
+  return DONGLE_CHECK(Dongle_RunExeFile(handle_, 1, static_cast<uint8_t*>(InOutBuf), static_cast<WORD>(szBuf), ret));
 }
 
 int RockeyARM::Open(int index) {

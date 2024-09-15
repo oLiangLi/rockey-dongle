@@ -88,6 +88,8 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   Context_t* Context = (Context_t*)InOutBuf;
  
 #if !defined(__RockeyARM__)
+  Context_t CopyContext = *Context;
+
   RockeyARM rockey;
   DONGLE_INFO dongle_info[64];
 
@@ -150,6 +152,14 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   Context->result_[1] = result2;
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.%d return %d/%08x", index, result2, rockey.GetLastError());
   result += result2;
+
+#if !defined(__RockeyARM__)
+  int main_result = 0, result3 = rockey.ExecuteExeFile(&CopyContext, sizeof(CopyContext), &main_result);
+  rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X", result3,
+          main_result, rockey.GetLastError());
+  if (result3 < 0)
+    ++result;
+#endif /* __RockeyARM__ */
 
   std::ignore = TAG;
   return 10086 - result;
