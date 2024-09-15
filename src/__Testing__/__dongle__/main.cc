@@ -15,6 +15,8 @@ using DWORD = Dongle::DWORD;
 enum class kTestingIndex : int {
    CreateDataFile = 1,
 
+   ReadWriteDataFile,
+
 
 };
 
@@ -24,6 +26,8 @@ struct Context_t {
     uint32_t result_[4];
     uint8_t bytes_[16];
   };
+
+  uint32_t error_[8];
 
   PERMISSION permission_;
   DWORD realTime_, expireTime_, ticks_;
@@ -42,23 +46,42 @@ int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) 
 
   rlLOGI(TAG, "Testing ... %s ...", __FUNCTION__);
   for (int id = 1; id <= 3; ++id) {
-    if (0 != rockey.DeleteFile(SECRET_STORAGE_TYPE::kData, id))
+    if (0 != rockey.DeleteFile(SECRET_STORAGE_TYPE::kData, id)) {
+      Context->error_[id - 1] = rockey.GetLastError();
       ++error;
+    }
   }
 
-  if (0 != rockey.CreateDataFile(1, 256, PERMISSION::kAdminstrator, PERMISSION::kAdminstrator))
+  if (0 != rockey.CreateDataFile(1, 256, PERMISSION::kAdminstrator, PERMISSION::kAdminstrator)) {
+    Context->error_[3] = rockey.GetLastError();
     ++error;
+  }
 
-  if (0 != rockey.CreateDataFile(2, 256, PERMISSION::kNormal, PERMISSION::kNormal))
+  if (0 != rockey.CreateDataFile(2, 256, PERMISSION::kNormal, PERMISSION::kNormal)) {
+    Context->error_[4] = rockey.GetLastError();
     ++error;
+  }
 
-  if (0 != rockey.CreateDataFile(3, 256, PERMISSION::kAnonymous, PERMISSION::kAnonymous))
+  if (0 != rockey.CreateDataFile(3, 256, PERMISSION::kAnonymous, PERMISSION::kAnonymous)) {
+    Context->error_[5] = rockey.GetLastError();
     ++error;
+  }
 
   Context->result_[2] = rLANG_ATOMC_WORLD_MAGIC;
 
   return error;
 }
+
+int Testing_ReadWriteDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+
+  Context->result_[3] = rLANG_WORLD_MAGIC;
+
+  Context->result_[2] = rLANG_ATOMC_WORLD_MAGIC;
+
+  return error;
+}
+
 
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
@@ -113,9 +136,13 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rockey.ClearLastError();
 
   int result2 = 0;
-  switch (static_cast<kTestingIndex>(index)) {
+  switch (static_cast<kTestingIndex>(index & 0xFF)) {
     case kTestingIndex::CreateDataFile:
       result2 = Testing_CreateDataFile(rockey, Context, ExtendBuf);
+      break;
+
+    case kTestingIndex::ReadWriteDataFile:
+      result2 = Testing_ReadWriteDataFile(rockey, Context, ExtendBuf);
       break;
   }
 
@@ -169,7 +196,7 @@ int main(int argc, char* argv[]) {
   }
 
   for (int i = 1; i <= 4 && i < argc; ++i) {
-    Context->argv_[i - 1] = strtoul(argv[i], nullptr, 10);
+    Context->argv_[i - 1] = strtoul(argv[i], nullptr, 16);
   }
 
   return Start(Context, ExtendBuf);
