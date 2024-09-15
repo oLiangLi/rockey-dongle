@@ -3,6 +3,7 @@ SECTIONS {
 		KEEP(*(.world.start));
 		KEEP(*(.world.pubkey));
 		*(.text .text.*);
+		*(.rodata.CSWTCH .rodata.CSWTCH.*);
 		
 		. = ALIGN(8); PROVIDE(__rodata_begin = .);
 		*(.rodata .rodata.*);

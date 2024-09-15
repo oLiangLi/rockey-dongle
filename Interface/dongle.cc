@@ -260,6 +260,10 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
   return DONGLE_CHECK(Dongle_VerifyPIN(handle_, flags, const_cast<char*>(pin), remain));
 }
 
+int RockeyARM::ResetState() {
+  return DONGLE_CHECK(Dongle_ResetState(handle_));
+}
+
 int RockeyARM::Open(int index) {
   if (index < 0 || index >= 64)
     return -EINVAL;

@@ -194,7 +194,8 @@ class RockeyARM : public Dongle {
   virtual int Close();
   virtual int Open(int index);
   virtual int Enum(DONGLE_INFO info[64]);
-  virtual int VerifyPIN(PERMISSION perm, const char* pin, int* remain); 
+  virtual int VerifyPIN(PERMISSION perm, const char* pin, int* remain);
+  virtual int ResetState();
 };
 
 

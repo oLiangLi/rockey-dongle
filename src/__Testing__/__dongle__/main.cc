@@ -1,60 +1,176 @@
 #include <Interface/dongle.h>
+#include <base/base.h>
+#include <tuple>
 
 rLANG_DECLARE_MACHINE
 
+namespace {
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("App@T");
+}
+
 namespace dongle {
 
-namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Foobar");
-}
+using DWORD = Dongle::DWORD;
 
-struct InOutBuffer {
-  uint8_t rand_[16];
+enum class kTestingIndex : int {
+   CreateDataFile = 1,
 
-  uint32_t tag;
+
 };
 
-class Application {
- public:
-  Application(Dongle* dongle, void* iobuf, void* extbuf)
-      : dongle_(dongle), iobuf_(static_cast<InOutBuffer*>(iobuf)), extbuf_(extbuf) {}
-  ~Application() = default;
-  
- public:
-  int Run() {
-    int result = dongle_->RandBytes(iobuf_->rand_, sizeof(iobuf_->rand_));   
-    
-    rlLOGXI(TAG, iobuf_, sizeof(*iobuf_), "%d) Exec: %08X", result, dongle_->GetLastError());
+struct Context_t {
+  union {
+    uint32_t argv_[4];
+    uint32_t result_[4];
+    uint8_t bytes_[16];
+  };
 
-    iobuf_->tag = TAG;
-    return result;
+  PERMISSION permission_;
+  DWORD realTime_, expireTime_, ticks_;
+
+  uint8_t share_memory_1_[32];
+  uint8_t share_memory_2_[32];
+
+  DONGLE_INFO dongle_info_;
+  uint8_t bytes[64];
+};
+
+int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+
+  Context->result_[3] = rLANG_WORLD_MAGIC;  
+
+  rlLOGI(TAG, "Testing ... %s ...", __FUNCTION__);
+  for (int id = 1; id <= 3; ++id) {
+    if (0 != rockey.DeleteFile(SECRET_STORAGE_TYPE::kData, id))
+      ++error;
   }
 
- protected:
-  Dongle* const dongle_;
-  InOutBuffer* const iobuf_;
-  void* const extbuf_;
-};
+  if (0 != rockey.CreateDataFile(1, 256, PERMISSION::kAdminstrator, PERMISSION::kAdminstrator))
+    ++error;
 
-int Start(void* InOutBuf, void* ExtendBuf) {
-#ifdef __RockeyARM__
-  Dongle dongle;
-#else /* */
-  RockeyARM dongle;
-  dongle.Enum(nullptr);
-  dongle.Open(0);
-#endif
-  Application instance{&dongle, InOutBuf, ExtendBuf};
-  return instance.Run();
+  if (0 != rockey.CreateDataFile(2, 256, PERMISSION::kNormal, PERMISSION::kNormal))
+    ++error;
+
+  if (0 != rockey.CreateDataFile(3, 256, PERMISSION::kAnonymous, PERMISSION::kAnonymous))
+    ++error;
+
+  Context->result_[2] = rLANG_ATOMC_WORLD_MAGIC;
+
+  return error;
 }
 
-} // namespace dongle 
+int Start(void* InOutBuf, void* ExtendBuf) {
+  int result = 0;
+  Context_t* Context = (Context_t*)InOutBuf;
+ 
+#if !defined(__RockeyARM__)
+  RockeyARM rockey;
+  DONGLE_INFO dongle_info[64];
+
+  result = rockey.Enum(dongle_info);
+  rlLOGI(TAG, "rockey.Enum return %d/%08x", result, rockey.GetLastError());
+
+  for (int i = 0; i < result; ++i) {
+    rlLOGXI(TAG, &dongle_info[i], sizeof(DONGLE_INFO), "rockey.Enum %d/%d", i + 1, result);
+  }
+
+  result = rockey.Open(0);
+  rlLOGI(TAG, "rockey.Open return %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.ResetState();
+  rlLOGI(TAG, "rockey.ResetState return %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
+  rlLOGI(TAG, "rockey.RandBytes return %d/%08X", result, rockey.GetLastError());
+
+  if (Context->permission_ != PERMISSION::kAnonymous) {
+    result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+    rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
+  }
+#else  // __RockeyARM__
+
+  Dongle rockey;
+
+#endif  // __RockeyARM__
+
+  result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
+
+  rockey.SetLEDState(LED_STATE::kBlink);
+
+  rockey.GetRealTime(&Context->realTime_);
+  rockey.GetExpireTime(&Context->expireTime_);
+  rockey.GetTickCount(&Context->ticks_);
+  rockey.GetDongleInfo(&Context->dongle_info_);
+  rockey.GetPINState(&Context->permission_);
+
+  rockey.ReadShareMemory(Context->share_memory_2_);
+  rockey.WriteShareMemory(&Context->bytes[32]);
+  rockey.ReadShareMemory(Context->share_memory_1_);
+
+  int index = Context->argv_[0];
+  rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
+  rockey.ClearLastError();
+
+  int result2 = 0;
+  switch (static_cast<kTestingIndex>(index)) {
+    case kTestingIndex::CreateDataFile:
+      result2 = Testing_CreateDataFile(rockey, Context, ExtendBuf);
+      break;
+  }
+
+  Context->result_[0] = result;
+  Context->result_[1] = result2;
+  rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.%d return %d/%08x", index, result, rockey.GetLastError());
+  result += result2;
+
+  std::ignore = TAG;
+  return 10086 - result;
+}
+
+}  // namespace dongle
 
 rLANG_DECLARE_END
 
-int main() {
-  uint64_t InOutBuf[(3 << 10) / 8] = {0};
-  uint64_t ExtendBuf[(1 << 10) / 8] = {0};
-  return machine::dongle::Start(InOutBuf, ExtendBuf);
-}
+int main(int argc, char* argv[]) {
+  using namespace machine;
+  using namespace machine::dongle;
+#ifdef _MSC_VER
+  if (argc >= 2 && 0 == strcmp("-d", argv[1])) {
+    while (!::IsDebuggerPresent()) {
+      rlLOGI(TAG, "Wait debugger ...");
+      Sleep(1000);
+    }
+    ::DebugBreak();
+    --argc;
+    ++argv;
+  }
+#endif /* _MSC_VER */
 
+  rLANG_ABIREQUIRE(sizeof(Context_t) <= 1024);
+  Context_t* Context = (Context_t*)calloc(1, 3 << 10);
+  uint64_t ExtendBuf[(1 << 10) / 8] = {0};
+
+  Context->permission_ = PERMISSION::kAnonymous;
+  if (argc >= 2 && '-' == argv[1][0]) {
+    switch (argv[1][1]) {
+      case '2':
+        Context->permission_ = PERMISSION::kAdminstrator;
+        break;
+      case '1':
+        Context->permission_ = PERMISSION::kNormal;
+        break;
+      case '0':
+        Context->permission_ = PERMISSION::kAnonymous;
+        break;
+    }
+    --argc;
+    ++argv;
+  }
+
+  for (int i = 1; i <= 4 && i < argc; ++i) {
+    Context->argv_[i - 1] = strtoul(argv[i], nullptr, 10);
+  }
+
+  return Start(Context, ExtendBuf);
+}

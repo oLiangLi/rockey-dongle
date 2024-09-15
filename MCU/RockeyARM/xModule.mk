@@ -11,7 +11,7 @@ $(call clear-local-vars)
 LOCAL_MODULE    := rockey_dongle
 LOCAL_SRC_FILES := start.s app.cc
 LOCAL_LDFLAGS   := -Ttext=0 -Wl,-e,_world_start -T$(LOCAL_PATH)/linker.ld -Wl,-Map=$(X4C_OUTPUT)/rockey-dongle.map
-$(call module_depends, dongle_entry rockey aeabi_cortexm0 base)
+$(call module_depends, __Testing__dongle__ rockey aeabi_cortexm0 base)
 $(call build-executable)
 
 .PHONY : install-rockey-dongle
