@@ -5,9 +5,13 @@ LOCAL_MODULE := rockey
 
 ifeq ("$(X4C_BOARD)","RockeyARM")
 LOCAL_SRC_FILES := rockey.cc
-else
+else  ## RockeyARM
+ifneq ("$(X4C_BUILD)","emscripten")
 LOCAL_SRC_FILES := dongle.cc
-endif
+else  ## emscripten
+LOCAL_SRC_FILES := emulator.cc
+endif ## emscripten
+endif ## RockeyARM
 
 $(call build-library)
 
