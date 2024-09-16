@@ -25,13 +25,20 @@ rLANG_DECLARE_MACHINE
 namespace {
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("$ECC@");
 
-static uint32_t state[16];
-void InitRNG() {
-  memset(state, 0, sizeof(state));
-  state[0] = 0x61707865;
-  state[1] = 0x3320646e;
-  state[2] = 0x79622d32;
-  state[3] = 0x6b206574;
+struct RNG_STATE_t {
+  uint32_t state[16];
+};
+static RNG_STATE_t* RNG_STATE;
+
+void InitRNG(RNG_STATE_t* state) {
+  RNG_STATE = state;
+
+  memset(RNG_STATE->state, 0, sizeof(RNG_STATE->state));
+
+  RNG_STATE->state[0] = 0x61707865;
+  RNG_STATE->state[1] = 0x3320646e;
+  RNG_STATE->state[2] = 0x79622d32;
+  RNG_STATE->state[3] = 0x6b206574;
 }
 
 }
@@ -42,22 +49,24 @@ int TestingRNG(uint8_t* dest, unsigned size) {
   uint8_t last[64];
 
   while (size >= 64) {
-    rlCryptoChaCha20Block(state, dest);
-    ++state[12];
+    rlCryptoChaCha20Block(RNG_STATE->state, dest);
+    ++RNG_STATE->state[12];
     dest += 64;
     size -= 64;
   }
 
   if (size > 0) {
-    rlCryptoChaCha20Block(state, last);
+    rlCryptoChaCha20Block(RNG_STATE->state, last);
     memcpy(dest, last, size);
-    ++state[12];
+    ++RNG_STATE->state[12];
   }
 
   return 1;
 }
 
-void InitCurve() {
+void InitCurve(uECC_Curve_t* r1, uECC_Curve_t* k1) {
+  zp__curve_secp256r1 = r1;
+  zp__curve_secp256k1 = k1;
 
 #undef BYTES_TO_WORDS_8_V
 #define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
@@ -127,7 +136,8 @@ void InitCurve() {
 
 
 int Start(void* InOutBuf, void* ExtendBuf) {
-  machine::dongle::InitCurve();
+  uECC_Curve_t r1, k1;
+  machine::dongle::InitCurve(&r1, &k1);
 
   struct Context_t {
     uint8_t prikey1[32], pubkey1[64];
@@ -228,32 +238,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rLANG_ABIREQUIRE(sizeof(Context_t) <= 0x400);
 
   int result;
-#if !defined(X_BUILD_native) && 0
-  for (int loop = 0; loop < 100; ++loop) {
-    result = Context->Exec();
-    rlLOGXI(TAG, Context, sizeof(*Context), "%d Context: %d", loop, result);
-    if (result != 10086)
-      abort();
-  }
-#endif /* X_BUILD_native */
+  RNG_STATE_t state;
 
-  InitRNG();
+  InitRNG(&state);
   //uECC_set_rng(TestingRNG);
   result = Context->Exec();
   rlLOGXI(TAG, Context, sizeof(*Context), "Context: %d", result);
-
-#if !defined(X_BUILD_native) && 0
-  for (int loop = 0; loop < 10; ++loop) {
-    Context_t copy_context;
-    memcpy(&copy_context, Context, sizeof(Context_t));
-
-    InitRNG();
-    result = Context->Exec();
-    rlLOGXI(TAG, Context, sizeof(*Context), "%d Context: %d", loop, result);
-    if (result != 10086 || 0 != memcmp(&copy_context, Context, sizeof(Context_t)))
-      abort();
-  }
-#endif /* X_BUILD_native */
 
   return result;
 }

@@ -733,7 +733,8 @@ static void vli_mmod_fast_secp224r1(uint64_t *result, uint64_t *product)
 static void vli_mmod_fast_secp256r1(uECC_word_t *result, uECC_word_t *product);
 #endif
 
-struct uECC_Curve_t curve_secp256r1;
+struct uECC_Curve_t *zp__curve_secp256r1;
+#define curve_secp256r1     (*zp__curve_secp256r1)
 
 #if 0 // const struct uECC_Curve_t curve_secp256r1
 static const struct uECC_Curve_t curve_secp256r1 = {
@@ -1071,7 +1072,8 @@ static void x_side_secp256k1(uECC_word_t *result, const uECC_word_t *x, uECC_Cur
 static void vli_mmod_fast_secp256k1(uECC_word_t *result, uECC_word_t *product);
 #endif
 
-struct uECC_Curve_t curve_secp256k1;
+struct uECC_Curve_t* zp__curve_secp256k1;
+#define curve_secp256k1     (*zp__curve_secp256k1)
 
 #if 0 // struct uECC_Curve_t curve_secp256k1
 static const struct uECC_Curve_t curve_secp256k1 = {
