@@ -176,11 +176,11 @@ public:
 
   /* SECRET_STORAGE_TYPE::kP256 */
   virtual int GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr);
-  virtual int ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]);
+  virtual int ImportP256(int id, const uint8_t K[32]);
 
   /* SECRET_STORAGE_TYPE::kSM2  */
   virtual int GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_ = nullptr);
-  virtual int ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]);
+  virtual int ImportSM2(int id, const uint8_t K[32]);
 
  public:  // SessionKey ...
   /* SECRET_STORAGE_TYPE::kSM4 || SECRET_STORAGE_TYPE::kTDES */
@@ -206,6 +206,28 @@ public:
                         uint8_t out[],
                         size_t* size_out,
                         bool encrypt);
+
+ public: // SM2 ECDSA ...
+  virtual int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
+  virtual int SM2Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
+  virtual int SM2Verify(const uint8_t X[32],
+                        const uint8_t Y[32],
+                        const uint8_t hash[32],
+                        const uint8_t R[32],
+                        const uint8_t S[32]);
+
+ public:  // SM2 ECIES ...
+  virtual int SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text);
+  virtual int SM2Decrypt(const uint8_t private_[32],
+                         const uint8_t cipher[],
+                         size_t size_cipher,
+                         uint8_t text[],
+                         size_t* size_text);
+  virtual int SM2Encrypt(const uint8_t X[32],
+                         const uint8_t Y[32],
+                         const uint8_t text[],
+                         size_t size_text,
+                         uint8_t cipher[]);
 
 
  protected:

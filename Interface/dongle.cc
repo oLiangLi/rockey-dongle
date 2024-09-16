@@ -10,7 +10,7 @@ constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DONGLE");
 }
 
 namespace dongle {
-    
+
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
   return DONGLE_CHECK(Dongle_GenRandom(handle_, static_cast<int>(size), buffer));
 }
@@ -161,14 +161,10 @@ int Dongle::GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_
     CopyReverse<32>(private_, pkey->PrivateKey);
   return 0;
 }
-int Dongle::ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) {
+int Dongle::ImportP256(int id, const uint8_t K[32]) {
   SecretBuffer<1, ECCSM2_PRIVATE_KEY> pkey;
-
-  // TODO: LiangLI, Check X,Y ...
-
   pkey->bits = 256;
   CopyReverse<32>(pkey->PrivateKey, K);
-
   return DONGLE_CHECK(
       Dongle_WriteFile(handle_, FILE_PRIKEY_ECCSM2, id, 0, reinterpret_cast<uint8_t*>(&pkey), sizeof(pkey)));
 }
@@ -185,14 +181,10 @@ int Dongle::GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_)
     CopyReverse<32>(private_, pkey->PrivateKey);
   return 0;
 }
-int Dongle::ImportSM2(int id, const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) {
+int Dongle::ImportSM2(int id, const uint8_t K[32]) {
   SecretBuffer<1, ECCSM2_PRIVATE_KEY> pkey;
-
-  // TODO: LiangLI, Check X,Y ...
-
   pkey->bits = 0x8100;
   CopyReverse<32>(pkey->PrivateKey, K);
-
   return DONGLE_CHECK(
       Dongle_WriteFile(handle_, FILE_PRIKEY_ECCSM2, id, 0, reinterpret_cast<uint8_t*>(&pkey), sizeof(pkey)));
 }
@@ -296,22 +288,159 @@ int Dongle::RSAPublic(int bits,
                       uint8_t out[],
                       size_t* size_out,
                       bool encrypt) {
-  int sizeOut = static_cast<int>(*size_out);
-  RSA_PUBLIC_KEY pubkey;
+  int result = 0;
   if (bits != 2048)
     return -EINVAL;
 
-  pubkey.bits = bits;
-  pubkey.modulus = modules;
-  memcpy(pubkey.exponent, public_, 256);
-  int result = DONGLE_CHECK(Dongle_RsaPub(handle_, encrypt ? FLAG_ENCODE : FLAG_DECODE, &pubkey,
-                                          const_cast<uint8_t*>(in), static_cast<int>(size_in), out, &sizeOut));
-  if (result >= 0)
-    *size_out = sizeOut;
+  if (encrypt) {
+    if (size_in < 16)
+      return -EINVAL;
+    if (size_in > 256 - 11)
+      return -E2BIG;
+  } else if (size_in != 256) {
+    return -EINVAL;
+  }
+
+  RSA* rsa = RSA_new();
+  BIGNUM* n = BN_bin2bn(public_, 256, nullptr);
+  BIGNUM* e = BN_new();
+
+  DONGLE_VERIFY(rsa && n && e);
+  DONGLE_VERIFY(1 == BN_set_word(e, modules));
+  DONGLE_VERIFY(1 == RSA_set0_key(rsa, n, e, nullptr));
+  SecretBuffer<256> buffer;
+
+  if (encrypt) {
+    int len = RSA_public_encrypt(static_cast<int>(size_in), in, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_public_encrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      if (static_cast<size_t>(len) > *size_out) {
+        rlLOGE(TAG, "RSA_public_encrypt size %d Out-of-buffer %zd", len, *size_out);
+        result = -ENOSPC;
+      } else {
+        memcpy(out, buffer, len);
+        *size_out = len;
+      }
+    }
+  } else {
+    int len = RSA_public_decrypt(static_cast<int>(size_in), in, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_public_decrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      if (static_cast<size_t>(len) > *size_out) {
+        rlLOGE(TAG, "RSA_public_decrypt size %d Out-of-buffer %zd", len, *size_out);
+        result = -ENOSPC;
+      } else {
+        memcpy(out, buffer, len);
+        *size_out = len;
+      }
+    }
+  }
+
+  RSA_free(rsa);
   return result;
 }
 
+int Dongle::SM2Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
+  uint8_t sign[64], hash[32];
+  CopyReverse<32>(hash, hash_);
+  if (0 != DONGLE_CHECK(Dongle_SM2Sign(handle_, id, hash, 32, sign)))
+    return -1;
+  memcpy(R, hash, 32);
+  memcpy(S, hash + 32, 32);
+  CopyReverse<32>(R, &sign[0]);
+  CopyReverse<32>(S, &sign[32]);
+  return 0;
+}
 
+int Dongle::SM2Verify(const uint8_t X[32],
+                      const uint8_t Y[32],
+                      const uint8_t hash_[32],
+                      const uint8_t R[32],
+                      const uint8_t S[32]) {
+  int ret = -1;
+  uint8_t pubkey[65], signbuf[80];
+  EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
+  const EC_GROUP* const group = EC_KEY_get0_group(eckey);
+
+  EC_POINT* point = EC_POINT_new(group);
+  ECDSA_SIG* sign = ECDSA_SIG_new();
+  DONGLE_VERIFY(eckey && point && sign);
+  DONGLE_VERIFY(ECDSA_SIG_set0(sign, BN_bin2bn(R, 32, nullptr), BN_bin2bn(S, 32, nullptr)));
+
+  do {
+    pubkey[0] = 4;
+    memcpy(&pubkey[1], X, 32);
+    memcpy(&pubkey[33], Y, 32);
+    if (EC_POINT_oct2point(group, point, pubkey, 65, nullptr) <= 0)
+      break;
+    if (EC_POINT_is_on_curve(group, point, nullptr) <= 0)
+      break;
+    if (EC_KEY_set_public_key(eckey, point) <= 0)
+      break;
+
+    uint8_t* p = signbuf;
+    int signlen = i2d_ECDSA_SIG(sign, &p);
+    if(sm2_verify(hash_, 32, signbuf, signlen, eckey) > 0)
+      ret = 0;
+  } while (0);
+
+  ECDSA_SIG_free(sign);
+  EC_POINT_free(point);
+  EC_KEY_free(eckey);
+  return ret;
+}
+
+int Dongle::SM2Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) {
+  int ret = -1;
+  uint8_t sign_[80];
+  unsigned slen = sizeof(sign_);
+
+  EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
+  BIGNUM* pkey = BN_bin2bn(prikey, 32, nullptr);
+
+  do {
+    if (EC_KEY_set_private_key(eckey, pkey) <= 0)
+      break;
+
+    if (sm2_sign(hash, 32, sign_, &slen, eckey) > 0) {
+      const uint8_t* p = sign_;
+      ECDSA_SIG* s = d2i_ECDSA_SIG(nullptr, &p, slen);
+      DONGLE_VERIFY(s != nullptr);
+      BN_bn2binpad(ECDSA_SIG_get0_r(s), R, 32);
+      BN_bn2binpad(ECDSA_SIG_get0_s(s), S, 32);
+      ECDSA_SIG_free(s);
+      ret = 0;
+    }
+  } while (0);
+
+  EC_KEY_free(eckey);
+  BN_free(pkey);
+
+  return ret;
+}
+
+int Dongle::SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) {
+  return -ENOSYS;
+}
+
+int Dongle::SM2Decrypt(const uint8_t private_[32],
+                       const uint8_t cipher[],
+                       size_t size_cipher,
+                       uint8_t text[],
+                       size_t* size_text) {
+  return -ENOSYS;
+}
+int Dongle::SM2Encrypt(const uint8_t X[32],
+                       const uint8_t Y[32],
+                       const uint8_t text[],
+                       size_t size_text,
+                       uint8_t cipher[]) {
+  return -ENOSYS;
+}
 
 void Dongle::Abort() {
   abort();
@@ -352,7 +481,7 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
     flags = FLAG_ADMINPIN;
     if (!pin)
       pin = CONST_ADMINPIN;
-  }    
+  }
   else if (perm == PERMISSION::kNormal) {
     flags = FLAG_USERPIN;
     if (!pin)

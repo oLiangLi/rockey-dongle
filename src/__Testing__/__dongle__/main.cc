@@ -22,6 +22,8 @@ enum class kTestingIndex : int {
 
   RSAExec,
 
+  SM2SignVerify,
+
 };
 
 struct Context_t {
@@ -49,7 +51,7 @@ struct Context_t {
 int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
 
-  Context->result_[3] = rLANG_WORLD_MAGIC;  
+  Context->result_[3] = rLANG_WORLD_MAGIC;
 
   rlLOGI(TAG, "Testing ... %s ...", __FUNCTION__);
   for (int id = 1; id <= 3; ++id) {
@@ -282,14 +284,70 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
                   szOut2 == sizeof(input));
     DONGLE_VERIFY(0 == memcmp(input, verify, sizeof(input)));
   }
-  
+
+  return error;
+}
+
+int Testing_SM2SignVerify(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+
+  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8100) < 0) {
+    ++error;
+    Context->error_[0] = rockey.GetLastError();
+  }
+
+  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8101) < 0) {
+    ++error;
+    Context->error_[1] = rockey.GetLastError();
+  }
+
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 0x8100) < 0) {
+    ++error;
+    Context->error_[2] = rockey.GetLastError();
+  }
+
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 0x8101) < 0) {
+    ++error;
+    Context->error_[3] = rockey.GetLastError();
+  }
+
+  uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
+
+  rockey.RandBytes(H, 32);
+  if (rockey.GenerateSM2(0x8100, X, Y, K)) {
+    ++error;
+    Context->error_[4] = rockey.GetLastError();
+    return 111;
+  } else {
+    rlLOGXI(TAG, X, 32, "SM2.X");
+    rlLOGXI(TAG, Y, 32, "SM2.Y");
+    rlLOGXI(TAG, K, 32, "SM2.K");
+  }
+
+  if (rockey.SM2Sign(0x8100, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
+      rockey.SM2Verify(X, Y, H, R, S) < 0) {
+    ++error;
+    Context->error_[5] = rockey.GetLastError();
+  }
+
+  if (rockey.ImportSM2(0x8101, K) < 0) {
+    ++error;
+    Context->error_[6] = rockey.GetLastError();
+  }
+
+  if (rockey.SM2Sign(0x8101, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
+      rockey.SM2Verify(X, Y, H, R, S) < 0) {
+    ++error;
+    Context->error_[7] = rockey.GetLastError();
+  }
+
   return error;
 }
 
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
- 
+
 #if !defined(__RockeyARM__)
   Context_t CopyContext = *Context;
 
@@ -351,6 +409,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(ReadWriteFactoryData);
   DONGLE_RUN_TESTING(CreateRSAFile);
   DONGLE_RUN_TESTING(RSAExec);
+  DONGLE_RUN_TESTING(SM2SignVerify);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
