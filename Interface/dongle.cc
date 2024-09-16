@@ -1,5 +1,6 @@
-#include <base/base.h>
 #include <Interface/dongle.h>
+#include <base/base.h>
+
 #include "RockeyARM/Dongle_API.h"
 
 rLANG_DECLARE_MACHINE
@@ -216,7 +217,108 @@ int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE
       Dongle_WriteFile(handle_, FILE_KEY, id, 0, static_cast<uint8_t*>(const_cast<void*>(buffer)), 16));
 }
 
+int Dongle::RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) {
+  int sizeOut = static_cast<int>(*size_out);
 
+  int result = DONGLE_CHECK(Dongle_RsaPri(handle_, id, encrypt ? FLAG_ENCODE : FLAG_DECODE, const_cast<uint8_t*>(in),
+                                          static_cast<int>(size_in), out, &sizeOut));
+  if (result >= 0)
+    *size_out = sizeOut;
+  return result;
+}
+int Dongle::RSAPrivate(int bits,
+                       uint32_t modules,
+                       const uint8_t public_[],
+                       const uint8_t private_[],
+                       const uint8_t* in,
+                       size_t size_in,
+                       uint8_t out[],
+                       size_t* size_out,
+                       bool encrypt) {
+  int result = 0;
+  if (bits != 2048)
+    return -EINVAL;
+
+  if (encrypt) {
+    if (size_in < 16)
+      return -EINVAL;
+    if (size_in > 256 - 11)
+      return -E2BIG;
+  } else if (size_in != 256) {
+    return -EINVAL;
+  }
+
+  RSA* rsa = RSA_new();
+  BIGNUM* d = BN_bin2bn(private_, 256, nullptr);
+  BIGNUM* n = BN_bin2bn(public_, 256, nullptr);
+  BIGNUM* e = BN_new();
+
+  DONGLE_VERIFY(rsa && d && n && e);
+  DONGLE_VERIFY(1 == BN_set_word(e, modules));
+  DONGLE_VERIFY(1 == RSA_set0_key(rsa, n, e, d));
+  SecretBuffer<256> buffer;
+
+  if (encrypt) {
+    int len = RSA_private_encrypt(static_cast<int>(size_in), in, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_private_encrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      if (static_cast<size_t>(len) > *size_out) {
+        rlLOGE(TAG, "RSA_private_encrypt size %d Out-of-buffer %zd", len, *size_out);
+        result = -ENOSPC;
+      } else {
+        memcpy(out, buffer, len);
+        *size_out = len;
+      }
+    }
+  } else {
+    int len = RSA_private_decrypt(static_cast<int>(size_in), in, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_private_decrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      if (static_cast<size_t>(len) > *size_out) {
+        rlLOGE(TAG, "RSA_private_encrypt size %d Out-of-buffer %zd", len, *size_out);
+        result = -ENOSPC;
+      } else {
+        memcpy(out, buffer, len);
+        *size_out = len;
+      }
+    }
+  }
+  RSA_free(rsa);
+
+  return result;
+}
+int Dongle::RSAPublic(int bits,
+                      uint32_t modules,
+                      const uint8_t public_[],
+                      const uint8_t* in,
+                      size_t size_in,
+                      uint8_t out[],
+                      size_t* size_out,
+                      bool encrypt) {
+  int sizeOut = static_cast<int>(*size_out);
+  RSA_PUBLIC_KEY pubkey;
+  if (bits != 2048)
+    return -EINVAL;
+
+  pubkey.bits = bits;
+  pubkey.modulus = modules;
+  memcpy(pubkey.exponent, public_, 256);
+  int result = DONGLE_CHECK(Dongle_RsaPub(handle_, encrypt ? FLAG_ENCODE : FLAG_DECODE, &pubkey,
+                                          const_cast<uint8_t*>(in), static_cast<int>(size_in), out, &sizeOut));
+  if (result >= 0)
+    *size_out = sizeOut;
+  return result;
+}
+
+
+
+void Dongle::Abort() {
+  abort();
+}
 
 int Dongle::CheckError(DWORD error) {
   if (DONGLE_SUCCESS == error)

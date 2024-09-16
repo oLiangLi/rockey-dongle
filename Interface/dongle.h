@@ -1,5 +1,21 @@
 #include <base/base.h>
 #include <memory>
+#include <tuple>
+
+#ifndef X_BUILD_native
+#include <openssl/bn.h>
+#include <openssl/ec.h>
+#include <openssl/err.h>
+#include <openssl/evp.h>
+#include <openssl/obj_mac.h>
+#include <openssl/objects.h>
+#include <openssl/rand.h>
+#include <openssl/rsa.h>
+#include <openssl/sha.h>
+#include <openssl/sm2.h>
+#include <openssl/sm3.h>
+#include <openssl/sm4.h>
+#endif /* X_BUILD_native */
 
 #ifdef _WIN32
 #include <windows.h>
@@ -50,10 +66,10 @@ struct DONGLE_INFO {
 
 rLANG_DECLARE_HANDLE(ROCKEY_HANDLE);
 
-#ifdef __RockeyARM__
+#ifdef X_BUILD_native
 #define virtual /* nothing */ /* Welcome to the Real World! */
 #define override /* nothing */
-#endif /* __RockeyARM__ */
+#endif /* X_BUILD_native */
 
 class Dongle {
  public:
@@ -171,7 +187,25 @@ public:
   virtual int CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE type);
   virtual int WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type);
 
-
+ public:
+  virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt);
+  virtual int RSAPrivate(int bits,
+                         uint32_t modules,
+                         const uint8_t public_[],
+                         const uint8_t private_[],
+                         const uint8_t* in,
+                         size_t size_in,
+                         uint8_t out[],
+                         size_t* size_out,
+                         bool encrypt);
+  virtual int RSAPublic(int bits,
+                        uint32_t modules,
+                        const uint8_t public_[],
+                        const uint8_t* in,
+                        size_t size_in,
+                        uint8_t out[],
+                        size_t* size_out,
+                        bool encrypt);
 
 
  protected:
@@ -188,6 +222,19 @@ public:
       rlLOGE(rLANG_WORLD_MAGIC, "DONGLE.EXEC '%s' Error %08X", expr, error);
     return result;
   }
+  
+  static void Abort();
+  static void Verify(bool result, const char* expr) {
+    if (!result) {
+      rlLOGE(rLANG_WORLD_MAGIC, "DONGLE.EXEC '%s' Fail, Abort", expr);
+      Abort();
+    }
+  }
+
+#ifndef DONGLE_VERIFY
+#define DONGLE_VERIFY(expr) ::machine::dongle::Dongle::Verify((expr), #expr)
+#endif /* DONGLE_VERIFY */
+
 #ifndef DONGLE_CHECK
 #define DONGLE_CHECK(expr) CheckError((expr), #expr)
 #endif /* DONGLE_CHECK */
@@ -211,26 +258,6 @@ class RockeyARM : public Dongle {
 
 #if 0
 class Dongle {
- public:  // RSA ...
-  virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) = 0;
-  virtual int RSAPrivate(int bits,
-                         uint32_t modules,
-                         const uint8_t public_[],
-                         const uint8_t private_[],
-                         const uint8_t* in,
-                         size_t size_in,
-                         uint8_t out[],
-                         size_t* size_out,
-                         bool encrypt) = 0;
-  virtual int RSAPublic(int bits,
-                        uint32_t modules,
-                        const uint8_t public_[],
-                        const uint8_t* in,
-                        size_t size_in,
-                        uint8_t out[],
-                        size_t* size_out,
-                        bool encrypt) = 0;
-
  public:  // P256 ECDSA ...
   virtual int P256Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
   virtual int P256Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;

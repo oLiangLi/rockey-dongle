@@ -192,8 +192,74 @@ int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE
   return DONGLE_CHECK(write_file(FILE_KEY, id, 0, size, static_cast<uint8_t*>(const_cast<void*>(buffer))));
 }
 
+int Dongle::RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt) {
+  WORD size = static_cast<WORD>(*size_out);
+  int result = DONGLE_CHECK(rsa_pri(id, const_cast<uint8_t*>(in), static_cast<WORD>(size_in), out, &size,
+                                    encrypt ? MODE_ENCODE : MODE_DECODE));
+  if (result >= 0)
+    *size_out = size;
+  return result;
+}
+int Dongle::RSAPrivate(int bits,
+                       uint32_t modules,
+                       const uint8_t public_[],
+                       const uint8_t private_[],
+                       const uint8_t* in,
+                       size_t size_in,
+                       uint8_t out[],
+                       size_t* size_out,
+                       bool encrypt) {
+  if (bits != 2048)
+    return -EINVAL;
 
+  if (encrypt) {
+    if (size_in < 16)
+      return -EINVAL;
+    if (size_in > 256 - 11)
+      return -E2BIG;
+  } else if (size_in != 256) {
+    return -EINVAL;
+  }
 
+  RSA_PRIVATE_KEY prikey;
+  prikey.bits = bits;
+  prikey.modulus = modules;
+  memcpy(prikey.publicExponent, public_, 256);
+  memcpy(prikey.exponent, private_, 256);
+  WORD size = static_cast<WORD>(*size_out);
+  int result = DONGLE_CHECK(rsa_pri_raw(&prikey, const_cast<uint8_t*>(in), static_cast<WORD>(size_in), out, &size,
+                                        encrypt ? MODE_ENCODE : MODE_DECODE));
+  if (result >= 0)
+    *size_out = size;
+  return result;
+}
+int Dongle::RSAPublic(int bits,
+                      uint32_t modules,
+                      const uint8_t public_[],
+                      const uint8_t* in,
+                      size_t size_in,
+                      uint8_t out[],
+                      size_t* size_out,
+                      bool encrypt) {
+  if (bits != 2048)
+    return -EINVAL;
+
+  RSA_PUBLIC_KEY pubkey;
+  pubkey.bits = bits;
+  pubkey.modulus = modules;
+  memcpy(pubkey.exponent, public_, 256);
+  WORD size = static_cast<WORD>(*size_out);
+  int result = DONGLE_CHECK(rsa_pub(const_cast<uint8_t*>(in), static_cast<WORD>(size_in), &pubkey, out, &size,
+                                    encrypt ? MODE_ENCODE : MODE_DECODE));
+  if (result >= 0)
+    *size_out = size;
+  return result;
+}
+
+void Dongle::Abort() {
+  for (;;)
+    ;
+}
 int Dongle::CheckError(DWORD error) {
   if (ERR_SUCCESS == error)
     return 0;
