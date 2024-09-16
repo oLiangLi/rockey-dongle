@@ -18,6 +18,10 @@ enum class kTestingIndex : int {
 
   ReadWriteFactoryData,
 
+  CreateRSAFile,
+
+  RSAExec,
+
 };
 
 struct Context_t {
@@ -37,6 +41,9 @@ struct Context_t {
 
   DONGLE_INFO dongle_info_;
   uint8_t bytes[64];
+
+  uint8_t prikey_[256]; // RSA/ECC ...
+  uint8_t pubkey_[256]; // RSA/ECC ...
 };
 
 int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
@@ -154,6 +161,131 @@ int Testing_ReadWriteFactoryData(Dongle& rockey, Context_t* Context, void* Exten
   return error;
 }
 
+int Testing_CreateRSAFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+
+  Context->result_[3] = rLANG_WORLD_MAGIC;
+
+  rlLOGI(TAG, "Testing ... %s ...", __FUNCTION__);
+
+  for (int id = 100; id <= 102; ++id) {
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kRSA, id) < 0) {
+      rlLOGE(TAG, "rockey.DeleteFile kRSA %d Error", id);
+      Context->error_[id - 100] = rockey.GetLastError();
+      ++error;
+    }
+  }
+
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 100,
+                            PKEY_LICENCE{}.SetPermission(PERMISSION::kAdminstrator)) < 0) {
+    ++error;
+    Context->error_[4] = rockey.GetLastError();
+    rlLOGE(TAG, "rockey.CreatePKEYFile 100 Error");
+  }
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 101, PKEY_LICENCE{}.SetPermission(PERMISSION::kNormal)) <
+      0) {
+    ++error;
+    Context->error_[5] = rockey.GetLastError();
+    rlLOGE(TAG, "rockey.CreatePKEYFile 101 Error");
+  }
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 102,
+                            PKEY_LICENCE{}.SetPermission(PERMISSION::kAnonymous)) < 0) {
+    ++error;
+    Context->error_[6] = rockey.GetLastError();
+    rlLOGE(TAG, "rockey.CreatePKEYFile 102 Error");
+  }
+
+  Context->result_[2] = rLANG_ATOMC_WORLD_MAGIC;
+
+  return error;
+}
+
+int Testing_RSAExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  uint8_t input[64], output[256], verify[256];
+  size_t szOut = 256, szOut2 = 256;
+  uint32_t modules = 0;
+
+  if (rockey.GenerateRSA(100, &modules, Context->pubkey_) < 0) {
+    ++error;
+    rlLOGE(TAG, "rockey.GenerateRSA 100 Error");
+  } else {
+    rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA %x", modules);
+
+    rockey.RandBytes(input, sizeof(input));
+    if (rockey.RSAPrivate(100, input, sizeof(input), output, &szOut, true) < 0) {
+      rlLOGE(TAG, "rockey.RSAPrivate encrypt error");
+      ++error;
+    } else if (rockey.RSAPublic(2048, modules, Context->pubkey_, output, szOut, verify, &szOut2, false) < 0) {
+      rlLOGE(TAG, "rockey.RSAPublic error");
+      ++error;
+    } else {
+      DONGLE_VERIFY(szOut2 == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
+    }
+  }
+
+  if (rockey.GenerateRSA(101, &modules, Context->pubkey_, Context->prikey_) < 0) {
+    ++error;
+    rlLOGE(TAG, "rockey.GenerateRSA 101 Error");
+  } else {
+    rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA.pubkey %x", modules);
+    rlLOGXI(TAG, Context->prikey_, 256, "rockey.GenerateRSA.prikey");
+
+    rockey.RandBytes(input, sizeof(input));
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, input, sizeof(input), output, &szOut, true) >= 0 &&
+                  szOut == 256);
+
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPrivate(101, output, szOut, verify, &szOut2, false) >= 0 && szOut2 == sizeof(input));
+    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
+
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPrivate(101, output, szOut, verify, &szOut2, false) >= 0 && szOut2 == sizeof(input));
+    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
+
+    rockey.RandBytes(input, sizeof(input));
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, input, sizeof(input), output, &szOut, true) >= 0 &&
+                  szOut == 256);
+
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, output, szOut, verify, &szOut2,
+                                    false) >= 0 && szOut2 == 64);
+    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
+  }
+
+  if (rockey.ImportRSA(102, 2048, modules, Context->pubkey_, Context->prikey_) < 0) {
+    ++error;
+    rlLOGE(TAG, "rockey.ImportRSA 102 Error");
+  } else {
+    rockey.RandBytes(input, sizeof(input));
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, input, sizeof(input), output, &szOut, true) >= 0 &&
+                  szOut == 256);
+
+    szOut = 256;
+    szOut2 = 256;
+    DONGLE_VERIFY(rockey.RSAPrivate(102, output, szOut, verify, &szOut2, false) >= 0 && szOut2 == sizeof(input));
+    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
+
+    DONGLE_VERIFY(rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, input, sizeof(input), output,
+                                    &szOut, true) >= 0 &&
+                  szOut == 256);
+    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, output, szOut, verify, &szOut2, false) >= 0 &&
+                  szOut2 == sizeof(input));
+    DONGLE_VERIFY(0 == memcmp(input, verify, sizeof(input)));
+  }
+  
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -204,24 +336,21 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rockey.WriteShareMemory(&Context->bytes[32]);
   rockey.ReadShareMemory(Context->share_memory_1_);
 
-  int index = Context->argv_[0];
+  int index = Context->argv_[0] & 0xFF, result2 = 0;
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
   rockey.ClearLastError();
 
-  int result2 = 0;
-  switch (static_cast<kTestingIndex>(index & 0xFF)) {
-    case kTestingIndex::CreateDataFile:
-      result2 = Testing_CreateDataFile(rockey, Context, ExtendBuf);
-      break;
+#define DONGLE_RUN_TESTING(Name)                            \
+  do {                                                      \
+    if (index == static_cast<int>(kTestingIndex::Name))     \
+      result2 = Testing_##Name(rockey, Context, ExtendBuf); \
+  } while (0)
 
-    case kTestingIndex::ReadWriteDataFile:
-      result2 = Testing_ReadWriteDataFile(rockey, Context, ExtendBuf);
-      break;
-
-    case kTestingIndex::ReadWriteFactoryData:
-      result2 = Testing_ReadWriteFactoryData(rockey, Context, ExtendBuf);
-      break;
-  }
+  DONGLE_RUN_TESTING(CreateDataFile);
+  DONGLE_RUN_TESTING(ReadWriteDataFile);
+  DONGLE_RUN_TESTING(ReadWriteFactoryData);
+  DONGLE_RUN_TESTING(CreateRSAFile);
+  DONGLE_RUN_TESTING(RSAExec);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

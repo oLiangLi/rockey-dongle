@@ -129,8 +129,7 @@ int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PK
 int Dongle::GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_) {
   RSA_PUBLIC_KEY pubkey;
   SecretBuffer<1, RSA_PRIVATE_KEY> pkey;
-  if (0 != DONGLE_CHECK(
-               Dongle_RsaGenPubPriKey(handle_, id, &pubkey, private_ ? static_cast<RSA_PRIVATE_KEY*>(pkey) : nullptr)))
+  if (0 != DONGLE_CHECK(Dongle_RsaGenPubPriKey(handle_, id, &pubkey, static_cast<RSA_PRIVATE_KEY*>(pkey))))
     return -1;
 
   *modulus = pubkey.modulus;
@@ -154,8 +153,7 @@ int Dongle::ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[
 int Dongle::GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_) {
   ECCSM2_PUBLIC_KEY pubkey;
   SecretBuffer<1, ECCSM2_PRIVATE_KEY> pkey;
-  if (0 != DONGLE_CHECK(Dongle_EccGenPubPriKey(handle_, id, &pubkey,
-                                               private_ ? static_cast<ECCSM2_PRIVATE_KEY*>(pkey) : nullptr)))
+  if (0 != DONGLE_CHECK(Dongle_EccGenPubPriKey(handle_, id, &pubkey, static_cast<ECCSM2_PRIVATE_KEY*>(pkey))))
     return -1;
   CopyReverse<32>(X, pubkey.XCoordinate);
   CopyReverse<32>(Y, pubkey.YCoordinate);
@@ -178,8 +176,7 @@ int Dongle::ImportP256(int id, const uint8_t X[32], const uint8_t Y[32], const u
 int Dongle::GenerateSM2(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_) {
   ECCSM2_PUBLIC_KEY pubkey;
   SecretBuffer<1, ECCSM2_PRIVATE_KEY> pkey;
-  if (0 != DONGLE_CHECK(Dongle_SM2GenPubPriKey(handle_, id, &pubkey,
-                                               private_ ? static_cast<ECCSM2_PRIVATE_KEY*>(pkey) : nullptr)))
+  if (0 != DONGLE_CHECK(Dongle_SM2GenPubPriKey(handle_, id, &pubkey, static_cast<ECCSM2_PRIVATE_KEY*>(pkey))))
     return -1;
 
   CopyReverse<32>(X, pubkey.XCoordinate);

@@ -215,6 +215,8 @@ public:
 #endif /* __RockeyARM__ */
 
   mutable DWORD last_error_ = 0;
+
+ public:
   int CheckError(DWORD error);
   int CheckError(DWORD error, const char* expr) {
     int result = CheckError(error);
@@ -222,7 +224,7 @@ public:
       rlLOGE(rLANG_WORLD_MAGIC, "DONGLE.EXEC '%s' Error %08X", expr, error);
     return result;
   }
-  
+
   static void Abort();
   static void Verify(bool result, const char* expr) {
     if (!result) {
