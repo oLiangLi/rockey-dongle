@@ -22,7 +22,7 @@ enum class kTestingIndex : int {
 
   RSAExec,
 
-  SM2SignVerify,
+  SM2Exec,
 
 };
 
@@ -288,9 +288,8 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
-int Testing_SM2SignVerify(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
-
   if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8100) < 0) {
     ++error;
     Context->error_[0] = rockey.GetLastError();
@@ -339,6 +338,27 @@ int Testing_SM2SignVerify(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
       rockey.SM2Verify(X, Y, H, R, S) < 0) {
     ++error;
     Context->error_[7] = rockey.GetLastError();
+  }
+
+  uint8_t VV[32];
+  size_t szVV = 32;
+  uint8_t sm2_cipher_[128];
+  memset(sm2_cipher_, 0xEE, sizeof(sm2_cipher_));
+
+  if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) < 0) {
+    ++error;
+    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_");
+  }
+
+  Context->result_[3] = rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV);
+  if (Context->result_[3] < 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
+    ++error;
+  }
+
+  memset(VV, 0, sizeof(VV));
+  Context->result_[2] = rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 32, VV, &szVV);
+  if ((Context->result_[2] & (1<<31)) != 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
+    ++error;
   }
 
   return error;
@@ -409,7 +429,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(ReadWriteFactoryData);
   DONGLE_RUN_TESTING(CreateRSAFile);
   DONGLE_RUN_TESTING(RSAExec);
-  DONGLE_RUN_TESTING(SM2SignVerify);
+  DONGLE_RUN_TESTING(SM2Exec);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

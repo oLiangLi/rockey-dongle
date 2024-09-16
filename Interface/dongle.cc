@@ -1,7 +1,25 @@
 #include <Interface/dongle.h>
 #include <base/base.h>
-
+#include <openssl/asn1.h>
+#include <openssl/asn1t.h>
 #include "RockeyARM/Dongle_API.h"
+
+/* Copy from sm2_crypt.c */
+struct SM2_Ciphertext_st {
+  BIGNUM* C1x;
+  BIGNUM* C1y;
+  ASN1_OCTET_STRING* C3;
+  ASN1_OCTET_STRING* C2;
+};
+
+ASN1_SEQUENCE(SM2_Ciphertext) = {
+  ASN1_SIMPLE(SM2_Ciphertext, C1x, BIGNUM),
+  ASN1_SIMPLE(SM2_Ciphertext, C1y, BIGNUM),
+  ASN1_SIMPLE(SM2_Ciphertext, C3, ASN1_OCTET_STRING),
+  ASN1_SIMPLE(SM2_Ciphertext, C2, ASN1_OCTET_STRING),
+} ASN1_SEQUENCE_END(SM2_Ciphertext)
+
+IMPLEMENT_ASN1_FUNCTIONS(SM2_Ciphertext)
 
 rLANG_DECLARE_MACHINE
 
@@ -10,6 +28,43 @@ constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DONGLE");
 }
 
 namespace dongle {
+
+int SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer) {
+  DONGLE_VERIFY(cipher_len > 96 && cipher_len <= 1024);
+
+  SM2_Ciphertext_st* ciphertext = SM2_Ciphertext_new();
+  ciphertext->C1x = BN_bin2bn(&text_cipher[0], 32, nullptr);
+  ciphertext->C1y = BN_bin2bn(&text_cipher[32], 32, nullptr);
+  ciphertext->C3 = ASN1_OCTET_STRING_new();
+  ciphertext->C2 = ASN1_OCTET_STRING_new();
+
+  DONGLE_VERIFY(ciphertext->C1x && ciphertext->C1y && ciphertext->C3 && ciphertext->C2);
+  DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C3, &text_cipher[64], 32) > 0);
+  DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C2, &text_cipher[96], static_cast<int>(cipher_len - 96)) > 0);
+
+  int result = i2d_SM2_Ciphertext(ciphertext, &buffer);
+  SM2_Ciphertext_free(ciphertext);
+
+  return result;
+}
+int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t* buffer) {
+  const uint8_t* p = asn1_cipher;
+  DONGLE_VERIFY(cipher_len <= 1024);
+  SM2_Ciphertext_st* ciphertext = d2i_SM2_Ciphertext(nullptr, &p, static_cast<int>(cipher_len));
+  if (!ciphertext)
+    return -EINVAL;
+
+  int result = -EINVAL;
+  if (p - asn1_cipher == cipher_len && ciphertext->C3->length == 32 && ciphertext->C2->length > 0) {
+    if (BN_bn2binpad(ciphertext->C1x, &buffer[0], 32) > 0 && BN_bn2binpad(ciphertext->C1y, &buffer[32], 32) > 0) {
+      memcpy(&buffer[64], ciphertext->C3->data, 32);
+      memcpy(&buffer[96], ciphertext->C2->data, ciphertext->C2->length);
+      result = 96 + ciphertext->C2->length;
+    }
+  }
+  SM2_Ciphertext_free(ciphertext);
+  return result;
+}
 
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
   return DONGLE_CHECK(Dongle_GenRandom(handle_, static_cast<int>(size), buffer));
@@ -424,6 +479,7 @@ int Dongle::SM2Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R[
 }
 
 int Dongle::SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) {
+  rlLOGE(TAG, "Dongle_SM2Decrypt/%d Not implements yet!", id);
   return -ENOSYS;
 }
 
@@ -432,14 +488,68 @@ int Dongle::SM2Decrypt(const uint8_t private_[32],
                        size_t size_cipher,
                        uint8_t text[],
                        size_t* size_text) {
-  return -ENOSYS;
+  int ret = -1;
+  if (size_cipher < 96 || size_cipher > 512)
+    return -EINVAL;
+
+  uint8_t asn1_cipher[1024];
+  int asn1_len = SM2Cipher_TextToASN1(cipher, size_cipher, asn1_cipher);
+  if (asn1_len <= 0)
+    return -EINVAL;
+
+  EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
+  BIGNUM* pkey = BN_bin2bn(private_, 32, nullptr);
+
+  do {
+    if (EC_KEY_set_private_key(eckey, pkey) <= 0)
+      break;
+
+    if (sm2_decrypt(eckey, EVP_sm3(), asn1_cipher, asn1_len, text, size_text) > 0)
+      ret = 0;
+  } while (0);
+
+  EC_KEY_free(eckey);
+  BN_free(pkey);
+
+  return ret;
 }
 int Dongle::SM2Encrypt(const uint8_t X[32],
                        const uint8_t Y[32],
                        const uint8_t text[],
                        size_t size_text,
-                       uint8_t cipher[]) {
-  return -ENOSYS;
+                       uint8_t out_cipher[]) {
+  int result = -1;
+
+  DONGLE_VERIFY(size_text > 0 && size_text <= 256);
+  EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
+  const EC_GROUP* const group = EC_KEY_get0_group(eckey);
+  EC_POINT* point = EC_POINT_new(group);
+
+  do {
+    uint8_t pubkey[65];
+    SecretBuffer<512> cipher;
+
+    pubkey[0] = 4;
+    memcpy(&pubkey[1], X, 32);
+    memcpy(&pubkey[33], Y, 32);
+    if (EC_POINT_oct2point(group, point, pubkey, 65, nullptr) <= 0)
+      break;
+    if (EC_POINT_is_on_curve(group, point, nullptr) <= 0)
+      break;
+    if (EC_KEY_set_public_key(eckey, point) <= 0)
+      break;
+
+    size_t cipher_len = 512;
+    if (sm2_encrypt(eckey, EVP_sm3(), text, size_text, cipher, &cipher_len) <= 0)
+      break;
+
+    DONGLE_VERIFY(96 + size_text == SM2Cipher_ASN1ToText(cipher, cipher_len, out_cipher));
+    result = 0;
+  } while (0);
+  EC_POINT_free(point);
+  EC_KEY_free(eckey);
+
+  return result;
 }
 
 void Dongle::Abort() {
