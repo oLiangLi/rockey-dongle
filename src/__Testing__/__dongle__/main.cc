@@ -13,10 +13,11 @@ namespace dongle {
 using DWORD = Dongle::DWORD;
 
 enum class kTestingIndex : int {
-   CreateDataFile = 1,
+  CreateDataFile = 1,
 
-   ReadWriteDataFile,
+  ReadWriteDataFile,
 
+  ReadWriteFactoryData,
 
 };
 
@@ -115,6 +116,44 @@ int Testing_ReadWriteDataFile(Dongle& rockey, Context_t* Context, void* ExtendBu
   return error;
 }
 
+int Testing_ReadWriteFactoryData(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0, counter = 0;
+  uint32_t state[16];
+  uint8_t stream[64], verify[64];
+  memset(state, 0, sizeof(state));
+  memcpy(state, Context->argv_, sizeof(Context->argv_));
+
+  Context->result_[3] = rLANG_WORLD_MAGIC;
+
+  rlLOGI(TAG, "Testing ... %s ...", __FUNCTION__);
+
+  for (int off = 0; off < 8192; off += 64) {
+    rlLOGI(TAG, "Write File %x %d", Dongle::kFactoryDataFileId, off);
+    state[12] = counter++;
+    rlCryptoChaCha20Block(state, stream);
+    if (0 != rockey.WriteDataFile(Dongle::kFactoryDataFileId, off, stream, sizeof(stream))) {
+      Context->error_[7] = rockey.GetLastError();
+      ++error;
+    }
+  }
+
+  counter = 0;
+  for (int off = 0; off < 8192; off += 64) {
+    rlLOGI(TAG, "Read File %x %d", Dongle::kFactoryDataFileId, off);
+    state[12] = counter++;
+    rlCryptoChaCha20Block(state, verify);
+    if (0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, off, stream, sizeof(stream))) {
+      Context->error_[6] = rockey.GetLastError();
+      ++error;
+    }
+    if (0 != memcmp(stream, verify, sizeof(verify)))
+      ++error;
+  }
+
+  Context->result_[2] = rLANG_ATOMC_WORLD_MAGIC;
+
+  return error;
+}
 
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
@@ -178,6 +217,10 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
     case kTestingIndex::ReadWriteDataFile:
       result2 = Testing_ReadWriteDataFile(rockey, Context, ExtendBuf);
+      break;
+
+    case kTestingIndex::ReadWriteFactoryData:
+      result2 = Testing_ReadWriteFactoryData(rockey, Context, ExtendBuf);
       break;
   }
 

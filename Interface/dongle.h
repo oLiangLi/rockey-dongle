@@ -63,6 +63,8 @@ class Dongle {
   using DWORD = ::DWORD;
 #endif /* _WIN32 */
 
+  static constexpr int kFactoryDataFileId = 0xFFFF;
+
  public:
   template <size_t N = 32, typename T = uint8_t>
   void CopyReverse(void* to, const void* from) {

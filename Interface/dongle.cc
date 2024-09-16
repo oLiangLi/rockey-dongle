@@ -81,14 +81,19 @@ int Dongle::CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION writ
   return DONGLE_CHECK(Dongle_CreateFile(handle_, FILE_DATA, id, reinterpret_cast<uint8_t*>(&attr)));
 }
 int Dongle::WriteDataFile(int id, size_t offset, const void* buffer, size_t size) {
+  if (id == kFactoryDataFileId)
+    return DONGLE_CHECK(Dongle_WriteData(handle_, static_cast<int>(offset),
+                                         static_cast<uint8_t*>(const_cast<void*>(buffer)), static_cast<int>(size)));
   return DONGLE_CHECK(Dongle_WriteFile(handle_, FILE_DATA, id, static_cast<WORD>(offset),
                                        static_cast<uint8_t*>(const_cast<void*>(buffer)), static_cast<int>(size)));
 }
 int Dongle::ReadDataFile(int id, size_t offset, void* buffer, size_t size) {
+  if (id == kFactoryDataFileId)
+    return DONGLE_CHECK(
+        Dongle_ReadData(handle_, static_cast<int>(offset), static_cast<uint8_t*>(buffer), static_cast<int>(size)));
   return DONGLE_CHECK(
       Dongle_ReadFile(handle_, id, static_cast<WORD>(offset), static_cast<uint8_t*>(buffer), static_cast<int>(size)));
 }
-
 
 int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PKEY_LICENCE licence) {
   WORD type;
