@@ -687,6 +687,57 @@ int Dongle::SM2Encrypt(const uint8_t X[32],
   return result;
 }
 
+int Dongle::SHA1(const void* input, size_t size, uint8_t md[20]) {
+  return DONGLE_CHECK(Dongle_HASH(handle_, FLAG_HASH_SHA1, static_cast<uint8_t*>(const_cast<void*>(input)),
+                                  static_cast<int>(size), md));
+}
+int Dongle::SM3(const void* input, size_t size, uint8_t md[32]) {
+  return DONGLE_CHECK(
+      Dongle_HASH(handle_, FLAG_HASH_SM3, static_cast<uint8_t*>(const_cast<void*>(input)), static_cast<int>(size), md));
+}
+
+int Dongle::TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
+  return DONGLE_CHECK(
+      Dongle_TDES(handle_, id, encrypt ? FLAG_ENCODE : FLAG_DECODE, buffer, buffer, static_cast<int>(size)));
+}
+int Dongle::TDESECB(const uint8_t key[16], uint8_t* buffer, size_t size_, bool encrypt) {
+  int size = static_cast<int>(size_);
+
+  const EVP_CIPHER* cipher = EVP_des_ede_ecb();
+  EVP_CIPHER_CTX* cipherCtx = EVP_CIPHER_CTX_new();
+  DONGLE_VERIFY(size % 8 == 0 && 8 == EVP_CIPHER_block_size(cipher) && 16 == EVP_CIPHER_key_length(cipher));
+
+  if (encrypt) {
+    DONGLE_VERIFY(EVP_EncryptInit(cipherCtx, cipher, key, nullptr) > 0);
+    DONGLE_VERIFY(EVP_EncryptUpdate(cipherCtx, buffer, &size, buffer, size) > 0);
+  } else {
+    DONGLE_VERIFY(EVP_DecryptInit(cipherCtx, cipher, key, nullptr) > 0);
+    DONGLE_VERIFY(EVP_DecryptUpdate(cipherCtx, buffer, &size, buffer, size) > 0);
+  }
+  EVP_CIPHER_CTX_free(cipherCtx);
+
+  return 0;
+}
+
+int Dongle::SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
+  return DONGLE_CHECK(
+      Dongle_SM4(handle_, id, encrypt ? FLAG_ENCODE : FLAG_DECODE, buffer, buffer, static_cast<int>(size)));
+}
+int Dongle::SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt) {  
+  SM4_KEY sm4key;
+  DONGLE_VERIFY(size % 16 == 0 && SM4_set_key(key, &sm4key));
+  if (encrypt) {
+    for (size_t off = 0; off < size; off += 16, buffer += 16)
+      SM4_encrypt(buffer, buffer, &sm4key);
+  } else {
+    for (size_t off = 0; off < size; off += 16, buffer += 16)
+      SM4_decrypt(buffer, buffer, &sm4key);
+  }
+
+  return 0;
+}
+
+
 void Dongle::Abort() {
   abort();
 }

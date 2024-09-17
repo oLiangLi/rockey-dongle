@@ -15,6 +15,7 @@
 #include <openssl/sm2.h>
 #include <openssl/sm3.h>
 #include <openssl/sm4.h>
+#include <openssl/des.h>
 #endif /* X_BUILD_native */
 
 #ifdef _WIN32
@@ -243,6 +244,17 @@ public:
                          size_t size_text,
                          uint8_t cipher[]);
 
+ public:  // HASH ...
+  virtual int SHA1(const void* input, size_t size, uint8_t md[20]);
+  virtual int SM3(const void* input, size_t size, uint8_t md[32]);
+
+ public:  // TDES ...
+  virtual int TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt);
+  virtual int TDESECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt);
+
+ public:  // SM4 ...
+  virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt);
+  virtual int SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt);
 
  protected:
 #ifndef __RockeyARM__

@@ -26,6 +26,8 @@ enum class kTestingIndex : int {
 
   P256Exec,
 
+  KeyExec,
+
 };
 
 struct Context_t {
@@ -460,6 +462,112 @@ int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_KeyExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  uint8_t K[16], input[64], cipher[64], verify[64];
+
+  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kTDES, 8) < 0)
+    ++error;
+
+  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM4, 9) < 0)
+    ++error;
+
+  if (rockey.CreateKeyFile(8, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kTDES) < 0)
+    ++error;
+
+  if (rockey.CreateKeyFile(9, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kSM4) < 0)
+    ++error;
+
+  if (rockey.RandBytes(K, sizeof(K)) < 0)
+    ++error;
+
+  if (rockey.RandBytes(input, sizeof(input)) < 0)
+    ++error;
+
+  memcpy(cipher, input, sizeof(input));
+  if (rockey.SM4ECB(K, cipher, sizeof(input), true) < 0)
+    ++error;
+
+  memcpy(verify, cipher, sizeof(cipher));
+  if (rockey.SM4ECB(K, verify, sizeof(input), false) < 0)
+    ++error;
+
+  if (0 != memcmp(input, verify, sizeof(input)))
+    ++error;
+
+  if (rockey.RandBytes(K, sizeof(K)) < 0)
+    ++error;
+
+  if (rockey.RandBytes(input, sizeof(input)) < 0)
+    ++error;
+
+  memcpy(cipher, input, sizeof(input));
+  if (rockey.TDESECB(K, cipher, sizeof(input), true) < 0)
+    ++error;
+
+  memcpy(verify, cipher, sizeof(cipher));
+  if (rockey.TDESECB(K, verify, sizeof(input), false) < 0)
+    ++error;
+
+  if (0 != memcmp(input, verify, sizeof(input)))
+    ++error;
+
+  if (rockey.RandBytes(K, sizeof(K)) < 0)
+    ++error;
+
+  if (rockey.WriteKeyFile(8, K, 16, SECRET_STORAGE_TYPE::kTDES) < 0)
+    ++error;
+
+  if (rockey.RandBytes(input, sizeof(input)) < 0)
+    ++error;
+
+  memcpy(cipher, input, sizeof(input));
+  if (rockey.TDESECB(8, cipher, sizeof(cipher), true) < 0)
+    ++error;
+
+  memcpy(verify, cipher, sizeof(input));
+  if (rockey.TDESECB(K, verify, sizeof(verify), false) < 0)
+    ++error;
+
+  memcpy(cipher, input, sizeof(input));
+  if (rockey.TDESECB(K, cipher, sizeof(cipher), true) < 0)
+    ++error;
+
+  memcpy(verify, cipher, sizeof(input));
+  if (rockey.TDESECB(8, verify, sizeof(verify), false) < 0)
+    ++error;
+
+  if (0 != memcmp(input, verify, sizeof(input)))
+    ++error;
+
+  if (rockey.RandBytes(K, sizeof(K)) < 0)
+    ++error;
+  if (rockey.WriteKeyFile(9, K, 16, SECRET_STORAGE_TYPE::kSM4) < 0)
+    ++error;
+
+  if (rockey.RandBytes(input, sizeof(input)) < 0)
+    ++error;
+  memcpy(cipher, input, sizeof(input));
+  if (rockey.SM4ECB(9, cipher, sizeof(cipher), true) < 0)
+    ++error;
+
+  memcpy(verify, cipher, sizeof(cipher));
+  if (rockey.SM4ECB(K, verify, sizeof(verify), false) < 0)
+    ++error;
+
+  if (rockey.RandBytes(input, sizeof(input)) < 0)
+    ++error;
+  memcpy(cipher, input, sizeof(input));
+  if (rockey.SM4ECB(K, cipher, sizeof(cipher), true) < 0)
+    ++error;
+
+  memcpy(verify, cipher, sizeof(cipher));
+  if (rockey.SM4ECB(9, verify, sizeof(verify), false) < 0)
+    ++error;
+  
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -551,6 +659,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(RSAExec);
   DONGLE_RUN_TESTING(SM2Exec);
   DONGLE_RUN_TESTING(P256Exec);
+  DONGLE_RUN_TESTING(KeyExec);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

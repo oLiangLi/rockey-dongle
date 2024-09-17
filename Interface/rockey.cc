@@ -384,6 +384,27 @@ int Dongle::SM2Encrypt(const uint8_t X[32],
   return DONGLE_CHECK(sm2_encrypt(&pubkey, const_cast<uint8_t*>(text), size_text, cipher));
 }
 
+int Dongle::SHA1(const void* input, size_t size, uint8_t md[20]) {
+  return DONGLE_CHECK(sha1(static_cast<uint8_t*>(const_cast<void*>(input)), size, md));
+}
+int Dongle::SM3(const void* input, size_t size, uint8_t md[32]) {
+  return DONGLE_CHECK(sm3(static_cast<uint8_t*>(const_cast<void*>(input)), size, md));
+}
+
+int Dongle::TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
+  return DONGLE_CHECK(tdes(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, id));
+}
+int Dongle::TDESECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt) {
+  return DONGLE_CHECK(tdes_raw(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, const_cast<uint8_t*>(key)));
+}
+
+int Dongle::SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
+  return DONGLE_CHECK(sm4(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, id));
+}
+int Dongle::SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt) {
+  return DONGLE_CHECK(sm4_raw(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, const_cast<uint8_t*>(key)));
+}
+
 void Dongle::Abort() {
   for (;;)
     ;
