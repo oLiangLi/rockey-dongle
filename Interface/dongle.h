@@ -147,6 +147,7 @@ class Dongle {
 
  public:
   virtual int RandBytes(uint8_t* buffer, size_t size);
+  virtual int SeedSecret(const void* input, size_t size, void* value /* size_is(16) */);
 
 public:
   virtual int GetRealTime(DWORD* time);
@@ -291,60 +292,6 @@ class RockeyARM : public Dongle {
   virtual int UpdateExeFile(const void* file, size_t size);
   virtual int ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret);
 };
-
-
-#if 0
-class Dongle {
- public:  // P256 ECDSA ...
-  virtual int P256Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
-  virtual int P256Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) = 0;
-  virtual int P256Verify(const uint8_t X[32],
-                         const uint8_t Y[32],
-                         const uint8_t hash[32],
-                         const uint8_t R[32],
-                         const uint8_t S[32]) = 0;
-
- public:  // HASH ...
-  virtual int SHA1(const void* input, size_t size, uint8_t md[20]) = 0;
-  virtual int SM3(const void* input, size_t size, uint8_t md[32]) = 0;
-
- public:  // TDES ...
-  virtual int TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
-  virtual int TDESECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
-
- public:  // SM4 ...
-  virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
-  virtual int SM4ECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) = 0;
-
- public:  // PRIVATE SEED ...
-  virtual int SEED(const void* input, size_t size, uint8_t result[16]) = 0;
-
- public:
-  Dongle() = default;
-  virtual ~Dongle() = default;
-
-  Dongle(const Dongle&) = delete;
-  Dongle& operator=(const Dongle&) = delete;
-};
-
-class RockeyARM : public Dongle {
- public:
-  virtual int ChangePIN(PIN_STATE type, const char* old, const char* pin, int count);
-  virtual int ResetUserPIN(const char* admin);
-
- public:
-  virtual int SetUserID(uint32_t id);
-  virtual int GetDeadline(uint32_t* time);
-  virtual int SetDeadline(uint32_t time);
-  virtual int GetUTCTime(uint32_t* time);
-
- public:
-  virtual int SwitchProtocol(bool ccid);
-  virtual int LimitSeedCount(int count);
-};
-#endif /* */
-
-
 
 } // namespace dongle
 

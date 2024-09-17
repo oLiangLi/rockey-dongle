@@ -69,6 +69,10 @@ int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t*
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
   return DONGLE_CHECK(Dongle_GenRandom(handle_, static_cast<int>(size), buffer));
 }
+int Dongle::SeedSecret(const void* input, size_t size, void* value) {
+  return DONGLE_CHECK(Dongle_Seed(handle_, const_cast<uint8_t*>(static_cast<const uint8_t*>(input)),
+                                  static_cast<int>(size), static_cast<uint8_t*>(value)));
+}
 int Dongle::GetRealTime(DWORD* time) {
   return DONGLE_CHECK(Dongle_GetUTCTime(handle_, time));
 }
@@ -793,59 +797,6 @@ int RockeyARM::Close(){
   std::swap(handle, handle_);
   return DONGLE_CHECK(Dongle_Close(handle));
 }
-
-#if 0
-
-RockeyARM::~RockeyARM() {
-  Close();
-}
-
-int RockeyARM::EnumDongle(DONGLE_INFO* info, size_t size, uint32_t* error) {
-  DWORD result;
-  int count = -1;
-
-  if (!info || !size) {
-    result = Dongle_Enum(nullptr, &count);
-  } else {
-    constexpr size_t kDongleMaxCount = 64;
-    ::DONGLE_INFO all[kDongleMaxCount];
-    result = Dongle_Enum(all, &count);
-    if (result == DONGLE_SUCCESS && count > 0) {
-      if (size > static_cast<size_t>(count))
-        size = count;
-      for (size_t i = 0; i < size; ++i)
-        GetDongleInfo(&info[i], all[i]);
-    }
-  }
-  if (error)
-    *error = result;
-  return count;
-}
-
-int RockeyARM::CheckError(uint32_t error) {
-  if (DONGLE_SUCCESS == error)
-    return 0;
-  last_error_ = error;
-  return -1;
-}
-
-int RockeyARM::Close() {
-  Handle h = nullptr;
-  std::swap(h, handle_);
-  return CheckError(Dongle_Close(h));
-}
-
-int RockeyARM::Open(int index) {
-  Close();
-
-  DONGLE_HANDLE handle = nullptr;
-  if (0 != CheckError(Dongle_Open(&handle, index)))
-    return -1;
-  handle_ = static_cast<Handle>(handle);
-  return 0;
-}
-#endif
-
 
 } // namespace dongle
 

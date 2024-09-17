@@ -10,7 +10,10 @@ namespace dongle {
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
   return DONGLE_CHECK(get_random(buffer, size));
 }
-
+int Dongle::SeedSecret(const void* input, size_t size, void* value) {
+  return DONGLE_CHECK(seed(const_cast<uint8_t*>(static_cast<const uint8_t*>(input)), static_cast<int>(size),
+                           static_cast<uint8_t*>(value)));
+}
 int Dongle::GetRealTime(DWORD* time) {
   return DONGLE_CHECK(get_realtime(time));
 }
@@ -50,8 +53,6 @@ int Dongle::WriteShareMemory(const uint8_t buffer[32]) {
 
 int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
   WORD type;
-
-#if 1
   if (type_ == SECRET_STORAGE_TYPE::kData) {
     type = FILE_DATA;
   } else if (type_ == SECRET_STORAGE_TYPE::kRSA) {
@@ -63,26 +64,6 @@ int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
   } else {
     return -EINVAL;
   }
-#else
-  switch (type_) {
-    case SECRET_STORAGE_TYPE::kData:
-      type = FILE_DATA;
-      break;
-    case SECRET_STORAGE_TYPE::kRSA:
-      type = FILE_PRIKEY_RSA;
-      break;
-    case SECRET_STORAGE_TYPE::kP256:
-    case SECRET_STORAGE_TYPE::kSM2:
-      type = FILE_PRIKEY_ECCSM2;
-      break;
-    case SECRET_STORAGE_TYPE::kSM4:
-    case SECRET_STORAGE_TYPE::kTDES:
-      type = FILE_KEY;
-      break;
-    default:
-      return -EINVAL;
-  }
-#endif
 
   return DONGLE_CHECK(delete_file(type, id));
 }
@@ -413,101 +394,6 @@ int Dongle::CheckError(DWORD error) {
   last_error_ = error;
   return -1;
 }
-
-
-#if 0
-class Rockey final : public Dongle {
- public:
-
- public:
-  int P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) override {
-    WORD len_sign = 64;
-    uint8_t sign[64], hash[32];
-    CopyReverse<32>(hash, hash_);
-    if (0 != CheckError(ecc_sign(id, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
-      return -1;
-    CopyReverse<32>(R, &sign[0]);
-    CopyReverse<32>(S, &sign[32]);
-    return 0;
-  }
-  int P256Sign(const uint8_t private_[32], const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) override {
-    WORD len_sign = 64;
-    uint8_t sign[64], hash[32];
-    SecretBuffer<1,ECCSM2_PRIVATE_KEY> pkey;
-
-    pkey->bits = 256;
-    CopyReverse<32>(hash, hash_);
-    CopyReverse<32>(pkey->PrivateKey, private_);
-    if (0 != CheckError(ecc_sign_raw(pkey, const_cast<uint8_t*>(hash), 32, sign, &len_sign)))
-      return -1;
-    CopyReverse<32>(R, &sign[0]);
-    CopyReverse<32>(S, &sign[32]);
-    return 0;
-  }
-  int P256Verify(const uint8_t X[32],
-                 const uint8_t Y[32],
-                 const uint8_t hash_[32],
-                 const uint8_t R[32],
-                 const uint8_t S[32]) override {
-    ECCSM2_PUBLIC_KEY pubkey;
-    uint8_t hash[32], sign[64];
-
-    pubkey.bits = 256;
-    CopyReverse<32>(pubkey.XCoordinate, X);
-    CopyReverse<32>(pubkey.YCoordinate, Y);
-    CopyReverse<32>(hash, hash_);
-    CopyReverse<32>(&sign[0], R);
-    CopyReverse<32>(&sign[32], S);
-    return CheckError(ecc_verify(&pubkey, hash, 32, sign));
-  }
-
-
-
-
- public:
-  int SHA1(const void* input, size_t size, uint8_t md[20]) override {
-    return CheckError(sha1(static_cast<uint8_t*>(const_cast<void*>(input)), size, md));
-  }
-  int SM3(const void* input, size_t size, uint8_t md[32]) override {
-    return CheckError(sm3(static_cast<uint8_t*>(const_cast<void*>(input)), size, md));
-  }
-
-  int TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) override {
-    return CheckError(tdes(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, id));
-  }
-  int TDESECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) override {
-    return CheckError(tdes_raw(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, const_cast<uint8_t*>(key)));
-  }
-
-  int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) override {
-    return CheckError(sm4(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, id));
-  }
-  int SM4ECB(const uint8_t key[16], int id, uint8_t* buffer, size_t size, bool encrypt) override {
-    return CheckError(sm4_raw(buffer, size, encrypt ? MODE_ENCODE : MODE_DECODE, const_cast<uint8_t*>(key)));
-  }
-
-  int SEED(const void* input, size_t size, uint8_t result[16]) override {
-    return CheckError(seed(static_cast<uint8_t*>(const_cast<void*>(input)), size, result));
-  }
-
- private:
-  DWORD last_error_ = 0;
-  int CheckError(DWORD error) {
-    if (ERR_SUCCESS == error)
-      return 0;
-    last_error_ = error;
-    return -1;
-  }
-};
-
-
-int RockeyARM::RockeyDongle(MemoryHolder* memory, Dongle** dongle) {
-  rLANG_ABIREQUIRE(sizeof(Rockey) <= sizeof(RockeyARM::MemoryHolder));
-  *dongle = new (memory) Rockey();
-  return 0;
-}
-#endif
-
 
 } // namespace dongle
 

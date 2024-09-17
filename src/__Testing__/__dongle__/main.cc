@@ -34,7 +34,7 @@ struct Context_t {
     uint32_t result_[4];
     uint8_t bytes_[16];
   };
-
+  uint32_t seed_[8];
   uint32_t error_[8];
 
   PERMISSION permission_;
@@ -516,6 +516,10 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 #endif  // __RockeyARM__
 
   result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
+  rlLOGI(TAG, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.SeedSecret(Context->argv_, sizeof(Context->argv_), Context->seed_);
+  rlLOGI(TAG, "rockey.SeedSecret %d/%08x", result, rockey.GetLastError());
 
   rockey.SetLEDState(LED_STATE::kBlink);
 
