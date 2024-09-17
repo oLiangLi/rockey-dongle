@@ -28,6 +28,8 @@ enum class kTestingIndex : int {
 
   KeyExec,
 
+  HashExec,
+
 };
 
 struct Context_t {
@@ -568,6 +570,45 @@ int Testing_KeyExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_HashExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  uint8_t sha1[20];
+  uint8_t sm3[32];
+  uint8_t input[100];
+
+  for (int i = 1; i <= 10; ++i) {
+    if (rockey.RandBytes(input, sizeof(input)) < 0)
+      ++error;
+
+    if (rockey.SHA1(input, i * 10, sha1) < 0)
+      ++error;
+
+    if (rockey.SM3(input, i * 10, sm3) < 0)
+      ++error;
+
+#if !defined(X_BUILD_native)
+    auto SM3 = [](const unsigned char* d, size_t n, unsigned char* md) {
+      SM3_CTX ctx;
+      sm3_init(&ctx);
+      sm3_update(&ctx, d, n);
+      sm3_final(md, &ctx);
+    };
+
+    //input[0] ^= 1;
+    uint8_t v_sha1[20], v_sm3[32];
+    SHA1(input, i * 10, v_sha1);
+    SM3(input, i * 10, v_sm3);
+
+    if (0 != memcmp(v_sha1, sha1, sizeof(sha1)))
+      ++error;
+    if (0 != memcmp(v_sm3, sm3, sizeof(sm3)))
+      ++error;
+#endif /* X_BUILD_native */
+  }
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -660,6 +701,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(SM2Exec);
   DONGLE_RUN_TESTING(P256Exec);
   DONGLE_RUN_TESTING(KeyExec);
+  DONGLE_RUN_TESTING(HashExec);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
