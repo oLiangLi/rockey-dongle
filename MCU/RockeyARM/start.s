@@ -3,7 +3,7 @@
 	.thumb
 	
 Vector:
-	.long 0x68000BE0
+	.long 0x68000BF0
 	.long 0 /* size_image  */	
 
 	/**

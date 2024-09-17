@@ -8,7 +8,7 @@ ROCKEYARM_COMMON_CFLAGS += -include $(LOCAL_PATH)/RockeyARM/rockey_predef.h
 ROCKEYARM_COMMON_CFLAGS += -funsigned-char -fshort-enums -fshort-wchar
 ROCKEYARM_COMMON_CFLAGS += -I$(LOCAL_PATH)/RockeyARM/include
 
-ROCKEYARM_COMMON_CFLAGS += -D__RockeyARM__
+ROCKEYARM_COMMON_CFLAGS += -D__RockeyARM__ -fno-jump-tables
 
 ROCKEYARM_COMMON_LDFLAGS := -nostartfiles -Wl,-nostdlib -nostdlib  -Wl,--cref -Wl,--gc-section
 ROCKEYARM_COMMON_LDFLAGS += $(LOCAL_PATH)/RockeyARM/lib/FTRX.a

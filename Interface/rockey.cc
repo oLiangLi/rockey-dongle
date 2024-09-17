@@ -50,6 +50,20 @@ int Dongle::WriteShareMemory(const uint8_t buffer[32]) {
 
 int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
   WORD type;
+
+#if 1
+  if (type_ == SECRET_STORAGE_TYPE::kData) {
+    type = FILE_DATA;
+  } else if (type_ == SECRET_STORAGE_TYPE::kRSA) {
+    type = FILE_PRIKEY_RSA;
+  } else if (type_ == SECRET_STORAGE_TYPE::kP256 || type_ == SECRET_STORAGE_TYPE::kSM2) {
+    type = FILE_PRIKEY_ECCSM2;
+  } else if (type_ == SECRET_STORAGE_TYPE::kSM4 || type_ == SECRET_STORAGE_TYPE::kTDES) {
+    type = FILE_KEY;
+  } else {
+    return -EINVAL;
+  }
+#else
   switch (type_) {
     case SECRET_STORAGE_TYPE::kData:
       type = FILE_DATA;
@@ -68,6 +82,7 @@ int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
     default:
       return -EINVAL;
   }
+#endif
 
   return DONGLE_CHECK(delete_file(type, id));
 }
