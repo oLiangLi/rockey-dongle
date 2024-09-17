@@ -765,6 +765,9 @@ int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
     ret = &dummy;
   return DONGLE_CHECK(Dongle_RunExeFile(handle_, 1, static_cast<uint8_t*>(InOutBuf), static_cast<WORD>(szBuf), ret));
 }
+int RockeyARM::LimitSeedCount(int count) {
+  return DONGLE_CHECK(Dongle_LimitSeedCount(handle_, count));
+}
 
 int RockeyARM::Open(int index) {
   if (index < 0 || index >= 64)

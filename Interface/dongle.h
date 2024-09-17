@@ -291,6 +291,7 @@ class RockeyARM : public Dongle {
 
   virtual int UpdateExeFile(const void* file, size_t size);
   virtual int ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret);
+  virtual int LimitSeedCount(int count);
 };
 
 } // namespace dongle

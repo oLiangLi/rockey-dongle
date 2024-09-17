@@ -519,7 +519,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rlLOGI(TAG, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
 
   result = rockey.SeedSecret(Context->argv_, sizeof(Context->argv_), Context->seed_);
-  rlLOGI(TAG, "rockey.SeedSecret %d/%08x", result, rockey.GetLastError());
+  rlLOGI(TAG, "rockey.SeedSecret %d/%08x", result, rockey.GetLastError(false));
+  Context->seed_[7] = rockey.GetLastError();
+  Context->seed_[6] = result;
 
   rockey.SetLEDState(LED_STATE::kBlink);
 
