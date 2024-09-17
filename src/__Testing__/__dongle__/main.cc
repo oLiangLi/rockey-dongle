@@ -24,6 +24,8 @@ enum class kTestingIndex : int {
 
   SM2Exec,
 
+  P256Exec,
+
 };
 
 struct Context_t {
@@ -43,9 +45,6 @@ struct Context_t {
 
   DONGLE_INFO dongle_info_;
   uint8_t bytes[64];
-
-  uint8_t prikey_[256]; // RSA/ECC ...
-  uint8_t pubkey_[256]; // RSA/ECC ...
 };
 
 int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
@@ -202,7 +201,15 @@ int Testing_CreateRSAFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
-int Testing_RSAExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+int Testing_RSAExec(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
+  struct RSAExecContext : public Context_t {
+    uint8_t prikey_[256];
+    uint8_t pubkey_[256];
+  };
+  RSAExecContext* Context = static_cast<RSAExecContext*>(Context_);
+  memset(Context->prikey_, 0, 256);
+  memset(Context->pubkey_, 0, 256);
+
   int error = 0;
   uint8_t input[64], output[256], verify[256];
   size_t szOut = 256, szOut2 = 256;
@@ -404,6 +411,78 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x100) < 0) {
+    ++error;
+    Context->error_[0] = rockey.GetLastError();
+  }
+
+  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x101) < 0) {
+    ++error;
+    Context->error_[1] = rockey.GetLastError();
+  }
+
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 0x100) < 0) {
+    ++error;
+    Context->error_[2] = rockey.GetLastError();
+  }
+
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 0x101) < 0) {
+    ++error;
+    Context->error_[3] = rockey.GetLastError();
+  }
+
+  uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
+
+  rockey.RandBytes(H, 32);
+  if (rockey.GenerateP256(0x100, X, Y, K)) {
+    ++error;
+    Context->error_[4] = rockey.GetLastError();
+    return 111;
+  } else {
+    rlLOGXI(TAG, X, 32, "P256.X");
+    rlLOGXI(TAG, Y, 32, "P256.Y");
+    rlLOGXI(TAG, K, 32, "P256.K");
+  }
+
+  if (rockey.P256Sign(0x100, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 || rockey.P256Sign(K, H, R, S) < 0 ||
+      rockey.P256Verify(X, Y, H, R, S) < 0) {
+    ++error;
+    Context->error_[5] = rockey.GetLastError();
+  }
+
+  if (rockey.ImportP256(0x101, K) < 0) {
+    ++error;
+    Context->error_[6] = rockey.GetLastError();
+  }
+
+  if (rockey.P256Sign(0x101, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 || rockey.P256Sign(K, H, R, S) < 0 ||
+      rockey.P256Verify(X, Y, H, R, S) < 0) {
+    ++error;
+    Context->error_[7] = rockey.GetLastError();
+  }
+
+#if 1
+  S[0] ^= 1;
+  if (rockey.P256Verify(X, Y, H, R, S) >= 0)
+    ++error;
+  S[0] ^= 1;
+#endif
+
+#if 1
+  X[0] ^= 1;
+  if (rockey.P256Verify(X, Y, H, R, S) >= 0)
+    ++error;
+  X[0] ^= 1;
+
+
+  DONGLE_VERIFY(rockey.P256Verify(X, Y, H, R, S) >= 0);
+#endif
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -434,6 +513,25 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     result = rockey.VerifyPIN(Context->permission_, nullptr, nullptr);
     rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
   }
+
+  const char* app_dongle = getenv("WT_APP_DONGLE");
+  if (app_dongle) {
+    uint8_t app_[64 * 1024];
+    FILE* fp = fopen(app_dongle, "rb");
+    if (!fp) {
+      rlLOGE(TAG, "Can't open %s for read!", app_dongle);
+    } else {
+      size_t size = fread(app_, 1, sizeof(app_), fp);
+      fclose(fp);
+
+      if (size < 64 || size >= 0xFFFF) {
+        rlLOGE(TAG, "Invalid %s app.size %zd", app_dongle, size);
+      } else {
+        result = rockey.UpdateExeFile(app_, size);
+        rlLOGI(TAG, "rockey.UpdateExeFile %s %d/%08X", app_dongle, result, rockey.GetLastError());
+      }
+    }
+  }
 #else  // __RockeyARM__
 
   Dongle rockey;
@@ -457,7 +555,6 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   int index = Context->argv_[0] & 0xFF, result2 = 0;
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
   rockey.ClearLastError();
-
 #define DONGLE_RUN_TESTING(Name)                            \
   do {                                                      \
     if (index == static_cast<int>(kTestingIndex::Name))     \
@@ -470,6 +567,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(CreateRSAFile);
   DONGLE_RUN_TESTING(RSAExec);
   DONGLE_RUN_TESTING(SM2Exec);
+  DONGLE_RUN_TESTING(P256Exec);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

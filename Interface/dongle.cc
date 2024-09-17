@@ -468,7 +468,7 @@ int Dongle::P256Verify(const uint8_t X[32],
 int Dongle::P256Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) {
   int ret = -1;
   uint8_t sign_[80];
-  unsigned slen = sizeof(sign_);
+  size_t slen = sizeof(sign_);
 
   EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
   BIGNUM* pkey = BN_bin2bn(prikey, 32, nullptr);
@@ -477,15 +477,21 @@ int Dongle::P256Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R
     if (EC_KEY_set_private_key(eckey, pkey) <= 0)
       break;
 
-    if (sm2_sign(hash, 32, sign_, &slen, eckey) > 0) {
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    DONGLE_VERIFY(pkey && EVP_PKEY_set1_EC_KEY(pkey, eckey) > 0);
+    EVP_PKEY_CTX* pkeyCtx = EVP_PKEY_CTX_new(pkey, NULL);
+    DONGLE_VERIFY(pkeyCtx && EVP_PKEY_sign_init(pkeyCtx) > 0);
+    if (EVP_PKEY_sign(pkeyCtx, sign_, &slen, hash, 32) > 0) {
       const uint8_t* p = sign_;
-      ECDSA_SIG* s = d2i_ECDSA_SIG(nullptr, &p, slen);
+      ECDSA_SIG* s = d2i_ECDSA_SIG(nullptr, &p, static_cast<int>(slen));
       DONGLE_VERIFY(s != nullptr);
       BN_bn2binpad(ECDSA_SIG_get0_r(s), R, 32);
       BN_bn2binpad(ECDSA_SIG_get0_s(s), S, 32);
       ECDSA_SIG_free(s);
-      ret = 0;
+      ret = 0;    
     }
+    EVP_PKEY_CTX_free(pkeyCtx);
+    EVP_PKEY_free(pkey);
   } while (0);
 
   EC_KEY_free(eckey);
