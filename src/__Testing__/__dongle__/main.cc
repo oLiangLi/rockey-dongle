@@ -211,85 +211,62 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
   memset(Context->pubkey_, 0, 256);
 
   int error = 0;
-  uint8_t input[64], output[256], verify[256];
-  size_t szOut = 256, szOut2 = 256;
+  uint8_t input[128], output[256], verify[256];
+
+  size_t szOut = 256;
   uint32_t modules = 0;
-
-  if (rockey.GenerateRSA(100, &modules, Context->pubkey_) < 0) {
-    ++error;
+  if (rockey.GenerateRSA(100, &modules, Context->pubkey_, Context->prikey_) < 0) {
     rlLOGE(TAG, "rockey.GenerateRSA 100 Error");
-  } else {
-    rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA %x", modules);
+    return 123;
+  }
 
-    rockey.RandBytes(input, sizeof(input));
-    if (rockey.RSAPrivate(100, input, sizeof(input), output, &szOut, true) < 0) {
-      rlLOGE(TAG, "rockey.RSAPrivate encrypt error");
-      ++error;
-    } else if (rockey.RSAPublic(2048, modules, Context->pubkey_, output, szOut, verify, &szOut2, false) < 0) {
-      rlLOGE(TAG, "rockey.RSAPublic error");
+  rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA %x", modules);
+
+  rockey.RandBytes(input, sizeof(input));
+
+  szOut = sizeof(input);
+  memcpy(output, input, sizeof(input));
+  if (rockey.RSAPrivate(100, output, &szOut, true) < 0) {
+    rlLOGE(TAG, "rockey.RSAPrivate sign error");
+    ++error;
+  } else {
+    memcpy(verify, output, szOut);
+    if (rockey.RSAPublic(2048, modules, Context->pubkey_, verify, &szOut, false) < 0) {
+      rlLOGE(TAG, "rockey.RSAPublic verify error");
       ++error;
     } else {
-      DONGLE_VERIFY(szOut2 == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
+      DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
     }
   }
 
-  if (rockey.GenerateRSA(101, &modules, Context->pubkey_, Context->prikey_) < 0) {
-    ++error;
-    rlLOGE(TAG, "rockey.GenerateRSA 101 Error");
-  } else {
-    rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA.pubkey %x", modules);
-    rlLOGXI(TAG, Context->prikey_, 256, "rockey.GenerateRSA.prikey");
-
-    rockey.RandBytes(input, sizeof(input));
-    szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, input, sizeof(input), output, &szOut, true) >= 0 &&
-                  szOut == 256);
-
-    szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPrivate(101, output, szOut, verify, &szOut2, false) >= 0 && szOut2 == sizeof(input));
-    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
-
-    szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPrivate(101, output, szOut, verify, &szOut2, false) >= 0 && szOut2 == sizeof(input));
-    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
-
-    rockey.RandBytes(input, sizeof(input));
-    szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, input, sizeof(input), output, &szOut, true) >= 0 &&
-                  szOut == 256);
-
-    szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, output, szOut, verify, &szOut2,
-                                    false) >= 0 && szOut2 == 64);
-    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
+  if (rockey.ImportRSA(102, 2048, modules, Context->pubkey_, Context->prikey_) < 0) {
+    rlLOGE(TAG, "rockey.ImportRSA 102 Error");
+    return 234;
   }
 
-  if (rockey.ImportRSA(102, 2048, modules, Context->pubkey_, Context->prikey_) < 0) {
+  szOut = sizeof(input);
+  memcpy(output, input, sizeof(input));
+  if (rockey.RSAPublic(2048, modules, Context->pubkey_, output, &szOut, true) < 0) {
+    rlLOGE(TAG, "rockey.RSAPublic encrypt error");
     ++error;
-    rlLOGE(TAG, "rockey.ImportRSA 102 Error");
   } else {
-    rockey.RandBytes(input, sizeof(input));
-    szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, input, sizeof(input), output, &szOut, true) >= 0 &&
-                  szOut == 256);
+    DONGLE_VERIFY(szOut == 256);
+    memcpy(verify, output, szOut);
+
+    if (rockey.RSAPrivate(102, verify, &szOut, false) < 0) {
+      rlLOGE(TAG, "rockey.RSAPrivate decrypt 102 error");
+      ++error;
+    } else {
+      DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
+    }
 
     szOut = 256;
-    szOut2 = 256;
-    DONGLE_VERIFY(rockey.RSAPrivate(102, output, szOut, verify, &szOut2, false) >= 0 && szOut2 == sizeof(input));
-    DONGLE_VERIFY(0 == memcmp(input, verify, 64));
-
-    DONGLE_VERIFY(rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, input, sizeof(input), output,
-                                    &szOut, true) >= 0 &&
-                  szOut == 256);
-    DONGLE_VERIFY(rockey.RSAPublic(2048, modules, Context->pubkey_, output, szOut, verify, &szOut2, false) >= 0 &&
-                  szOut2 == sizeof(input));
-    DONGLE_VERIFY(0 == memcmp(input, verify, sizeof(input)));
+    if (rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, output, &szOut, false) < 0) {
+      rlLOGE(TAG, "rockey.RSAPrivate decrypt error");
+      ++error;
+    } else {
+      DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, output, sizeof(input)));
+    }
   }
 
   return error;

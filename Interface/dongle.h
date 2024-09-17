@@ -193,23 +193,22 @@ public:
   virtual int WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type);
 
  public:
-  virtual int RSAPrivate(int id, const uint8_t* in, size_t size_in, uint8_t out[], size_t* size_out, bool encrypt);
+  virtual int RSAPrivate(int id,
+                         uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
+                         size_t* size_buffer,
+                         bool encrypt);
   virtual int RSAPrivate(int bits,
                          uint32_t modules,
                          const uint8_t public_[],
                          const uint8_t private_[],
-                         const uint8_t* in,
-                         size_t size_in,
-                         uint8_t out[],
-                         size_t* size_out,
+                         uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
+                         size_t* size_buffer,
                          bool encrypt);
   virtual int RSAPublic(int bits,
                         uint32_t modules,
                         const uint8_t public_[],
-                        const uint8_t* in,
-                        size_t size_in,
-                        uint8_t out[],
-                        size_t* size_out,
+                        uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
+                        size_t* size_buffer,
                         bool encrypt);
 
  public:  // P256 ECDSA ...
