@@ -128,10 +128,6 @@ class Dongle {
 
  public:
   Dongle() = default;
-#ifndef __RockeyARM__
-  Dongle(ROCKEY_HANDLE handle) : handle_(handle) {}
-#endif /* __RockeyARM__ */
-
   virtual ~Dongle() = default;
 
   Dongle(const Dongle&) = delete;
@@ -303,7 +299,18 @@ class RockeyARM : public Dongle {
 
   virtual int UpdateExeFile(const void* file, size_t size);
   virtual int ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret);
+
   virtual int LimitSeedCount(int count);
+  virtual int SwitchProtocol(bool ccid);
+  virtual int SetExpireTime(DWORD time);
+  virtual int SetUserID(uint32_t id);
+
+  virtual int ChangePIN(PERMISSION perm, const char* old, const char* pin, int count);
+  virtual int ResetUserPIN(const char* admin);
+
+ public:
+  virtual int GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]);
+  virtual int FactoryReset();
 };
 
 } // namespace dongle

@@ -819,6 +819,39 @@ int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
 int RockeyARM::LimitSeedCount(int count) {
   return DONGLE_CHECK(Dongle_LimitSeedCount(handle_, count));
 }
+int RockeyARM::SwitchProtocol(bool ccid) {
+  int result = DONGLE_CHECK(Dongle_SwitchProtocol(handle_, ccid ? PROTOCOL_CCID : PROTOCOL_HID));
+  if (result >= 0)
+    Close();
+  return result;
+}
+int RockeyARM::SetExpireTime(DWORD time) {
+  return DONGLE_CHECK(Dongle_SetDeadline(handle_, time));
+}
+int RockeyARM::SetUserID(uint32_t id) {
+  return DONGLE_CHECK(Dongle_SetUserID(handle_, id));
+}
+
+int RockeyARM::ChangePIN(PERMISSION perm, const char* old, const char* pin, int count) {
+  return DONGLE_CHECK(Dongle_ChangePIN(handle_,
+                                       perm == PERMISSION::kAdminstrator ? FLAG_ADMINPIN
+                                       : perm == PERMISSION::kNormal     ? FLAG_USERPIN
+                                                                         : -1,
+                                       const_cast<char*>(old), const_cast<char*>(pin), count));
+}
+int RockeyARM::ResetUserPIN(const char* admin) {
+  return DONGLE_CHECK(Dongle_ResetUserPIN(handle_, const_cast<char*>(admin)));
+}
+int RockeyARM::GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]) {
+  return DONGLE_CHECK(
+      Dongle_GenUniqueKey(handle_, static_cast<int>(len), static_cast<uint8_t*>(const_cast<void*>(seed)), pid, admin));
+}
+int RockeyARM::FactoryReset() {
+  int result = DONGLE_CHECK(Dongle_RFS(handle_));
+  if (result >= 0)
+    Close();
+  return result;
+}
 
 int RockeyARM::Open(int index) {
   if (index < 0 || index >= 64)
