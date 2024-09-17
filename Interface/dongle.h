@@ -212,6 +212,15 @@ public:
                         size_t* size_out,
                         bool encrypt);
 
+ public:  // P256 ECDSA ...
+  virtual int P256Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
+  virtual int P256Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
+  virtual int P256Verify(const uint8_t X[32],
+                         const uint8_t Y[32],
+                         const uint8_t hash[32],
+                         const uint8_t R[32],
+                         const uint8_t S[32]);
+
  public: // SM2 ECDSA ...
   virtual int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
   virtual int SM2Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);

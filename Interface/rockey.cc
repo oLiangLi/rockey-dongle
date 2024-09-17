@@ -281,6 +281,49 @@ int Dongle::RSAPublic(int bits,
   return result;
 }
 
+int Dongle::P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
+  WORD len_sign = 64;
+  uint8_t sign[64], hash[32];
+  CopyReverse<32>(hash, hash_);
+  if (0 != DONGLE_CHECK(ecc_sign(id, hash, 32, sign, &len_sign)))
+    return -1;
+  CopyReverse<32>(R, &sign[0]);
+  CopyReverse<32>(S, &sign[32]);
+  return 0;
+}
+
+int Dongle::P256Sign(const uint8_t private_[32], const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
+  WORD len_sign = 64;
+  uint8_t sign[64], hash[32];
+  SecretBuffer<1, ECCSM2_PRIVATE_KEY> pkey;
+
+  pkey->bits = 256;
+  CopyReverse<32>(hash, hash_);
+  CopyReverse<32>(pkey->PrivateKey, private_);
+  if (0 != DONGLE_CHECK(ecc_sign_raw(pkey, hash, 32, sign, &len_sign)))
+    return -1;
+  CopyReverse<32>(R, &sign[0]);
+  CopyReverse<32>(S, &sign[32]);
+  return 0;
+}
+
+int Dongle::P256Verify(const uint8_t X[32],
+                       const uint8_t Y[32],
+                       const uint8_t hash_[32],
+                       const uint8_t R[32],
+                       const uint8_t S[32]) {
+  ECCSM2_PUBLIC_KEY pubkey;
+  uint8_t hash[32], sign[64];
+
+  pubkey.bits = 256;
+  CopyReverse<32>(pubkey.XCoordinate, X);
+  CopyReverse<32>(pubkey.YCoordinate, Y);
+  CopyReverse<32>(hash, hash_);
+  CopyReverse<32>(&sign[0], R);
+  CopyReverse<32>(&sign[32], S);
+  return DONGLE_CHECK(ecc_verify(&pubkey, hash, 32, sign));
+}
+
 int Dongle::SM2Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
   WORD len_sign = 64;
   uint8_t sign[64], hash[32];

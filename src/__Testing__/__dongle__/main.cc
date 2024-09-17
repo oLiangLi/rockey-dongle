@@ -340,10 +340,34 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     Context->error_[7] = rockey.GetLastError();
   }
 
+#if 1
+  S[0] ^= 1;
+  if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+    ++error;
+  S[0] ^= 1;
+#endif
+
+#if 1
+  X[0] ^= 1;
+  if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+    ++error;
+  X[0] ^= 1;
+
+  DONGLE_VERIFY(rockey.SM2Verify(X, Y, H, R, S) >= 0);
+#endif
+
   uint8_t VV[32];
   size_t szVV = 32;
   uint8_t sm2_cipher_[128];
   memset(sm2_cipher_, 0xEE, sizeof(sm2_cipher_));
+
+#if 1
+  // TODO: LiangLI, BugFix, Invalid (X, Y) point ...
+  X[0] ^= 1;
+  if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) >= 0)
+    ++error;
+  X[0] ^= 1;
+#endif
 
   if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) < 0) {
     ++error;
@@ -354,6 +378,22 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   if (Context->result_[3] < 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
     ++error;
   }
+
+#if 1
+  K[0] ^= 1;
+  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
+  K[0] ^= 1;
+
+  sm2_cipher_[0] ^= 1;
+  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
+  sm2_cipher_[0] ^= 1;
+
+  sm2_cipher_[64] ^= 1;
+  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
+  sm2_cipher_[64] ^= 1;
+
+  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) >= 0);
+#endif
 
   memset(VV, 0, sizeof(VV));
   Context->result_[2] = rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 32, VV, &szVV);

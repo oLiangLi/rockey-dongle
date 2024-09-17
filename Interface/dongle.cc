@@ -399,6 +399,111 @@ int Dongle::RSAPublic(int bits,
   return result;
 }
 
+int Dongle::P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
+  uint8_t sign[64], hash[32];
+  CopyReverse<32>(hash, hash_);
+  if (0 != DONGLE_CHECK(Dongle_EccSign(handle_, id, hash, 32, sign)))
+    return -1;
+  memcpy(R, hash, 32);
+  memcpy(S, hash + 32, 32);
+  CopyReverse<32>(R, &sign[0]);
+  CopyReverse<32>(S, &sign[32]);
+  return 0;
+}
+
+int Dongle::P256Verify(const uint8_t X[32],
+                       const uint8_t Y[32],
+                       const uint8_t hash_[32],
+                       const uint8_t R[32],
+                       const uint8_t S[32]) {
+  int ret = -2;
+  uint8_t pubkey[65], signbuf[80];
+  EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+  const EC_GROUP* const group = EC_KEY_get0_group(eckey);
+
+  EC_POINT* point = EC_POINT_new(group);
+  ECDSA_SIG* sign = ECDSA_SIG_new();
+  DONGLE_VERIFY(eckey && point && sign);
+  DONGLE_VERIFY(ECDSA_SIG_set0(sign, BN_bin2bn(R, 32, nullptr), BN_bin2bn(S, 32, nullptr)));
+
+  do {
+    pubkey[0] = 4;
+    memcpy(&pubkey[1], X, 32);
+    memcpy(&pubkey[33], Y, 32);
+    if (EC_POINT_oct2point(group, point, pubkey, 65, nullptr) <= 0)
+      break;
+    if (EC_POINT_is_on_curve(group, point, nullptr) <= 0)
+      break;
+    if (EC_KEY_set_public_key(eckey, point) <= 0)
+      break;
+
+    uint8_t* p = signbuf;
+    int signlen = i2d_ECDSA_SIG(sign, &p);
+    EVP_PKEY* pkey = EVP_PKEY_new();
+    DONGLE_VERIFY(pkey && EVP_PKEY_set1_EC_KEY(pkey, eckey) > 0);
+    EVP_PKEY_CTX* pkeyCtx = EVP_PKEY_CTX_new(pkey, NULL);
+    DONGLE_VERIFY(pkeyCtx && EVP_PKEY_verify_init(pkeyCtx) > 0);
+    ret = EVP_PKEY_verify(pkeyCtx, signbuf, signlen, hash_, 32) > 0 ? 0 : -1;
+    EVP_PKEY_CTX_free(pkeyCtx);
+    EVP_PKEY_free(pkey);
+  } while (0);
+
+  ECDSA_SIG_free(sign);
+  EC_POINT_free(point);
+  EC_KEY_free(eckey);
+
+  if (ret < 0) {
+    rlLOGE(TAG, "P256Verify %s", ret == -1 ? "False" : "Error");
+    ERR_print_errors_cb(
+        [](const char* str, size_t len, void* u) {
+          rlLOGE(TAG, "\t%s", str);
+          return 1;
+        },
+        nullptr);
+  }
+
+  return ret;
+}
+
+int Dongle::P256Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]) {
+  int ret = -1;
+  uint8_t sign_[80];
+  unsigned slen = sizeof(sign_);
+
+  EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_X9_62_prime256v1);
+  BIGNUM* pkey = BN_bin2bn(prikey, 32, nullptr);
+
+  do {
+    if (EC_KEY_set_private_key(eckey, pkey) <= 0)
+      break;
+
+    if (sm2_sign(hash, 32, sign_, &slen, eckey) > 0) {
+      const uint8_t* p = sign_;
+      ECDSA_SIG* s = d2i_ECDSA_SIG(nullptr, &p, slen);
+      DONGLE_VERIFY(s != nullptr);
+      BN_bn2binpad(ECDSA_SIG_get0_r(s), R, 32);
+      BN_bn2binpad(ECDSA_SIG_get0_s(s), S, 32);
+      ECDSA_SIG_free(s);
+      ret = 0;
+    }
+  } while (0);
+
+  EC_KEY_free(eckey);
+  BN_free(pkey);
+
+  if (ret < 0) {
+    rlLOGE(TAG, "P256Sign Error!");
+    ERR_print_errors_cb(
+        [](const char* str, size_t len, void* u) {
+          rlLOGE(TAG, "\t%s", str);
+          return 1;
+        },
+        nullptr);
+  }
+
+  return ret;
+}
+
 int Dongle::SM2Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
   uint8_t sign[64], hash[32];
   CopyReverse<32>(hash, hash_);
@@ -416,7 +521,7 @@ int Dongle::SM2Verify(const uint8_t X[32],
                       const uint8_t hash_[32],
                       const uint8_t R[32],
                       const uint8_t S[32]) {
-  int ret = -1;
+  int ret = -2;
   uint8_t pubkey[65], signbuf[80];
   EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
   const EC_GROUP* const group = EC_KEY_get0_group(eckey);
@@ -439,13 +544,26 @@ int Dongle::SM2Verify(const uint8_t X[32],
 
     uint8_t* p = signbuf;
     int signlen = i2d_ECDSA_SIG(sign, &p);
-    if(sm2_verify(hash_, 32, signbuf, signlen, eckey) > 0)
+    if (sm2_verify(hash_, 32, signbuf, signlen, eckey) > 0)
       ret = 0;
+    else
+      ret = -1;
   } while (0);
 
   ECDSA_SIG_free(sign);
   EC_POINT_free(point);
   EC_KEY_free(eckey);
+
+  if (ret < 0) {
+    rlLOGE(TAG, "SM2Verify %s", ret == -1 ? "False" : "Error");
+    ERR_print_errors_cb(
+        [](const char* str, size_t len, void* u) {
+          rlLOGE(TAG, "\t%s", str);
+          return 1;
+        },
+        nullptr);
+  }
+
   return ret;
 }
 
@@ -475,11 +593,21 @@ int Dongle::SM2Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R[
   EC_KEY_free(eckey);
   BN_free(pkey);
 
+  if (ret < 0) {
+    rlLOGE(TAG, "SM2Sign Error!");
+    ERR_print_errors_cb(
+        [](const char* str, size_t len, void* u) {
+          rlLOGE(TAG, "\t%s", str);
+          return 1;
+        },
+        nullptr);
+  }
+
   return ret;
 }
 
 int Dongle::SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) {
-  rlLOGE(TAG, "Dongle_SM2Decrypt/%d Not implements yet!", id);
+  rlLOGE(TAG, "Dongle_SM2Decrypt/%x Not implements yet!", id);
   return -ENOSYS;
 }
 
@@ -510,6 +638,16 @@ int Dongle::SM2Decrypt(const uint8_t private_[32],
 
   EC_KEY_free(eckey);
   BN_free(pkey);
+
+  if (ret < 0) {
+    rlLOGE(TAG, "SM2Decrypt Error!");
+    ERR_print_errors_cb(
+        [](const char* str, size_t len, void* u) {
+          rlLOGE(TAG, "\t%s", str);
+          return 1;
+        },
+        nullptr);
+  }
 
   return ret;
 }
@@ -548,6 +686,16 @@ int Dongle::SM2Encrypt(const uint8_t X[32],
   } while (0);
   EC_POINT_free(point);
   EC_KEY_free(eckey);
+
+  if (result < 0) {
+    rlLOGE(TAG, "SM2Encrypt Error!");
+    ERR_print_errors_cb(
+        [](const char* str, size_t len, void* u) {
+          rlLOGE(TAG, "\t%s", str);
+          return 1;
+        },
+        nullptr);
+  }
 
   return result;
 }
