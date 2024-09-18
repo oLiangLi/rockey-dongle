@@ -252,6 +252,13 @@ public:
   virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt);
   virtual int SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt);
 
+ public:
+#ifndef __RockeyARM__
+  virtual bool Ready() const { return handle_ != nullptr; }
+#else  /* __RockeyARM__ */
+  virtual bool Ready() const { return true; }
+#endif /* __RockeyARM__ */
+
  protected:
 #ifndef __RockeyARM__
   ROCKEY_HANDLE handle_{nullptr};
@@ -301,7 +308,7 @@ class RockeyARM : public Dongle {
   virtual int ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret);
 
   virtual int LimitSeedCount(int count);
-  virtual int SwitchProtocol(bool ccid);
+  // virtual int SwitchProtocol(bool ccid);
   virtual int SetExpireTime(DWORD time);
   virtual int SetUserID(uint32_t id);
 

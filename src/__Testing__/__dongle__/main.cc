@@ -662,6 +662,44 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
   }
 
+  if (Context->permission_ == PERMISSION::kAdminstrator) {
+    char pid[20] = "", admin[20] = "";
+    result = rockey.GenUniqueKey("10086", 5, pid, admin);
+    rlLOGI(TAG, "rockey.GenUniqueKey %d/%08x %s %s", result, rockey.GetLastError(), pid, admin);
+
+    result = rockey.ChangePIN(PERMISSION::kAdminstrator, admin, "FFFFFFFFFFFFFFFF", 255);
+    rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
+
+    result = rockey.Open(0);
+    rlLOGI(TAG, "rockey.Open return %d/%08x", result, rockey.GetLastError());
+
+    result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+    rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
+
+    result = rockey.SetUserID(rLANG_WORLD_MAGIC);
+    rlLOGI(TAG, "rockey.SetUserID %d/%08x", result, rockey.GetLastError());
+  }
+
+  result = rockey.LimitSeedCount(10);
+  rlLOGI(TAG, "rockey.LimitSeedCount %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.SetExpireTime(10000);
+  rlLOGI(TAG, "rockey.SetExpireTime %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.ChangePIN(PERMISSION::kNormal, "12345678", "12345678", 10);
+  rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.ChangePIN(PERMISSION::kAdminstrator, "FFFFFFFFFFFFFFFF", "FFFFFFFFFFFFFFFF", 255);
+  rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
+
+  result = rockey.ResetUserPIN("FFFFFFFFFFFFFFFF");
+  rlLOGI(TAG, "rockey.ResetUserPIN %d/%08x", result, rockey.GetLastError());
+
+#if 0
+  result = rockey.FactoryReset();
+  rlLOGI(TAG, "rockey.FactoryReset %d/%08x", result, rockey.GetLastError());
+#endif
+
   const char* app_dongle = getenv("WT_APP_DONGLE");
   if (app_dongle) {
     uint8_t app_[64 * 1024];
@@ -680,6 +718,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
       }
     }
   }
+
+  if (!rockey.Ready())
+    exit(1);
 #else  // __RockeyARM__
 
   Dongle rockey;
@@ -704,7 +745,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   rockey.ReadShareMemory(Context->share_memory_2_);
   rockey.WriteShareMemory(&Context->bytes[32]);
-  rockey.ReadShareMemory(Context->share_memory_1_);
+  rockey.ReadShareMemory(Context->share_memory_1_);  
 
   int index = Context->argv_[0] & 0xFF, result2 = 0;
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());

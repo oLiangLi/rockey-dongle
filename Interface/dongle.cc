@@ -819,12 +819,14 @@ int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
 int RockeyARM::LimitSeedCount(int count) {
   return DONGLE_CHECK(Dongle_LimitSeedCount(handle_, count));
 }
+#if 0
 int RockeyARM::SwitchProtocol(bool ccid) {
   int result = DONGLE_CHECK(Dongle_SwitchProtocol(handle_, ccid ? PROTOCOL_CCID : PROTOCOL_HID));
   if (result >= 0)
     Close();
   return result;
 }
+#endif /* */
 int RockeyARM::SetExpireTime(DWORD time) {
   return DONGLE_CHECK(Dongle_SetDeadline(handle_, time));
 }
