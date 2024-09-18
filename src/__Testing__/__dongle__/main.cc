@@ -357,11 +357,33 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   X[0] ^= 1;
 #endif
 
+  rockey.RandBytes(H, 32);
+  if (rockey.SM2Encrypt(X, Y, H, 16, sm2_cipher_) < 0) {
+    ++error;
+    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
+  }
+  szVV = 32;
+  if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 16, VV, &szVV) < 0 || szVV != 16 || 0 != memcmp(VV, H, 16)) {
+    ++error;
+    rlLOGW(TAG, "sm2_cipher_.decrypt.16 error");
+  }
+  rockey.RandBytes(H, 32);
+  if (rockey.SM2Encrypt(X, Y, H, 10, sm2_cipher_) < 0) {
+    ++error;
+    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
+  }
+  szVV = 32;
+  if (rockey.SM2Decrypt(K, sm2_cipher_, 96 + 10, VV, &szVV) < 0 || szVV != 10 || 0 != memcmp(VV, H, 10)) {
+    ++error;
+    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.decrypt.16");
+  }
+
   if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) < 0) {
     ++error;
     rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_");
   }
 
+  szVV = 32;
   Context->result_[3] = rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV);
   if (Context->result_[3] < 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
     ++error;
