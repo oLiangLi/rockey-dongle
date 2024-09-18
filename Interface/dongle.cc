@@ -5,21 +5,22 @@
 #include "RockeyARM/Dongle_API.h"
 
 /* Copy from sm2_crypt.c */
-struct SM2_Ciphertext_st {
+typedef struct rLANG_SM2_Ciphertext_st rLANG_SM2_Ciphertext;
+struct rLANG_SM2_Ciphertext_st {
   BIGNUM* C1x;
   BIGNUM* C1y;
   ASN1_OCTET_STRING* C3;
   ASN1_OCTET_STRING* C2;
 };
 
-ASN1_SEQUENCE(SM2_Ciphertext) = {
-  ASN1_SIMPLE(SM2_Ciphertext, C1x, BIGNUM),
-  ASN1_SIMPLE(SM2_Ciphertext, C1y, BIGNUM),
-  ASN1_SIMPLE(SM2_Ciphertext, C3, ASN1_OCTET_STRING),
-  ASN1_SIMPLE(SM2_Ciphertext, C2, ASN1_OCTET_STRING),
-} ASN1_SEQUENCE_END(SM2_Ciphertext)
+ASN1_SEQUENCE(rLANG_SM2_Ciphertext) = {
+  ASN1_SIMPLE(rLANG_SM2_Ciphertext, C1x, BIGNUM),
+  ASN1_SIMPLE(rLANG_SM2_Ciphertext, C1y, BIGNUM),
+  ASN1_SIMPLE(rLANG_SM2_Ciphertext, C3, ASN1_OCTET_STRING),
+  ASN1_SIMPLE(rLANG_SM2_Ciphertext, C2, ASN1_OCTET_STRING),
+} ASN1_SEQUENCE_END(rLANG_SM2_Ciphertext)
 
-IMPLEMENT_ASN1_FUNCTIONS(SM2_Ciphertext)
+IMPLEMENT_ASN1_FUNCTIONS(rLANG_SM2_Ciphertext)
 
 rLANG_DECLARE_MACHINE
 
@@ -32,7 +33,7 @@ namespace dongle {
 int SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer) {
   DONGLE_VERIFY(cipher_len > 96 && cipher_len <= 1024);
 
-  SM2_Ciphertext_st* ciphertext = SM2_Ciphertext_new();
+  rLANG_SM2_Ciphertext_st* ciphertext = rLANG_SM2_Ciphertext_new();
   ciphertext->C1x = BN_bin2bn(&text_cipher[0], 32, nullptr);
   ciphertext->C1y = BN_bin2bn(&text_cipher[32], 32, nullptr);
   ciphertext->C3 = ASN1_OCTET_STRING_new();
@@ -42,15 +43,15 @@ int SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t*
   DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C3, &text_cipher[64], 32) > 0);
   DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C2, &text_cipher[96], static_cast<int>(cipher_len - 96)) > 0);
 
-  int result = i2d_SM2_Ciphertext(ciphertext, &buffer);
-  SM2_Ciphertext_free(ciphertext);
+  int result = i2d_rLANG_SM2_Ciphertext(ciphertext, &buffer);
+  rLANG_SM2_Ciphertext_free(ciphertext);
 
   return result;
 }
 int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t* buffer) {
   const uint8_t* p = asn1_cipher;
   DONGLE_VERIFY(cipher_len <= 1024);
-  SM2_Ciphertext_st* ciphertext = d2i_SM2_Ciphertext(nullptr, &p, static_cast<int>(cipher_len));
+  rLANG_SM2_Ciphertext_st* ciphertext = d2i_rLANG_SM2_Ciphertext(nullptr, &p, static_cast<int>(cipher_len));
   if (!ciphertext)
     return -EINVAL;
 
@@ -62,7 +63,7 @@ int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t*
       result = 96 + ciphertext->C2->length;
     }
   }
-  SM2_Ciphertext_free(ciphertext);
+  rLANG_SM2_Ciphertext_free(ciphertext);
   return result;
 }
 
