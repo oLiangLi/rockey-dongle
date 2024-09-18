@@ -252,6 +252,44 @@ public:
   virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt);
   virtual int SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt);
 
+ public: /* ... uECC ... */
+  /**
+   *! ... SM2 ...
+   */
+  virtual int CheckPointOnCurveSM2(const uint8_t X[32], const uint8_t Y[32]);
+  virtual int DecompressPointSM2(uint8_t Y[32], const uint8_t X[32], bool Yodd);
+
+  /**
+   *! ... P256 ...
+   */
+  virtual int CheckPointOnCurvePrime256v1(const uint8_t X[32], const uint8_t Y[32]);
+  virtual int DecompressPointPrime256v1(uint8_t Y[32], const uint8_t X[32], bool Yodd);
+  virtual int GenerateKeyPairPrime256v1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]);
+  virtual int ComputeSecretPrime256v1(uint8_t secret[32],
+                                      const uint8_t X[32],
+                                      const uint8_t Y[32],
+                                      const uint8_t K[32]);
+  virtual int SignMessagePrime256v1(const uint8_t K[32], const uint8_t H[32], uint8_t R[32], uint8_t S[32]);
+  virtual int VerifySignPrime256v1(const uint8_t X[32],
+                                   const uint8_t Y[32],
+                                   const uint8_t H[32],
+                                   const uint8_t R[32],
+                                   const uint8_t S[32]);
+
+  /**
+   *! ... Secp256k1 ...
+   */
+  virtual int CheckPointOnCurveSecp256k1(const uint8_t X[32], const uint8_t Y[32]);
+  virtual int DecompressPointSecp256k1(uint8_t Y[32], const uint8_t X[32], bool Yodd);
+  virtual int GenerateKeyPairSecp256k1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]);
+  virtual int ComputeSecretSecp256k1(uint8_t secret[32], const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]);
+  virtual int SignMessageSecp256k1(const uint8_t K[32], const uint8_t H[32], uint8_t R[32], uint8_t S[32]);
+  virtual int VerifySignSecp256k1(const uint8_t X[32],
+                                  const uint8_t Y[32],
+                                  const uint8_t H[32],
+                                  const uint8_t R[32],
+                                  const uint8_t S[32]);
+
  public:
 #ifndef __RockeyARM__
   virtual bool Ready() const { return handle_ != nullptr; }
@@ -319,6 +357,11 @@ class RockeyARM : public Dongle {
   virtual int GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]);
   virtual int FactoryReset();
 };
+
+
+
+
+
 
 } // namespace dongle
 

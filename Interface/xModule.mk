@@ -13,5 +13,7 @@ LOCAL_SRC_FILES := emulator.cc
 endif ## emscripten
 endif ## RockeyARM
 
+LOCAL_SRC_FILES += curves.cc
+
 $(call build-library)
 

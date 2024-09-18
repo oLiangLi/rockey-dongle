@@ -38,6 +38,7 @@ struct Context_t {
     uint32_t result_[4];
     uint8_t bytes_[16];
   };
+  uint32_t ts_[8];
   uint32_t seed_[8];
   uint32_t error_[8];
 
@@ -299,8 +300,6 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   }
 
   uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
-
-  rockey.RandBytes(H, 32);
   if (rockey.GenerateSM2(0x8100, X, Y, K)) {
     ++error;
     Context->error_[4] = rockey.GetLastError();
@@ -311,6 +310,37 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     rlLOGXI(TAG, K, 32, "SM2.K");
   }
 
+  DWORD tick0 = 0, tick1 = 0, tick2 = 0, tick3 = 0, tick4 = 0, tick5 = 0;
+  rockey.GetTickCount(&tick0);
+
+  for (int i = 0; i < 1; ++i) {
+    rockey.GetTickCount(&tick1);
+    DONGLE_VERIFY(rockey.CheckPointOnCurveSM2(X, Y) >= 0);
+    rockey.GetTickCount(&tick2);
+    X[0] ^= 1;
+    DONGLE_VERIFY(rockey.CheckPointOnCurveSM2(X, Y) < 0);
+    X[0] ^= 1;
+    rockey.GetTickCount(&tick3);
+    rockey.DecompressPointSM2(S, X, Y[31] % 2 == 1);
+    rockey.GetTickCount(&tick4);
+
+    Context->ts_[0] = tick1;
+    Context->ts_[1] = tick2;
+    Context->ts_[2] = tick3;
+    Context->ts_[3] = tick4;
+
+    if (0 != memcmp(Y, S, 32)) {
+      rlLOGXW(TAG, Y, 32, "DecompressPointSM2 Error!");
+      rlLOGXW(TAG, S, 32, "DecompressPointSM2 Error!");
+      ++error;
+    }
+  }
+  rockey.GetTickCount(&tick5);
+  Context->ts_[5] = tick5 - tick0;
+  Context->ts_[6] = tick0;
+  Context->ts_[7] = tick5;
+
+  rockey.RandBytes(H, 32);
   if (rockey.SM2Sign(0x8100, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
       rockey.SM2Verify(X, Y, H, R, S) < 0) {
     ++error;
@@ -350,9 +380,8 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   memset(sm2_cipher_, 0xEE, sizeof(sm2_cipher_));
 
 #if 1
-  // TODO: LiangLI, BugFix, Invalid (X, Y) point ...
   X[0] ^= 1;
-  if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) >= 0)
+  if (rockey.CheckPointOnCurveSM2(X, Y) && rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) >= 0)
     ++error;
   X[0] ^= 1;
 #endif
@@ -772,9 +801,11 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   result += result2;
 
 #if !defined(__RockeyARM__)
+  auto start = rLANG_GetTickCount();
   int main_result = 0, result3 = rockey.ExecuteExeFile(&CopyContext, sizeof(CopyContext), &main_result);
-  rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X", result3,
-          main_result, rockey.GetLastError());
+  auto end = rLANG_GetTickCount();
+  rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X, in %lld ms", result3,
+          main_result, rockey.GetLastError(), static_cast<long long>(end - start));
   if (result3 < 0)
     ++result;
 #endif /* __RockeyARM__ */

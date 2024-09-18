@@ -191,6 +191,7 @@ static cmpresult_t uECC_vli_cmp_unsafe(const uECC_word_t *left,
 struct Micro_ECC_RNG_t {
   operator bool() { return true; }
   int operator()(uint8_t* dest, unsigned int size);
+  void* dongle_ = nullptr;
 } g_rng_function;
 
 #if 0
@@ -677,7 +678,6 @@ uECC_VLI_API void uECC_vli_modSquare_fast(uECC_word_t *result,
     uECC_vli_mmod(result, product, curve->p, curve->num_words);
 #endif
 }
-
 #else /* uECC_SQUARE_FUNC */
 
 #if uECC_ENABLE_VLI_API
