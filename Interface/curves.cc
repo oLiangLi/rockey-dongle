@@ -29,6 +29,88 @@ struct ScopeRNG {
   ~ScopeRNG() { g_rng_function.dongle_ = nullptr; }
 };
 
+struct ScopeSecp256r1 {
+  ScopeSecp256r1() {
+    zp__curve_secp256r1 = &curve_;
+
+#undef BYTES_TO_WORDS_8_V
+#define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
+  do {                                                     \
+    curve_secp256r1.pp[ii + 0] = 0x##d##c##b##a;           \
+    curve_secp256r1.pp[ii + 1] = 0x##h##g##f##e;           \
+  } while (0)
+
+    BYTES_TO_WORDS_8_V(p, 0, FF, FF, FF, FF, FF, FF, FF, FF);
+    BYTES_TO_WORDS_8_V(p, 2, FF, FF, FF, FF, 00, 00, 00, 00);
+    BYTES_TO_WORDS_8_V(p, 4, 00, 00, 00, 00, 00, 00, 00, 00);
+    BYTES_TO_WORDS_8_V(p, 6, 01, 00, 00, 00, FF, FF, FF, FF);
+
+    BYTES_TO_WORDS_8_V(n, 0, 51, 25, 63, FC, C2, CA, B9, F3);
+    BYTES_TO_WORDS_8_V(n, 2, 84, 9E, 17, A7, AD, FA, E6, BC);
+    BYTES_TO_WORDS_8_V(n, 4, FF, FF, FF, FF, FF, FF, FF, FF);
+    BYTES_TO_WORDS_8_V(n, 6, 00, 00, 00, 00, FF, FF, FF, FF);
+
+    BYTES_TO_WORDS_8_V(G, 0, 96, C2, 98, D8, 45, 39, A1, F4);
+    BYTES_TO_WORDS_8_V(G, 2, A0, 33, EB, 2D, 81, 7D, 03, 77);
+    BYTES_TO_WORDS_8_V(G, 4, F2, 40, A4, 63, E5, E6, BC, F8);
+    BYTES_TO_WORDS_8_V(G, 6, 47, 42, 2C, E1, F2, D1, 17, 6B);
+
+    BYTES_TO_WORDS_8_V(G, 8, F5, 51, BF, 37, 68, 40, B6, CB);
+    BYTES_TO_WORDS_8_V(G, 10, CE, 5E, 31, 6B, 57, 33, CE, 2B);
+    BYTES_TO_WORDS_8_V(G, 12, 16, 9E, 0F, 7C, 4A, EB, E7, 8E);
+    BYTES_TO_WORDS_8_V(G, 14, 9B, 7F, 1A, FE, E2, 42, E3, 4F);
+
+    BYTES_TO_WORDS_8_V(b, 0, 4B, 60, D2, 27, 3E, 3C, CE, 3B);
+    BYTES_TO_WORDS_8_V(b, 2, F6, B0, 53, CC, B0, 06, 1D, 65);
+    BYTES_TO_WORDS_8_V(b, 4, BC, 86, 98, 76, 55, BD, EB, B3);
+    BYTES_TO_WORDS_8_V(b, 6, E7, 93, 3A, AA, D8, 35, C6, 5A);
+  }
+  ~ScopeSecp256r1() { zp__curve_secp256r1 = nullptr; }
+
+ private:
+  uECC_Curve_t curve_{8, 32, 256};
+};
+
+struct ScopeSecp256k1 {
+  ScopeSecp256k1() {
+    zp__curve_secp256k1 = &curve_;
+
+#undef BYTES_TO_WORDS_8_V
+#define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
+  do {                                                     \
+    curve_secp256k1.pp[ii + 0] = 0x##d##c##b##a;           \
+    curve_secp256k1.pp[ii + 1] = 0x##h##g##f##e;           \
+  } while (0)
+
+    BYTES_TO_WORDS_8_V(p, 0, 2F, FC, FF, FF, FE, FF, FF, FF);
+    BYTES_TO_WORDS_8_V(p, 2, FF, FF, FF, FF, FF, FF, FF, FF);
+    BYTES_TO_WORDS_8_V(p, 4, FF, FF, FF, FF, FF, FF, FF, FF);
+    BYTES_TO_WORDS_8_V(p, 6, FF, FF, FF, FF, FF, FF, FF, FF);
+
+    BYTES_TO_WORDS_8_V(n, 0, 41, 41, 36, D0, 8C, 5E, D2, BF);
+    BYTES_TO_WORDS_8_V(n, 2, 3B, A0, 48, AF, E6, DC, AE, BA);
+    BYTES_TO_WORDS_8_V(n, 4, FE, FF, FF, FF, FF, FF, FF, FF);
+    BYTES_TO_WORDS_8_V(n, 6, FF, FF, FF, FF, FF, FF, FF, FF);
+
+    BYTES_TO_WORDS_8_V(G, 0, 98, 17, F8, 16, 5B, 81, F2, 59);
+    BYTES_TO_WORDS_8_V(G, 2, D9, 28, CE, 2D, DB, FC, 9B, 02);
+    BYTES_TO_WORDS_8_V(G, 4, 07, 0B, 87, CE, 95, 62, A0, 55);
+    BYTES_TO_WORDS_8_V(G, 6, AC, BB, DC, F9, 7E, 66, BE, 79);
+
+    BYTES_TO_WORDS_8_V(G, 8, B8, D4, 10, FB, 8F, D0, 47, 9C);
+    BYTES_TO_WORDS_8_V(G, 10, 19, 54, 85, A6, 48, B4, 17, FD);
+    BYTES_TO_WORDS_8_V(G, 12, A8, 08, 11, 0E, FC, FB, A4, 5D);
+    BYTES_TO_WORDS_8_V(G, 14, 65, C4, A3, 26, 77, DA, 3A, 48);
+
+    curve_secp256k1.b[0] = 7;
+  }
+  ~ScopeSecp256k1() { zp__curve_secp256k1 = nullptr; }
+
+ private:
+  uECC_Curve_t curve_{8, 32, 256};
+};
+
+
 namespace {
 
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("CURVE");
@@ -40,6 +122,7 @@ struct CurveSM2_t {
 };
   
 void GFpCurveSM2(CurveSM2_t* sm2) {
+#undef BYTES_TO_WORDS_8_V
 #define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
   do {                                                     \
     sm2->pp[ii + 0] = 0x##d##c##b##a;                      \
@@ -267,16 +350,16 @@ int Dongle::CheckPointOnCurveSM2(const uint8_t X[32], const uint8_t Y[32]) {
   GFpCurveSM2(&sm2);
 
   if (EccPoint_isZero(point, &sm2))
-    return -EINVAL;
+    return -EFAULT;
 
   /* x and y must be smaller than p. */
   if (uECC_vli_cmp_unsafe(sm2.p, point, 8) != 1 || uECC_vli_cmp_unsafe(sm2.p, point + 8, 8) != 1)
-    return -EINVAL;
+    return -EFAULT;
 
   uECC_vli_modMult_sm2(tmp1, point + 8, point + 8, &sm2);  // y*y
   x_side_sm2(tmp2, point, &sm2);                           // x*x*x + a*x + b ...
 
-  return uECC_vli_equal(tmp1, tmp2, 8) ? 0 : -EINVAL;
+  return uECC_vli_equal(tmp1, tmp2, 8) ? 0 : -EFAULT;
 }
 
 int Dongle::DecompressPointSM2(uint8_t Y[32], const uint8_t X[32], bool Yodd) {
@@ -300,52 +383,134 @@ int Dongle::DecompressPointSM2(uint8_t Y[32], const uint8_t X[32], bool Yodd) {
  *! ... P256 ...
  */
 int Dongle::CheckPointOnCurvePrime256v1(const uint8_t X[32], const uint8_t Y[32]) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+  memcpy(&pubkey[0], X, 32);
+  memcpy(&pubkey[32], Y, 32);
+  ScopeSecp256r1 __secp256r1;
+  return uECC_valid_public_key(pubkey, &curve_secp256r1) ? 0 : -EFAULT;
 }
 int Dongle::DecompressPointPrime256v1(uint8_t Y[32], const uint8_t X[32], bool Yodd) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+  pubkey[0] = Yodd ? 3 : 2;
+  memcpy(&pubkey[1], X, 32);
+
+  ScopeSecp256r1 __secp256r1;
+  uECC_decompress(pubkey, pubkey, &curve_secp256r1);
+  memcpy(Y, &pubkey[32], 32);
+  return 0;
 }
 int Dongle::GenerateKeyPairPrime256v1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+
+  ScopeRNG __rng(this);
+  ScopeSecp256r1 __secp256r1;
+  if (!uECC_make_key(pubkey, K, &curve_secp256r1))
+    return -EFAULT;
+  memcpy(X, &pubkey[0], 32);
+  memcpy(Y, &pubkey[32], 32);
+  return 0;
 }
 int Dongle::ComputeSecretPrime256v1(uint8_t secret[32], const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+  memcpy(&pubkey[0], X, 32);
+  memcpy(&pubkey[32], Y, 32);
+
+  ScopeSecp256r1 __secp256r1;
+  return uECC_shared_secret(pubkey, K, secret, &curve_secp256r1) ? 0 : -EFAULT;
 }
 int Dongle::SignMessagePrime256v1(const uint8_t K[32], const uint8_t H[32], uint8_t R[32], uint8_t S[32]) {
-  return -ENOSYS;
+  uint8_t sign[64];
+
+  ScopeRNG __rng(this);
+  ScopeSecp256r1 __secp256r1;
+  if (!uECC_sign(K, H, 32, sign, &curve_secp256r1))
+    return -EFAULT;
+
+  memcpy(R, &sign[0], 32);
+  memcpy(S, &sign[32], 32);
+  return 0;
 }
 int Dongle::VerifySignPrime256v1(const uint8_t X[32],
                                  const uint8_t Y[32],
                                  const uint8_t H[32],
                                  const uint8_t R[32],
-                                 const uint8_t S[32]) {
-  return -ENOSYS;
+                                 const uint8_t S[32]) {  
+  uint8_t sign[64];
+  uint8_t pubkey[64];
+  memcpy(&sign[0], R, 32);
+  memcpy(&sign[32], S, 32);
+  memcpy(&pubkey[0], X, 32);
+  memcpy(&pubkey[32], Y, 32);
+
+  ScopeSecp256r1 __secp256r1;
+  return uECC_verify(pubkey, H, 32, sign, &curve_secp256r1) ? 0 : -EFAULT;
 }
 
 /**
  *! ... Secp256k1 ...
  */
 int Dongle::CheckPointOnCurveSecp256k1(const uint8_t X[32], const uint8_t Y[32]) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+  memcpy(&pubkey[0], X, 32);
+  memcpy(&pubkey[32], Y, 32);
+  ScopeSecp256k1 __secp256k1;
+  return uECC_valid_public_key(pubkey, &curve_secp256k1) ? 0 : -EFAULT;
 }
 int Dongle::DecompressPointSecp256k1(uint8_t Y[32], const uint8_t X[32], bool Yodd) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+  pubkey[0] = Yodd ? 3 : 2;
+  memcpy(&pubkey[1], X, 32);
+
+  ScopeSecp256k1 __secp256k1;
+  uECC_decompress(pubkey, pubkey, &curve_secp256k1);
+  memcpy(Y, &pubkey[32], 32);
+  return 0;
 }
 int Dongle::GenerateKeyPairSecp256k1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+
+  ScopeRNG __rng(this);
+  ScopeSecp256k1 __secp256k1;
+  if (!uECC_make_key(pubkey, K, &curve_secp256k1))
+    return -EFAULT;
+  memcpy(X, &pubkey[0], 32);
+  memcpy(Y, &pubkey[32], 32);
+  return 0;
 }
 int Dongle::ComputeSecretSecp256k1(uint8_t secret[32], const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]) {
-  return -ENOSYS;
+  uint8_t pubkey[64];
+  memcpy(&pubkey[0], X, 32);
+  memcpy(&pubkey[32], Y, 32);
+
+  ScopeSecp256k1 __secp256k1;
+  return uECC_shared_secret(pubkey, K, secret, &curve_secp256k1);
 }
 int Dongle::SignMessageSecp256k1(const uint8_t K[32], const uint8_t H[32], uint8_t R[32], uint8_t S[32]) {
-  return -ENOSYS;
+  uint8_t sign[64];
+
+  ScopeRNG __rng(this);
+  ScopeSecp256k1 __secp256k1;
+  if (!uECC_sign(K, H, 32, sign, &curve_secp256k1))
+    return -EFAULT;
+
+  memcpy(R, &sign[0], 32);
+  memcpy(S, &sign[32], 32);
+  return 0;
 }
 int Dongle::VerifySignSecp256k1(const uint8_t X[32],
                                 const uint8_t Y[32],
                                 const uint8_t H[32],
                                 const uint8_t R[32],
                                 const uint8_t S[32]) {
-  return -ENOSYS;
+  uint8_t sign[64];
+  uint8_t pubkey[64];
+  memcpy(&sign[0], R, 32);
+  memcpy(&sign[32], S, 32);
+  memcpy(&pubkey[0], X, 32);
+  memcpy(&pubkey[32], Y, 32);
+
+  ScopeSecp256k1 __secp256k1;
+  return uECC_verify(pubkey, H, 32, sign, &curve_secp256k1) ? 0 : -EFAULT;
 }
 
 } // namespace dongle 
