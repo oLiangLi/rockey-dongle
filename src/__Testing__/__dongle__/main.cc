@@ -512,22 +512,95 @@ int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   }
 
   uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
+  for (int i = 0; i < 2; ++i) {
+    if (rockey.GenerateP256(0x100, X, Y, K)) {
+      ++error;
+      Context->error_[4] = rockey.GetLastError();
+      return 111;
+    } else {
+      rlLOGXI(TAG, X, 32, "P256.X");
+      rlLOGXI(TAG, Y, 32, "P256.Y");
+      rlLOGXI(TAG, K, 32, "P256.K");
+    }
 
-  rockey.RandBytes(H, 32);
-  if (rockey.GenerateP256(0x100, X, Y, K)) {
-    ++error;
-    Context->error_[4] = rockey.GetLastError();
-    return 111;
-  } else {
-    rlLOGXI(TAG, X, 32, "P256.X");
-    rlLOGXI(TAG, Y, 32, "P256.Y");
-    rlLOGXI(TAG, K, 32, "P256.K");
+    if (rockey.CheckPointOnCurvePrime256v1(X, Y) < 0) {
+      ++error;
+      rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
+    }
+
+    X[0] ^= 1;
+    if (rockey.CheckPointOnCurvePrime256v1(X, Y) >= 0) {
+      ++error;
+      rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
+    }
+    X[0] ^= 1;
+
+    uint8_t V[32];
+    if (rockey.DecompressPointPrime256v1(V, X, Y[31] % 2 != 0) < 0 || 0 != memcmp(V, Y, 32)) {
+      ++error;
+      rlLOGXE(TAG, V, 32, "DecompressPointPrime256v1 Error ...");
+    }
+
+    rockey.RandBytes(H, 32);
+    if (rockey.SignMessagePrime256v1(K, H, R, S) < 0) {
+      ++error;
+      rlLOGE(TAG, "SignMessagePrime256v1 Error ...");
+    }
+
+    if (rockey.P256Verify(X, Y, H, R, S) < 0) {
+      ++error;
+      rlLOGE(TAG, "SignMessagePrime256v1/P256Verify Error ...");
+    }
+
+    if (rockey.VerifySignPrime256v1(X, Y, H, R, S) < 0) {
+      ++error;
+      rlLOGE(TAG, "VerifySignPrime256v1 Error ...");
+    }
+
+    R[0] ^= 1;
+    if (rockey.VerifySignPrime256v1(X, Y, H, R, S) >= 0) {
+      ++error;
+      rlLOGE(TAG, "VerifySignPrime256v1 Error ...");
+    }
+    R[0] ^= 1;
+
+    uint8_t K2[32], X2[32], Y2[32];
+    if (rockey.GenerateKeyPairPrime256v1(X2, Y2, K2) < 0) {
+      ++error;
+      rlLOGE(TAG, "GenerateKeyPairPrime256v1 Error ...");
+    }
+
+    uint8_t SECRET1[32], SECRET2[32];
+    if (rockey.ComputeSecretPrime256v1(SECRET1, X, Y, K2) < 0) {
+      ++error;
+      rlLOGE(TAG, "ComputeSecretPrime256v1 Error ...");
+    }
+
+    if (rockey.ComputeSecretPrime256v1(SECRET2, X2, Y2, K) < 0) {
+      ++error;
+      rlLOGE(TAG, "ComputeSecretPrime256v1 Error ...");
+    }
+
+    if (0 != memcmp(SECRET1, SECRET2, 32)) {
+      ++error;
+      rlLOGE(TAG, "0 != memcmp(SECRET1, SECRET2, 32)");
+      rlLOGXE(TAG, SECRET1, 32, "SECRET1");
+      rlLOGXE(TAG, SECRET2, 32, "SECRET2");
+    } else {
+      rlLOGXI(TAG, SECRET1, 32, "ComputeSecretPrime256v1 OK");
+    }
   }
 
+  rockey.RandBytes(H, 32);
   if (rockey.P256Sign(0x100, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 || rockey.P256Sign(K, H, R, S) < 0 ||
       rockey.P256Verify(X, Y, H, R, S) < 0) {
     ++error;
     Context->error_[5] = rockey.GetLastError();
+  }
+
+  if (rockey.GenerateKeyPairPrime256v1(X, Y, K) < 0) {
+    ++error;
+    rlLOGE(TAG, "GenerateKeyPairPrime256v1 ... 2 Error ...");
   }
 
   if (rockey.ImportP256(0x101, K) < 0) {

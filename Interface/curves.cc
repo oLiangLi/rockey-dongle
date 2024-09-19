@@ -415,6 +415,7 @@ int Dongle::ComputeSecretPrime256v1(uint8_t secret[32], const uint8_t X[32], con
   memcpy(&pubkey[0], X, 32);
   memcpy(&pubkey[32], Y, 32);
 
+  ScopeRNG __rng(this);
   ScopeSecp256r1 __secp256r1;
   return uECC_shared_secret(pubkey, K, secret, &curve_secp256r1) ? 0 : -EFAULT;
 }
@@ -482,6 +483,7 @@ int Dongle::ComputeSecretSecp256k1(uint8_t secret[32], const uint8_t X[32], cons
   memcpy(&pubkey[0], X, 32);
   memcpy(&pubkey[32], Y, 32);
 
+  ScopeRNG __rng(this);
   ScopeSecp256k1 __secp256k1;
   return uECC_shared_secret(pubkey, K, secret, &curve_secp256k1);
 }
