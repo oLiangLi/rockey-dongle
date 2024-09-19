@@ -61,8 +61,166 @@ void uECC_vli_modMult_sm2(uECC_word_t* result,
   const uECC_word_t* left,
   const uECC_word_t* right,
   const CurveSM2_t* curve) {
-  //TODO: LiangLI, implements modMult_sm2 ...
-  uECC_vli_modMult(result, left, right, curve->p, 8);
+  uECC_word_t product[16];
+
+  uECC_vli_mult(product, left, right, 8);
+
+  ///
+  /// see: https://tongsuo.net/docs/features/sm2/overview/
+  /// 
+#if 0  
+  uECC_vli_mmod(result, product, curve->p, 8);
+#else
+  int carry = 0;
+  uECC_word_t T[8];
+  uECC_word_t* const P = product;
+
+  uECC_vli_set(result, product, 8);  // s1
+
+  T[0] = P[8];
+  T[1] = P[9];
+  T[2] = 0;
+  T[3] = P[11];
+  T[4] = P[12];
+  T[5] = P[13];
+  T[6] = P[14];
+  T[7] = P[15];
+  carry += uECC_vli_add(result, result, T, 8);  // s2
+
+  T[0] = P[13];
+  T[1] = P[14];
+  T[2] = 0;
+  T[3] = P[13];
+  T[4] = P[14];
+  T[5] = P[15];
+  T[6] = 0;
+  T[7] = P[14];
+  carry += uECC_vli_add(T, T, T, 8);  // 2*s3
+  carry += uECC_vli_add(result, result, T, 8);
+
+  T[0] = P[14];
+  T[1] = P[15];
+  T[2] = 0;
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = P[13];
+  carry += uECC_vli_add(T, T, T, 8);  // 2*s4
+  carry += uECC_vli_add(result, result, T, 8);
+
+  T[0] = P[15];
+  T[1] = 0;
+  T[2] = 0;
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = P[12];
+  carry += uECC_vli_add(T, T, T, 8);  // 2*s5
+  carry += uECC_vli_add(result, result, T, 8);
+
+  T[0] = P[12];
+  T[1] = P[13];
+  T[2] = 0;
+  T[3] = P[14];
+  T[4] = P[15];
+  T[5] = P[10];
+  T[6] = P[11];
+  T[7] = P[11];
+  carry += uECC_vli_add(result, result, T, 8);  // s6
+
+  T[0] = P[10];
+  T[1] = P[11];
+  T[2] = 0;
+  T[3] = P[12];
+  T[4] = P[13];
+  T[5] = P[14];
+  T[6] = P[15];
+  T[7] = P[10];
+  carry += uECC_vli_add(result, result, T, 8);  // s7
+
+  T[0] = P[9];
+  T[1] = P[10];
+  T[2] = 0;
+  T[3] = P[8];
+  T[4] = P[9];
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = P[9];
+  carry += uECC_vli_add(result, result, T, 8);  // s8
+
+  T[0] = P[11];
+  T[1] = P[12];
+  T[2] = 0;
+  T[3] = P[15];
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = P[8];
+  carry += uECC_vli_add(result, result, T, 8);  // s9
+
+  T[0] = 0;
+  T[1] = 0;
+  T[2] = 0;
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = P[15];
+  carry += uECC_vli_add(T, T, T, 8);  // 2*s10
+  carry += uECC_vli_add(result, result, T, 8);
+
+  T[0] = 0;
+  T[1] = 0;
+  T[2] = P[14];
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = 0;
+  carry -= uECC_vli_sub(result, result, T, 8);
+
+  T[0] = 0;
+  T[1] = 0;
+  T[2] = P[13];
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = 0;
+  carry -= uECC_vli_sub(result, result, T, 8);
+
+  T[0] = 0;
+  T[1] = 0;
+  T[2] = P[9];
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = 0;
+  carry -= uECC_vli_sub(result, result, T, 8);
+
+  T[0] = 0;
+  T[1] = 0;
+  T[2] = P[8];
+  T[3] = 0;
+  T[4] = 0;
+  T[5] = 0;
+  T[6] = 0;
+  T[7] = 0;
+  carry -= uECC_vli_sub(result, result, T, 8);
+  
+  if (carry < 0) {
+    do {
+      carry += uECC_vli_add(result, result, curve->p, 8);
+    } while (carry < 0);
+  } else {
+    while (carry || uECC_vli_cmp_unsafe(curve->p, result, 8) != 1) {
+      carry -= uECC_vli_sub(result, result, curve->p, 8);
+    }
+  }
+#endif
 }
 
 void x_side_sm2(uECC_word_t* result, const uECC_word_t* x, const CurveSM2_t* curve) {

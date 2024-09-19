@@ -300,25 +300,31 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   }
 
   uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
-  if (rockey.GenerateSM2(0x8100, X, Y, K)) {
-    ++error;
-    Context->error_[4] = rockey.GetLastError();
-    return 111;
-  } else {
-    rlLOGXI(TAG, X, 32, "SM2.X");
-    rlLOGXI(TAG, Y, 32, "SM2.Y");
-    rlLOGXI(TAG, K, 32, "SM2.K");
-  }
-
   DWORD tick0 = 0, tick1 = 0, tick2 = 0, tick3 = 0, tick4 = 0, tick5 = 0;
   rockey.GetTickCount(&tick0);
 
-  for (int i = 0; i < 1; ++i) {
+  for (int i = 0; i < 5; ++i) {
+    if (rockey.GenerateSM2(0x8100, X, Y, K)) {
+      ++error;
+      Context->error_[4] = rockey.GetLastError();
+      return 111;
+    } else {
+      rlLOGXI(TAG, X, 32, "SM2.X");
+      rlLOGXI(TAG, Y, 32, "SM2.Y");
+      rlLOGXI(TAG, K, 32, "SM2.K");
+    }
+
     rockey.GetTickCount(&tick1);
-    DONGLE_VERIFY(rockey.CheckPointOnCurveSM2(X, Y) >= 0);
+    if (rockey.CheckPointOnCurveSM2(X, Y) < 0) {
+      ++error;
+      rlLOGE(TAG, "rockey.CheckPointOnCurveSM2 Error ...");    
+    }
     rockey.GetTickCount(&tick2);
     X[0] ^= 1;
-    DONGLE_VERIFY(rockey.CheckPointOnCurveSM2(X, Y) < 0);
+    if (rockey.CheckPointOnCurveSM2(X, Y) >= 0) {
+      ++error;
+      rlLOGE(TAG, "rockey.CheckPointOnCurveSM2 Error ...");    
+    }
     X[0] ^= 1;
     rockey.GetTickCount(&tick3);
     rockey.DecompressPointSM2(S, X, Y[31] % 2 == 1);
@@ -340,39 +346,49 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   Context->ts_[6] = tick0;
   Context->ts_[7] = tick5;
 
-  rockey.RandBytes(H, 32);
-  if (rockey.SM2Sign(0x8100, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
-      rockey.SM2Verify(X, Y, H, R, S) < 0) {
-    ++error;
-    Context->error_[5] = rockey.GetLastError();
+  for (int i = 0; i < 2; ++i) {
+    rockey.RandBytes(H, 32);
+    if (rockey.SM2Sign(0x8100, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
+        rockey.SM2Verify(X, Y, H, R, S) < 0) {
+      ++error;
+      Context->error_[5] = rockey.GetLastError();
+    }
   }
 
-  if (rockey.ImportSM2(0x8101, K) < 0) {
-    ++error;
-    Context->error_[6] = rockey.GetLastError();
+  for (int i = 0; i < 2; ++i) {
+    if (rockey.ImportSM2(0x8101, K) < 0) {
+      ++error;
+      Context->error_[6] = rockey.GetLastError();
+    }
   }
 
-  if (rockey.SM2Sign(0x8101, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
-      rockey.SM2Verify(X, Y, H, R, S) < 0) {
-    ++error;
-    Context->error_[7] = rockey.GetLastError();
+  for (int i = 0; i < 2; ++i) {
+    if (rockey.SM2Sign(0x8101, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
+        rockey.SM2Verify(X, Y, H, R, S) < 0) {
+      ++error;
+      Context->error_[7] = rockey.GetLastError();
+    }
   }
 
 #if 1
-  S[0] ^= 1;
-  if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
-    ++error;
-  S[0] ^= 1;
+  for (int i = 0; i < 2; ++i) {
+    S[0] ^= 1;
+    if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+      ++error;
+    S[0] ^= 1;
+  }
 #endif
 
+  for (int i = 0; i < 2; ++i) {
 #if 1
-  X[0] ^= 1;
-  if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
-    ++error;
-  X[0] ^= 1;
+    X[0] ^= 1;
+    if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+      ++error;
+    X[0] ^= 1;
 
-  DONGLE_VERIFY(rockey.SM2Verify(X, Y, H, R, S) >= 0);
+    DONGLE_VERIFY(rockey.SM2Verify(X, Y, H, R, S) >= 0);
 #endif
+  }
 
   uint8_t VV[32];
   size_t szVV = 32;
@@ -380,27 +396,49 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   memset(sm2_cipher_, 0xEE, sizeof(sm2_cipher_));
 
 #if 1
-  X[0] ^= 1;
-  if (rockey.CheckPointOnCurveSM2(X, Y) && rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) >= 0)
-    ++error;
-  X[0] ^= 1;
+  for (int i = 0; i < 3; ++i) {
+    X[0] ^= 1;
+    if (rockey.CheckPointOnCurveSM2(X, Y) >= 0)
+      ++error;
+    X[0] ^= 1;
+  }
 #endif
 
+  uint8_t CK[32];
   rockey.RandBytes(H, 32);
   if (rockey.SM2Encrypt(X, Y, H, 16, sm2_cipher_) < 0) {
     ++error;
     rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
+  } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
+    ++error;
+    rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
   }
+
+  if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
+    ++error;
+    rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
+  }
+
   szVV = 32;
   if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 16, VV, &szVV) < 0 || szVV != 16 || 0 != memcmp(VV, H, 16)) {
     ++error;
     rlLOGW(TAG, "sm2_cipher_.decrypt.16 error");
   }
+
   rockey.RandBytes(H, 32);
   if (rockey.SM2Encrypt(X, Y, H, 10, sm2_cipher_) < 0) {
     ++error;
     rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
+  } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
+    ++error;
+    rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
   }
+
+  if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
+    ++error;
+    rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
+  }
+
   szVV = 32;
   if (rockey.SM2Decrypt(K, sm2_cipher_, 96 + 10, VV, &szVV) < 0 || szVV != 10 || 0 != memcmp(VV, H, 10)) {
     ++error;
@@ -410,6 +448,14 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) < 0) {
     ++error;
     rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_");
+  } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
+    ++error;
+    rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
+  }
+
+  if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
+    ++error;
+    rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
   }
 
   szVV = 32;
