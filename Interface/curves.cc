@@ -32,18 +32,19 @@ struct ScopeRNG {
 namespace {
 
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("CURVE");
+
+struct CurveSM2_t {
+  static constexpr int num_words = 8;
+  uECC_word_t p[8];
+  uECC_word_t b[8];
+};
   
-void GFpCurveSM2(uECC_Curve_t* sm2) { // b = -3 ...
-#undef BYTES_TO_WORDS_8_V
+void GFpCurveSM2(CurveSM2_t* sm2) {
 #define BYTES_TO_WORDS_8_V(pp, ii, a, b, c, d, e, f, g, h) \
   do {                                                     \
     sm2->pp[ii + 0] = 0x##d##c##b##a;                      \
     sm2->pp[ii + 1] = 0x##h##g##f##e;                      \
   } while (0)
-
-  sm2->num_words = 8;
-  sm2->num_bytes = 32;
-  sm2->num_n_bits = 256;
 
   BYTES_TO_WORDS_8_V(p, 0, ff, ff, ff, ff, ff, ff, ff, ff);
   BYTES_TO_WORDS_8_V(p, 2, 00, 00, 00, 00, ff, ff, ff, ff);
@@ -53,21 +54,28 @@ void GFpCurveSM2(uECC_Curve_t* sm2) { // b = -3 ...
   BYTES_TO_WORDS_8_V(b, 0, 93, 0e, 94, 4d, 41, bd, bc, dd);
   BYTES_TO_WORDS_8_V(b, 2, 92, 8f, ab, 15, f5, 89, 97, f3);
   BYTES_TO_WORDS_8_V(b, 4, a7, 09, 65, cf, 4b, 9e, 5a, 4d);
-  BYTES_TO_WORDS_8_V(b, 6, 34, 5e, 9f, 9d, 9e, fa, e9, 28);  
+  BYTES_TO_WORDS_8_V(b, 6, 34, 5e, 9f, 9d, 9e, fa, e9, 28);
 }
 
-void x_side_sm2(uECC_word_t* result, const uECC_word_t* x, uECC_Curve curve) {
+void uECC_vli_modMult_sm2(uECC_word_t* result,
+  const uECC_word_t* left,
+  const uECC_word_t* right,
+  const CurveSM2_t* curve) {
+  //TODO: LiangLI, implements modMult_sm2 ...
+  uECC_vli_modMult(result, left, right, curve->p, 8);
+}
+
+void x_side_sm2(uECC_word_t* result, const uECC_word_t* x, const CurveSM2_t* curve) {
   uECC_word_t _3[8] = {3}; /* -a = 3 */
 
-  uECC_vli_modMult(result, x, x, curve->p, 8);            /* r = x^2 */
+  uECC_vli_modMult_sm2(result, x, x, curve);              /* r = x^2 */
   uECC_vli_modSub(result, result, _3, curve->p, 8);       /* r = x^2 - 3 */
-  uECC_vli_modMult(result, result, x, curve->p, 8);       /* r = x^3 - 3x */
+  uECC_vli_modMult_sm2(result, result, x, curve);         /* r = x^3 - 3x */
   uECC_vli_modAdd(result, result, curve->b, curve->p, 8); /* r = x^3 - 3x + b */
 }
 
-
 /* Compute a = sqrt(a) (mod curve_p). */
-void mod_sqrt_sm2(uECC_word_t* a, uECC_Curve curve) {
+void mod_sqrt_sm2(uECC_word_t* a, const CurveSM2_t* curve) {
   bitcount_t i;
   uECC_word_t p1[8] = {1};
   uECC_word_t l_result[8] = {1};
@@ -76,9 +84,9 @@ void mod_sqrt_sm2(uECC_word_t* a, uECC_Curve curve) {
      sqrt(a) = a^((curve->p + 1) / 4) (mod curve->p). */
   uECC_vli_add(p1, curve->p, p1, 8); /* p1 = curve_p + 1 */
   for (i = uECC_vli_numBits(p1, 8) - 1; i > 1; --i) {
-    uECC_vli_modMult(l_result, l_result, l_result, curve->p, 8);
+    uECC_vli_modMult_sm2(l_result, l_result, l_result, curve);
     if (uECC_vli_testBit(p1, i)) {
-      uECC_vli_modMult(l_result, l_result, a, curve->p, 8);
+      uECC_vli_modMult_sm2(l_result, l_result, a, curve);
     }
   }
   uECC_vli_set(a, l_result, 8);
@@ -97,7 +105,7 @@ int Dongle::CheckPointOnCurveSM2(const uint8_t X[32], const uint8_t Y[32]) {
   uECC_vli_bytesToNative(point, X, 32);
   uECC_vli_bytesToNative(point + 8, Y, 32);
 
-  uECC_Curve_t sm2;
+  CurveSM2_t sm2;
   GFpCurveSM2(&sm2);
 
   if (EccPoint_isZero(point, &sm2))
@@ -107,7 +115,7 @@ int Dongle::CheckPointOnCurveSM2(const uint8_t X[32], const uint8_t Y[32]) {
   if (uECC_vli_cmp_unsafe(sm2.p, point, 8) != 1 || uECC_vli_cmp_unsafe(sm2.p, point + 8, 8) != 1)
     return -EINVAL;
 
-  uECC_vli_modMult(tmp1, point + 8, point + 8, sm2.p, 8);  // y*y
+  uECC_vli_modMult_sm2(tmp1, point + 8, point + 8, &sm2);  // y*y
   x_side_sm2(tmp2, point, &sm2);                           // x*x*x + a*x + b ...
 
   return uECC_vli_equal(tmp1, tmp2, 8) ? 0 : -EINVAL;
@@ -118,7 +126,7 @@ int Dongle::DecompressPointSM2(uint8_t Y[32], const uint8_t X[32], bool Yodd) {
   uECC_word_t pointY[8];
   uECC_vli_bytesToNative(pointX, X, 32);
 
-  uECC_Curve_t sm2;
+  CurveSM2_t sm2;
   GFpCurveSM2(&sm2);
 
   x_side_sm2(pointY, pointX, &sm2);
