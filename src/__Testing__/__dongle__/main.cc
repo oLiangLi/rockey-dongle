@@ -30,6 +30,8 @@ enum class kTestingIndex : int {
 
   HashExec,
 
+  Secp256K1Exec,
+
 };
 
 struct Context_t {
@@ -779,6 +781,84 @@ int Testing_HashExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_Secp256K1Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  uint8_t X1[32], Y1[32], K1[32], V1[32];
+  uint8_t X2[32], Y2[32], K2[32], V2[32];
+
+  for (int i = 0; i < 2; ++i) {
+    if (rockey.GenerateKeyPairSecp256k1(X1, Y1, K1) < 0) {
+      ++error;
+      rlLOGE(TAG, "GenerateKeyPairSecp256k1..1 Error ...");
+    }
+    if (rockey.GenerateKeyPairSecp256k1(X2, Y2, K2) < 0) {
+      ++error;
+      rlLOGE(TAG, "GenerateKeyPairSecp256k1..2 Error ...");
+    }
+    if (rockey.CheckPointOnCurveSecp256k1(X1, Y1) < 0) {
+      ++error;
+      rlLOGE(TAG, "CheckPointOnCurveSecp256k1 Error ...");
+    }
+    X1[0] ^= 1;
+    if (rockey.CheckPointOnCurveSecp256k1(X1, Y1) >= 0) {
+      ++error;
+      rlLOGE(TAG, "CheckPointOnCurveSecp256k1 Error ...");
+    }
+    X1[0] ^= 1;
+
+    if (rockey.ComputeSecretSecp256k1(V1, X1, Y1, K2) < 0) {
+      ++error;
+      rlLOGE(TAG, "ComputeSecretSecp256k1 .. 1 Error ...");
+    }
+    if (rockey.ComputeSecretSecp256k1(V2, X2, Y2, K1) < 0) {
+      ++error;
+      rlLOGE(TAG, "ComputeSecretSecp256k1 .. 2 Error ...");
+    }
+
+    if (0 != memcmp(V1, V2, 32)) {
+      ++error;
+      rlLOGE(TAG, "0 != memcmp(V1, V2, 32)");
+    } else {
+      rlLOGXI(TAG, V1, 32, "ComputeSecretSecp256k1 OK");
+    }
+
+    uint8_t H[32], R[32], S[32];
+    if (rockey.RandBytes(H, 32) < 0) {
+      ++error;
+      rlLOGE(TAG, "RandBytes 32 Error ...");
+    }
+
+    if (rockey.SignMessageSecp256k1(K1, H, R, S) < 0) {
+      ++error;
+      rlLOGE(TAG, "SignMessageSecp256k1 Error ...");
+    }
+
+    R[0] ^= 1;
+    if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) >= 0) {
+      ++error;
+      rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+    }
+    R[0] ^= 1;
+
+    H[0] ^= 1;
+    if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) >= 0) {
+      ++error;
+      rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+    }
+    H[0] ^= 1;
+
+    if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) < 0) {
+      ++error;
+      rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+    }
+  }
+
+
+
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -913,6 +993,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(P256Exec);
   DONGLE_RUN_TESTING(KeyExec);
   DONGLE_RUN_TESTING(HashExec);
+  DONGLE_RUN_TESTING(Secp256K1Exec);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
