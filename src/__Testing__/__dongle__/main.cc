@@ -32,6 +32,8 @@ enum class kTestingIndex : int {
 
   Secp256K1Exec,
 
+  ChaChaPoly,
+
 };
 
 struct Context_t {
@@ -859,6 +861,46 @@ int Testing_Secp256K1Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  uint32_t state[16];
+  rockey.RandBytes(reinterpret_cast<uint8_t*>(state), sizeof(state));
+
+  for (int i = 0; i < 10; ++i) {
+    uint8_t sm3[32], verify[32];
+    uint8_t key[64];
+    uint8_t buffer[512 + 16];
+
+    rockey.RandBytes(key, sizeof(key));
+    for (int off = 0; off < 512; off += 64, ++state[12])
+      rlCryptoChaCha20Block(state, &buffer[off]);
+
+    size_t size = 1 + state[0] % 512, size_origin = size;
+    if (rockey.SM3(buffer, size, sm3) < 0)
+      ++error;
+
+    if (rockey.CHACHAPOLY_Seal(key, key + 32, buffer, &size) < 0)
+      ++error;
+
+    if (size != size_origin + 16)
+      ++error;
+
+    if (rockey.CHACHAPOLY_Open(key, key + 32, buffer, &size) < 0)
+      ++error;
+
+    if (size_origin != size)
+      ++error;
+
+    if (rockey.SM3(buffer, size, verify) < 0)
+      ++error;
+
+    if (0 != memcmp(sm3, verify, 32))
+      ++error;
+  }
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -994,6 +1036,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(KeyExec);
   DONGLE_RUN_TESTING(HashExec);
   DONGLE_RUN_TESTING(Secp256K1Exec);
+  DONGLE_RUN_TESTING(ChaChaPoly);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

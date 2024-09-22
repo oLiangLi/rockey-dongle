@@ -252,6 +252,13 @@ public:
   virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt);
   virtual int SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt);
 
+ public:  // SHA256
+  virtual int SHA256(const void* input, size_t size, uint8_t md[32]);
+
+ public:
+  virtual int CHACHAPOLY_Seal(const uint8_t key[32], const uint8_t nonce[12], void* buffer /* max_size(16 + *size) */, size_t* size);
+  virtual int CHACHAPOLY_Open(const uint8_t key[32], const uint8_t nonce[12], void* buffer, size_t* size);
+
  public: /* ... uECC ... */
   /**
    *! ... SM2 ...
