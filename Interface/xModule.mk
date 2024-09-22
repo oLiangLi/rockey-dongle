@@ -13,7 +13,7 @@ LOCAL_SRC_FILES := emulator.cc
 endif ## emscripten
 endif ## RockeyARM
 
-LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc
+LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc sha512.cc
 
 $(call build-library)
 

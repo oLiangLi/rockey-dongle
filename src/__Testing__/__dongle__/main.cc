@@ -34,7 +34,9 @@ enum class kTestingIndex : int {
 
   ChaChaPoly,
 
-  Sha256Test
+  Sha256Test,
+
+  Sha512Test,
 
 };
 
@@ -44,10 +46,9 @@ struct Context_t {
     uint32_t result_[4];
     uint8_t bytes_[16];
   };
-  union {
-    uint32_t ts_[8];
-    uint8_t hash_[32];
-  };
+
+  uint8_t hash_[64];
+  uint32_t ts_[8];
   
   uint32_t seed_[8];
   uint32_t error_[8];
@@ -952,6 +953,12 @@ int Testing_Sha256Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return 0;
 }
 
+int Testing_Sha512Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  if (rockey.SHA512(Context->argv_, sizeof(Context->argv_), Context->hash_) < 0)
+    return 1;
+  return 0;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -1091,6 +1098,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(Secp256K1Exec);
   DONGLE_RUN_TESTING(ChaChaPoly);
   DONGLE_RUN_TESTING(Sha256Test);
+  DONGLE_RUN_TESTING(Sha512Test);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
