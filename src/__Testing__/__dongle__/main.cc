@@ -34,6 +34,8 @@ enum class kTestingIndex : int {
 
   ChaChaPoly,
 
+  Sha256Test
+
 };
 
 struct Context_t {
@@ -42,7 +44,11 @@ struct Context_t {
     uint32_t result_[4];
     uint8_t bytes_[16];
   };
-  uint32_t ts_[8];
+  union {
+    uint32_t ts_[8];
+    uint8_t hash_[32];
+  };
+  
   uint32_t seed_[8];
   uint32_t error_[8];
 
@@ -940,6 +946,12 @@ int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_Sha256Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  if (rockey.SHA256(Context->argv_, sizeof(Context->argv_), Context->hash_) < 0)
+    return 1;
+  return 0;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -1059,10 +1071,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   int index = Context->argv_[0] & 0xFF, result2 = 0;
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
   rockey.ClearLastError();
-#define DONGLE_RUN_TESTING(Name)                            \
-  do {                                                      \
-    if (index == static_cast<int>(kTestingIndex::Name))     \
-      result2 = Testing_##Name(rockey, Context, ExtendBuf); \
+#define DONGLE_RUN_TESTING(Name)                                 \
+  do {                                                           \
+    if (index == static_cast<int>(kTestingIndex::Name)) {        \
+      rlLOGI(TAG, "===== DONGLE_RUN_TESTING: %s ===== ", #Name); \
+      result2 = Testing_##Name(rockey, Context, ExtendBuf);      \
+    }                                                            \
   } while (0)
 
   DONGLE_RUN_TESTING(CreateDataFile);
@@ -1076,6 +1090,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(HashExec);
   DONGLE_RUN_TESTING(Secp256K1Exec);
   DONGLE_RUN_TESTING(ChaChaPoly);
+  DONGLE_RUN_TESTING(Sha256Test);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
