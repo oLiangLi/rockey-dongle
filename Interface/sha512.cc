@@ -6,6 +6,20 @@ rLANG_DECLARE_MACHINE
 namespace dongle {
 
 #ifndef __RockeyARM__
+
+Sha384Ctx& Sha384Ctx::Init() {
+  rlCryptoSha384CtxInit(&ctx_);
+  return *this;
+}
+Sha384Ctx& Sha384Ctx::Update(const void* input, size_t size) {
+  rlCryptoSha384CtxUpdate(&ctx_, input, (int)size);
+  return *this;
+}
+Sha384Ctx& Sha384Ctx::Final(uint8_t md[48]) {
+  rlCryptoSha384CtxFinal(&ctx_, md);
+  return *this;
+}
+
 Sha512Ctx& Sha512Ctx::Init() {
   rlCryptoSha512CtxInit(&ctx_);
   return *this;
@@ -396,6 +410,20 @@ static void internal_sha512_final(SHA512_CTX* ctx, uint8_t* output, int is384) {
 }
 }  // namespace
 
+Sha384Ctx& Sha384Ctx::Init() {
+  internal_sha512_init((SHA512_CTX*)&ctx_, 1);
+  return *this;
+}
+Sha384Ctx& Sha384Ctx::Update(const void* input, size_t size) {
+  internal_sha512_update((SHA512_CTX*)&ctx_, (const uint8_t*)input, size);
+  return *this;
+}
+
+Sha384Ctx& Sha384Ctx::Final(uint8_t md[48]) {
+  internal_sha512_final((SHA512_CTX*)&ctx_, md, 1);
+  return *this;
+}
+
 Sha512Ctx& Sha512Ctx::Init() {
   internal_sha512_init((SHA512_CTX*)&ctx_, 0);
   return *this;
@@ -410,6 +438,11 @@ Sha512Ctx& Sha512Ctx::Final(uint8_t md[64]) {
   return *this;
 }
 #endif /* __RockeyARM__ */
+
+int Dongle::SHA384(const void* input, size_t size, uint8_t md[48]) {
+  Sha384Ctx().Init().Update(input, size).Final(md);
+  return 0;
+}
 
 int Dongle::SHA512(const void* input, size_t size, uint8_t md[64]) {
   Sha512Ctx().Init().Update(input, size).Final(md);

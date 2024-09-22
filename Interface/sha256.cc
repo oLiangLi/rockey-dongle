@@ -6,13 +6,20 @@ rLANG_DECLARE_MACHINE
 namespace dongle {
 
 #ifndef __RockeyARM__
-int Dongle::SHA256(const void* input, size_t size, uint8_t md[32]) {
-  rlCryptoShaCtx ctx;
-  rlCryptoSha256CtxInit(&ctx);
-  rlCryptoSha256CtxUpdate(&ctx, input, (int)size);
-  rlCryptoSha256CtxFinal(&ctx, md);
-  return 0;
+
+Sha256Ctx& Sha256Ctx::Init() {
+  rlCryptoSha256CtxInit(&ctx_);
+  return *this;
 }
+Sha256Ctx& Sha256Ctx::Update(const void* input, size_t size) {
+  rlCryptoSha256CtxUpdate(&ctx_, input, (int)size);
+  return *this;
+}
+Sha256Ctx& Sha256Ctx::Final(uint8_t md[32]) {
+  rlCryptoSha256CtxFinal(&ctx_, md);
+  return *this;
+}
+
 #else  /* __RockeyARM__ */
 
 // SHA256 ...
@@ -43,76 +50,64 @@ struct SHA256_CTX {
 };
 rLANG_ABIREQUIRE(sizeof(SHA256_CTX) + sizeof(uintptr_t) <= sizeof(rlCryptoShaCtx));
 
-/*
-static const uint32_t sha256__k[64] = {
-    0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5,
-    0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174,
-    0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da,
-    0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967,
-    0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85,
-    0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070,
-    0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3,
-    0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2};
-  */
-
-#define get_sha256_kX(ii, a0, a1, a2, a3, a4, a5, a6, a7) \
-  static uint32_t get_sha256_kX_##ii(int i) {             \
-    if (i == 0)                                           \
-      return a0;                                          \
-    if (i == 1)                                           \
-      return a1;                                          \
-    if (i == 2)                                           \
-      return a2;                                          \
-    if (i == 3)                                           \
-      return a3;                                          \
-    if (i == 4)                                           \
-      return a4;                                          \
-    if (i == 5)                                           \
-      return a5;                                          \
-    if (i == 6)                                           \
-      return a6;                                          \
-    return a7;                                            \
+#define SHA256_K_I(ii, a0, a1, a2, a3, a4, a5, a6, a7) \
+  struct SHA256_K__##ii {                              \
+    uint32_t Get(int i) const {                        \
+      if (i == 0)                                      \
+        return a0;                                     \
+      if (i == 1)                                      \
+        return a1;                                     \
+      if (i == 2)                                      \
+        return a2;                                     \
+      if (i == 3)                                      \
+        return a3;                                     \
+      if (i == 4)                                      \
+        return a4;                                     \
+      if (i == 5)                                      \
+        return a5;                                     \
+      if (i == 6)                                      \
+        return a6;                                     \
+      return a7;                                       \
+    }                                                  \
   }
 
-get_sha256_kX(0, 0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5)
-get_sha256_kX(1, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174)
-get_sha256_kX(2, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da)
-get_sha256_kX(3, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967)
-get_sha256_kX(4, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85)
-get_sha256_kX(5, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070)
-get_sha256_kX(6, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3)
-get_sha256_kX(7, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2)
-
-uint32_t get_sha256_k(size_t i) {
-  int x = i & 7;
-
-  i >>= 3;
-  if (i == 0)
-    return get_sha256_kX_0(x);
-
-  if (i == 1)
-    return get_sha256_kX_1(x);
-
-  if (i == 2)
-    return get_sha256_kX_2(x);
-
-  if (i == 3)
-    return get_sha256_kX_3(x);
-
-  if (i == 4)
-    return get_sha256_kX_4(x);
-
-  if (i == 5)
-    return get_sha256_kX_5(x);
-
-  if (i == 6)
-    return get_sha256_kX_6(x);
-
-  return get_sha256_kX_7(x);
-}
+SHA256_K_I(0, 0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5, 0x3956c25b, 0x59f111f1, 0x923f82a4, 0xab1c5ed5);
+SHA256_K_I(1, 0xd807aa98, 0x12835b01, 0x243185be, 0x550c7dc3, 0x72be5d74, 0x80deb1fe, 0x9bdc06a7, 0xc19bf174);
+SHA256_K_I(2, 0xe49b69c1, 0xefbe4786, 0x0fc19dc6, 0x240ca1cc, 0x2de92c6f, 0x4a7484aa, 0x5cb0a9dc, 0x76f988da);
+SHA256_K_I(3, 0x983e5152, 0xa831c66d, 0xb00327c8, 0xbf597fc7, 0xc6e00bf3, 0xd5a79147, 0x06ca6351, 0x14292967);
+SHA256_K_I(4, 0x27b70a85, 0x2e1b2138, 0x4d2c6dfc, 0x53380d13, 0x650a7354, 0x766a0abb, 0x81c2c92e, 0x92722c85);
+SHA256_K_I(5, 0xa2bfe8a1, 0xa81a664b, 0xc24b8b70, 0xc76c51a3, 0xd192e819, 0xd6990624, 0xf40e3585, 0x106aa070);
+SHA256_K_I(6, 0x19a4c116, 0x1e376c08, 0x2748774c, 0x34b0bcb5, 0x391c0cb3, 0x4ed8aa4a, 0x5b9cca4f, 0x682e6ff3);
+SHA256_K_I(7, 0x748f82ee, 0x78a5636f, 0x84c87814, 0x8cc70208, 0x90befffa, 0xa4506ceb, 0xbef9a3f7, 0xc67178f2);
 
 struct Sha256_K {
-  uint32_t operator[](size_t i) const { return get_sha256_k(i); }
+  uint32_t operator[](size_t i) const {
+    int x = i & 7;
+
+    i >>= 3;
+    if (i == 0)
+      return SHA256_K__0().Get(x);
+
+    if (i == 1)
+      return SHA256_K__1().Get(x);
+
+    if (i == 2)
+      return SHA256_K__2().Get(x);
+
+    if (i == 3)
+      return SHA256_K__3().Get(x);
+
+    if (i == 4)
+      return SHA256_K__4().Get(x);
+
+    if (i == 5)
+      return SHA256_K__5().Get(x);
+
+    if (i == 6)
+      return SHA256_K__6().Get(x);
+
+    return SHA256_K__7().Get(x);  
+  }
 } sha256__k;
 
 static void internal_sha256_transform(SHA256_CTX* ctx, uint8_t data[]) {
@@ -231,15 +226,25 @@ void internal_sha256_final(SHA256_CTX* ctx, uint8_t hash[32]) {
 
 } // namespace sha256
 
+
+Sha256Ctx& Sha256Ctx::Init() {
+  sha256::internal_sha256_init((sha256::SHA256_CTX*)&ctx_);
+  return *this;
+}
+Sha256Ctx& Sha256Ctx::Update(const void* input, size_t size) {
+  sha256::internal_sha256_update((sha256::SHA256_CTX*)&ctx_, static_cast<const uint8_t*>(input), (int)size);
+  return *this;
+}
+Sha256Ctx& Sha256Ctx::Final(uint8_t md[32]) {
+  sha256::internal_sha256_final((sha256::SHA256_CTX*)&ctx_, md);
+  return *this;
+}
+#endif /* __RockeyARM__ */
+
 int Dongle::SHA256(const void* input, size_t size, uint8_t md[32]) {
-  sha256::SHA256_CTX ctx;
-  sha256::internal_sha256_init(&ctx);
-  sha256::internal_sha256_update(&ctx, static_cast<const uint8_t*>(input), (int)size);
-  sha256::internal_sha256_final(&ctx, md);
+  Sha256Ctx().Init().Update(input, size).Final(md);
   return 0;
 }
-
-#endif /* __RockeyARM__ */
 
 } // namespace dongle
 

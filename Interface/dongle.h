@@ -31,6 +31,26 @@ enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdminstrator };
 enum class LED_STATE : uint8_t { kOff, kOn, kBlink };
 enum class SECRET_STORAGE_TYPE : uint8_t { kData, kRSA, kP256, kSM2, kSM4, kTDES };
 
+class Sha256Ctx {
+ public:
+  Sha256Ctx& Init();
+  Sha256Ctx& Update(const void* input, size_t size);
+  Sha256Ctx& Final(uint8_t md[32]);
+
+ private:
+  rlCryptoShaCtx ctx_;
+};
+
+class Sha384Ctx {
+ public:
+  Sha384Ctx& Init();
+  Sha384Ctx& Update(const void* input, size_t size);
+  Sha384Ctx& Final(uint8_t md[48]);
+
+ private:
+  rlCryptoShaCtx ctx_;
+};
+
 class Sha512Ctx {
  public:
   Sha512Ctx& Init();
@@ -262,8 +282,9 @@ public:
   virtual int SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt);
   virtual int SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt);
 
- public:  // SHA256/SHA512
+ public:  // SHA256/SHA384/SHA512
   virtual int SHA256(const void* input, size_t size, uint8_t md[32]);
+  virtual int SHA384(const void* input, size_t size, uint8_t md[48]);
   virtual int SHA512(const void* input, size_t size, uint8_t md[64]);
 
  public:
