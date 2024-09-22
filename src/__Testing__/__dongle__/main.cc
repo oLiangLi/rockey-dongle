@@ -871,6 +871,10 @@ int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     uint8_t key[64];
     uint8_t buffer[512 + 16];
 
+#if !defined(X_BUILD_native)
+    uint8_t check_[1024];
+#endif /* X_BUILD_native */
+
     rockey.RandBytes(key, sizeof(key));
     for (int off = 0; off < 512; off += 64, ++state[12])
       rlCryptoChaCha20Block(state, &buffer[off]);
@@ -879,17 +883,52 @@ int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     if (rockey.SM3(buffer, size, sm3) < 0)
       ++error;
 
+#if !defined(X_BUILD_native)
+    {
+      int out_size = 1024, mac_size = 16;
+      EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+      DONGLE_VERIFY(ctx && EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
+      DONGLE_VERIFY(EVP_EncryptUpdate(ctx, check_, &out_size, buffer, (int)size) == 1);
+      DONGLE_VERIFY((int)size == out_size);
+      
+      DONGLE_VERIFY(EVP_EncryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1);
+      DONGLE_VERIFY(mac_size == 0);
+      mac_size = 16;
+      DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, check_ + out_size) == 1);
+      EVP_CIPHER_CTX_free(ctx);
+    }
+#endif /* X_BUILD_native */
+
     if (rockey.CHACHAPOLY_Seal(key, key + 32, buffer, &size) < 0)
       ++error;
 
     if (size != size_origin + 16)
       ++error;
 
+#if !defined(X_BUILD_native)
+    {
+      int out_size = 1024, mac_size = 16;      
+      DONGLE_VERIFY(0 == memcmp(buffer, check_, size));
+
+      EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+      DONGLE_VERIFY(ctx && EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
+      DONGLE_VERIFY(EVP_DecryptUpdate(ctx, check_, &out_size, buffer, (int)size - 16) == 1);
+      DONGLE_VERIFY(out_size == (int)size - 16);
+      DONGLE_VERIFY(EVP_DecryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1 && mac_size == 0);
+      DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, check_ + out_size) == 1);
+      EVP_CIPHER_CTX_free(ctx);
+    }
+#endif /* X_BUILD_native */
+
     if (rockey.CHACHAPOLY_Open(key, key + 32, buffer, &size) < 0)
       ++error;
 
     if (size_origin != size)
       ++error;
+
+#if !defined(X_BUILD_native)
+    DONGLE_VERIFY(0 == memcmp(buffer, check_, size));
+#endif /* X_BUILD_native */
 
     if (rockey.SM3(buffer, size, verify) < 0)
       ++error;
