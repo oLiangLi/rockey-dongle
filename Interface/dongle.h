@@ -61,6 +61,16 @@ class Sha512Ctx {
   rlCryptoShaCtx ctx_;
 };
 
+class Curve25519 {
+ public:
+  void Ed25519Pubkey(uint8_t pubkey[32], const uint8_t prikey[32]);
+  void Ed25519Sign(uint8_t sign[64], const void* m, int mlen, const uint8_t pubkey[32], const uint8_t prikey[32]);
+  int Ed25519Verify(const void* m, int mlen, const uint8_t sign[64], const uint8_t pubkey[32]);
+
+  void X25519Pubkey(uint8_t pubkey[32], const uint8_t prikey[32]);
+  void X25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
+};
+
 struct PKEY_LICENCE {
   int32_t count_limit_ = -1;
   PERMISSION permission_ = PERMISSION::kAnonymous;
