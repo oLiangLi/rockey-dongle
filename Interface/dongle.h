@@ -61,16 +61,6 @@ class Sha512Ctx {
   rlCryptoShaCtx ctx_;
 };
 
-class Curve25519 {
- public:
-  void Ed25519Pubkey(uint8_t pubkey[32], const uint8_t prikey[32]);
-  void Ed25519Sign(uint8_t sign[64], const void* m, int mlen, const uint8_t pubkey[32], const uint8_t prikey[32]);
-  int Ed25519Verify(const void* m, int mlen, const uint8_t sign[64], const uint8_t pubkey[32]);
-
-  void X25519Pubkey(uint8_t pubkey[32], const uint8_t prikey[32]);
-  void X25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
-};
-
 struct PKEY_LICENCE {
   int32_t count_limit_ = -1;
   PERMISSION permission_ = PERMISSION::kAnonymous;
@@ -211,7 +201,7 @@ public:
 
  public:  // PKEY STORAGE ...
   /* SECRET_STORAGE_TYPE::kRSA || SECRET_STORAGE_TYPE::kP256 || SECRET_STORAGE_TYPE::kSM2 */
-  virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE licence = {});
+  virtual int CreatePKEYFile(SECRET_STORAGE_TYPE type, int bits, int id, const PKEY_LICENCE& licence = {});
 
   /* SECRET_STORAGE_TYPE::kRSA */
   virtual int GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_ = nullptr);

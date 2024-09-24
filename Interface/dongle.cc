@@ -156,7 +156,7 @@ int Dongle::ReadDataFile(int id, size_t offset, void* buffer, size_t size) {
       Dongle_ReadFile(handle_, id, static_cast<WORD>(offset), static_cast<uint8_t*>(buffer), static_cast<int>(size)));
 }
 
-int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PKEY_LICENCE licence) {
+int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PKEY_LICENCE& licence) {
   WORD type;
   PRIKEY_FILE_ATTR attr;
   attr.m_Lic.m_Count = licence.count_limit_;
