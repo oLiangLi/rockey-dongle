@@ -42,6 +42,8 @@ enum class kTestingIndex : int {
 
   Curve25519Test,
 
+  Ed25519Test,
+
 };
 
 struct Context_t {
@@ -1042,6 +1044,25 @@ int Testing_Curve25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) 
   return error;
 }
 
+int Testing_Ed25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+
+  for (int i = 0; i < 2; ++i) {
+    uint8_t pubkey[32], prikey[32], sign[64], message[64];
+    if (rockey.RandBytes(prikey, sizeof(prikey)) < 0)
+      ++error;
+    if (rockey.RandBytes(message, sizeof(message)) < 0)
+      ++error;
+
+    Ed25519().ComputePubkey(ExtendBuf, pubkey, prikey);
+    Ed25519().Sign(ExtendBuf, sign, message, sizeof(message), pubkey, prikey);
+    if (0 != Ed25519().Verify(ExtendBuf, message, sizeof(message), sign, pubkey))
+      ++error;
+  }
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -1140,12 +1161,6 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
 #endif  // __RockeyARM__
 
-  const int kSizeExtBuffer = 240 + 64;
-
-  uint8_t* buffer = static_cast<uint8_t*>(alloca(kSizeExtBuffer));
-  result = rockey.RandBytes(buffer, 64);
-  rlLOGXI(TAG, buffer, 64, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
-
   result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
   rlLOGI(TAG, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
 
@@ -1192,6 +1207,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(Sha384Test);
   DONGLE_RUN_TESTING(Sha512Test);
   DONGLE_RUN_TESTING(Curve25519Test);
+  DONGLE_RUN_TESTING(Ed25519Test);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

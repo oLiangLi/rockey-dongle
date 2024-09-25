@@ -87,7 +87,7 @@ class Ed25519 {
             int message_len,
             const uint8_t public_key[32],
             const uint8_t private_key[32]);
-  int Verify(void* vExtBuffer,
+  int Verify(void* vExtBuffer,/* Ed25519.Verify Overwrite InOutBuffer ... */
              const void* message,
              int message_len,
              const uint8_t signature[64],

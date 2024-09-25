@@ -2217,12 +2217,25 @@ struct Helper {
     ge_scalarmult(h, a, h);
   }
 
-  ge_p1p1 q;     // ge_dbl
-  ge_cached qc;  // ge_add
-  ge_p1p1 p1p1;  // ge_add
+  union {
+    ge_p1p1 q;  // ge_dbl
+    struct {
+      ge_cached qc;  // ge_add
+      ge_p1p1 p1p1;  // ge_add
+    };
+  };  
+
   ge_p3 T, A;    // ge_scalarmult
   ge_p3 AR;      // pubkey/sign/verify ...
   uint8_t sha512[SHA512_DIGEST_LENGTH];
+
+  union {
+    ge_p3 VA;     // verify ...
+    struct {      // sign ...
+      uint8_t sha512_az[SHA512_DIGEST_LENGTH];
+      uint8_t sha512_nonce[SHA512_DIGEST_LENGTH];
+    };
+  };
 };
 
 rLANG_ABIREQUIRE(sizeof(Helper) <= 1024);
@@ -2300,11 +2313,12 @@ int Ed25519::Verify(void* vExtBuffer,
                     const uint8_t public_key[32]) {
   Helper* helper = static_cast<Helper*>(vExtBuffer);
 
-  ge_p3 A;
+  
   uint8_t rcopy[32];
   uint8_t scopy[32];
   uint8_t rcheck[32];
   uint8_t* const h = helper->sha512;
+  ge_p3& A = helper->VA;
   ge_p3& R = helper->AR;
 
   if ((signature[63] & 224) != 0 || ge_frombytes_vartime(&A, public_key) != 0) {
@@ -2332,7 +2346,7 @@ int Ed25519::Verify(void* vExtBuffer,
   return r;
 }
 
-void Ed25519::Sign(void* vExtBuffer, /* Ed25519.Sign Overwrite InOutBuffer ... */
+void Ed25519::Sign(void* vExtBuffer,
                    uint8_t out_sig[64],
                    const void* message,
                    int message_len,
@@ -2341,8 +2355,8 @@ void Ed25519::Sign(void* vExtBuffer, /* Ed25519.Sign Overwrite InOutBuffer ... *
   Helper* helper = static_cast<Helper*>(vExtBuffer);
 
   ge_p3& R = helper->AR;
-  uint8_t az[SHA512_DIGEST_LENGTH];
-  uint8_t nonce[SHA512_DIGEST_LENGTH];
+  uint8_t* const az = helper->sha512_az;
+  uint8_t* const nonce = helper->sha512_nonce;
   uint8_t* const hram = helper->sha512;
 
   Sha512Ctx().Init().Update(private_key, 32).Final(az).Init();
@@ -2362,8 +2376,8 @@ void Ed25519::Sign(void* vExtBuffer, /* Ed25519.Sign Overwrite InOutBuffer ... *
   x25519_sc_reduce(hram);
   sc_muladd(out_sig + 32, hram, az, nonce);
 
-  memset(nonce, 0, sizeof(nonce));
-  memset(az, 0, sizeof(az));
+  memset(nonce, 0, SHA512_DIGEST_LENGTH);
+  memset(az, 0, SHA512_DIGEST_LENGTH);
 }
 
 int Dongle::GenerateKeyPairCurve25519(uint8_t pubkey[32], uint8_t prikey[32]) {
