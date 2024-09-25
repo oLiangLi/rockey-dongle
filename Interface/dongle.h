@@ -78,18 +78,21 @@ class Curve25519 {
   void X25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
 };
 
-#if 0  /* The Ed25519 requires too much stack space */
 class Ed25519 {
- public:
-  void ComputePubkey(uint8_t pubkey[32], const uint8_t prikey[32]);
-  void Sign(uint8_t out_sig[64],
+ public: /* The Ed25519 requires too much stack space */
+  void ComputePubkey(void* vExtBuffer, uint8_t pubkey[32], const uint8_t prikey[32]);
+  void Sign(void* vExtBuffer, /* Ed25519.Sign Overwrite InOutBuffer ... */
+            uint8_t out_sig[64],
             const void* message,
             int message_len,
             const uint8_t public_key[32],
             const uint8_t private_key[32]);
-  void Verify(const void* message, int message_len, const uint8_t signature[64], const uint8_t public_key[32]);
+  int Verify(void* vExtBuffer,
+             const void* message,
+             int message_len,
+             const uint8_t signature[64],
+             const uint8_t public_key[32]);
 };
-#endif /* */
 
 struct PKEY_LICENCE {
   int32_t count_limit_ = -1;
