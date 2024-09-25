@@ -40,6 +40,8 @@ enum class kTestingIndex : int {
 
   Sha512Test,
 
+  Curve25519Test,
+
 };
 
 struct Context_t {
@@ -982,9 +984,69 @@ int Testing_Sha512Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return 0;
 }
 
+int Testing_Curve25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  for (int i = 0; i < 5; ++i) {
+    uint8_t pub1[32], pub2[32], pkey1[32], pkey2[32], sec1[32], sec2[32];
+    if (rockey.GenerateKeyPairCurve25519(pub1, pkey1) < 0) {
+      Context->error_[0] = 0x1111;
+      ++error;
+    }
+
+    if (rockey.RandBytes(pkey2, 32) < 0) {
+      Context->error_[1] = 0x2222;
+      ++error;
+    }
+
+    if (rockey.RandBytes(sec1, 32) < 0) {
+      Context->error_[2] = 0x3333;
+      ++error;
+    }
+
+    if (rockey.ComputePubkeyCurve25519(pub2, pkey2) < 0) {
+      Context->error_[3] = 0x4444;
+      ++error;
+    }    
+
+    if (rockey.ComputeSecretCurve25519(sec1, pkey1, pub2) < 0) {
+      Context->error_[4] = 0x5555;
+      ++error;
+    }    
+
+    if (rockey.ComputeSecretCurve25519(sec2, pkey2, pub1) < 0) {
+      Context->error_[5] = 0x6666;
+      ++error;
+    }    
+
+    if (0 != memcmp(sec1, sec2, 32)) {
+      Context->error_[6] = 0x7777;
+      ++error;
+    } else {
+      rlLOGXI(TAG, sec1, 32, "ComputeSecretCurve25519");
+    }
+
+#if !defined(__RockeyARM__)
+    uint8_t chkpub1[32], chkpub2[32], chksec[32];
+    rlCryptoX25519Pubkey(chkpub1, pkey1);
+    rlCryptoX25519Pubkey(chkpub2, pkey2);
+    if (0 != memcmp(pub1, chkpub1, 32))
+      ++error;
+    if (0 != memcmp(pub2, chkpub2, 32))
+      ++error;
+    rlCryptoX25519(chksec, pkey1, chkpub2);
+    if (0 != memcmp(sec1, chksec, 32))
+      ++error;
+#endif /* __RockeyARM__ */
+  }
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
+  uint8_t* GuardBytes = static_cast<uint8_t*>(InOutBuf) + 1024;
+  memset(GuardBytes, 0xCC, 64);
 
 #if !defined(__RockeyARM__)
   Context_t CopyContext = *Context;
@@ -1078,6 +1140,10 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
 #endif  // __RockeyARM__
 
+  uint8_t buffer[240+64];
+  result = rockey.RandBytes(buffer, 64);
+  rlLOGXI(TAG, buffer, 64, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
+
   result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
   rlLOGI(TAG, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
 
@@ -1123,6 +1189,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(Sha256Test);
   DONGLE_RUN_TESTING(Sha384Test);
   DONGLE_RUN_TESTING(Sha512Test);
+  DONGLE_RUN_TESTING(Curve25519Test);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
@@ -1138,6 +1205,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   if (result3 < 0)
     ++result;
 #endif /* __RockeyARM__ */
+
+  for (int i = 0; i < 64; ++i) {
+    if (GuardBytes[i] != 0xCC)
+      result += 100;  
+  }
+
 
   std::ignore = TAG;
   return 10086 - result;

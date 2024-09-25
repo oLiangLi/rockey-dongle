@@ -65,6 +65,29 @@ class Sha512Ctx {
   rlCryptoShaCtx ctx_;
 };
 
+class Curve25519 {
+ public:
+  void ComputePubkey(uint8_t pubkey[32], const uint8_t prikey[32]) {
+    memset(pubkey, 0, 32);
+    pubkey[0] = 9;
+    X25519(pubkey, prikey, pubkey);
+  }
+  void X25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
+};
+
+#if 0  /* The Ed25519 requires too much stack space */
+class Ed25519 {
+ public:
+  void ComputePubkey(uint8_t pubkey[32], const uint8_t prikey[32]);
+  void Sign(uint8_t out_sig[64],
+            const void* message,
+            int message_len,
+            const uint8_t public_key[32],
+            const uint8_t private_key[32]);
+  void Verify(const void* message, int message_len, const uint8_t signature[64], const uint8_t public_key[32]);
+};
+#endif /* */
+
 struct PKEY_LICENCE {
   int32_t count_limit_ = -1;
   PERMISSION permission_ = PERMISSION::kAnonymous;
@@ -334,6 +357,11 @@ public:
                                   const uint8_t H[32],
                                   const uint8_t R[32],
                                   const uint8_t S[32]);
+
+ public: /* ... Curve25519 ... */
+  virtual int GenerateKeyPairCurve25519(uint8_t pubkey[32], uint8_t prikey[32]);
+  virtual int ComputePubkeyCurve25519(uint8_t pubkey[32], const uint8_t prikey[32]);
+  virtual int ComputeSecretCurve25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
 
  public:
 #ifndef __RockeyARM__
