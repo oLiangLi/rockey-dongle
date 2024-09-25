@@ -1204,6 +1204,18 @@ struct ge_cached {
   fe T2d;
 };
 
+static void ge_tobytes(uint8_t* s, const ge_p2* h) {
+  fe recip;
+  fe x;
+  fe y;
+
+  fe_invert(recip, h->Z);
+  fe_mul(x, h->X, recip);
+  fe_mul(y, h->Y, recip);
+  fe_tobytes(s, y);
+  s[31] ^= fe_isnegative(x) << 7;
+}
+
 static void ge_p3_tobytes(uint8_t* s, const ge_p3* h) {
   fe recip;
   fe x;
@@ -2213,11 +2225,6 @@ static void sc_muladd(uint8_t* s, const uint8_t* a, const uint8_t* b, const uint
 
 }
 
-#if !defined(X_BUILD_native) && 0
-void X25519(uint8_t secret[32], uint8_t prikey[32], uint8_t pubkey[32]) {
-  rlCryptoX25519(secret, prikey, pubkey);
-}
-#else /* X_BUILD_native */
 void X25519(uint8_t out[32], uint8_t scalar[32], uint8_t point[32]) {
   fe x1, x2, z2, x3, z3, tmp0, tmp1;
   uint8_t e[32];
@@ -2266,7 +2273,6 @@ void X25519(uint8_t out[32], uint8_t scalar[32], uint8_t point[32]) {
 
   memset(e, 0, sizeof(e));
 }
-#endif /* X_BUILD_native */
 
 void X25519Pubkey(uint8_t pubkey[32], const uint8_t prikey[32]) {
   uint8_t e[32];
@@ -2337,6 +2343,39 @@ void Ed25519Sign(uint8_t out_sig[64],
   memset(az, 0, sizeof(az));
 }
 
+int Ed25519Verify(const void* message, int message_len, const uint8_t signature[64], const uint8_t public_key[32]) {
+  ge_p3 A;
+  uint8_t rcopy[32];
+  uint8_t scopy[32];
+  uint8_t rcheck[32];
+  uint8_t h[SHA512_DIGEST_LENGTH];
+  ge_p3 R;
+
+  if ((signature[63] & 224) != 0 || ge_frombytes_vartime(&A, public_key) != 0) {
+    return -1;
+  }
+
+  fe_neg(A.X, A.X);
+  fe_neg(A.T, A.T);
+
+  memcpy(rcopy, signature, 32);
+  memcpy(scopy, signature + 32, 32);
+
+  Sha512Ctx().Init().Update(signature, 32).Update(public_key, 32).Update(message, message_len).Final(h);
+
+  x25519_sc_reduce(h);
+  ge_scalarmult_base(&R, scopy);
+  ge_scalarmult(&A, h, &A);
+  ge_add(&R, &R, &A);
+  ge_tobytes(rcheck, &R);
+
+  int r = 0, i;
+  for (i = 0; i < 32; ++i) {
+    r += rcheck[i] ^ rcopy[i];
+  }
+  return r;
+}
+
 struct Context_t {
   uint32_t argv_[4];
 
@@ -2357,6 +2396,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   uint32_t state[16];
   uint8_t base[32 /* + 512 + 192 */] = {9};
+  uint8_t pubk_check[32];
   
   memset(state, 0, sizeof(state));
   memcpy(state, Context->argv_, sizeof(Context->argv_));
@@ -2380,13 +2420,22 @@ int Start(void* InOutBuf, void* ExtendBuf) {
       ++error;
     DONGLE_VERIFY(0 == result);
 
+    if (0 != result) {
+      X25519Pubkey(pubk_check, &Context->prikey_[32]);
+      DONGLE_VERIFY(0 == memcmp(pubk_check, Context->pubkey_2, 32));
+
+      Ed25519Pubkey(Context->edpubkey, Context->prikey_);
+      Ed25519Sign(Context->sign, Context->prikey_, 64, Context->edpubkey, Context->prikey_);
+      DONGLE_VERIFY(0 == Ed25519Verify(Context->prikey_, 64, Context->sign, Context->edpubkey));
+    }
+
 #if !defined(X_BUILD_native)
     ge_p3 ge_base;
     const uint8_t one_[32] = {1};
     uint8_t base_pubkey[32];
     uint8_t sign_check[64];
-    uint8_t pubk_check[32];
     uint8_t seck_check[32];
+
     rlCryptoX25519(seck_check, &Context->prikey_[32], Context->pubkey_1);
     DONGLE_VERIFY(0 == memcmp(seck_check, Context->secret_2, 32));
 
@@ -2395,6 +2444,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
     Ed25519Pubkey(Context->edpubkey, Context->prikey_);
     Ed25519Sign(Context->sign, Context->prikey_, 64, Context->edpubkey, Context->prikey_);
+    DONGLE_VERIFY(0 == Ed25519Verify(Context->prikey_, 64, Context->sign, Context->edpubkey));
 
     auto fe_log = [](const fe& A, const char* prefix) {
       char line[2048], *p = line;
