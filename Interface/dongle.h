@@ -81,13 +81,13 @@ class Curve25519 {
 class Ed25519 {
  public: /* The Ed25519 requires too much stack space */
   void ComputePubkey(void* vExtBuffer, uint8_t pubkey[32], const uint8_t prikey[32]);
-  void Sign(void* vExtBuffer, /* Ed25519.Sign Overwrite InOutBuffer ... */
+  void Sign(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffer ... */
             uint8_t out_sig[64],
             const void* message,
             int message_len,
             const uint8_t public_key[32],
             const uint8_t private_key[32]);
-  int Verify(void* vExtBuffer,/* Ed25519.Verify Overwrite InOutBuffer ... */
+  int Verify(void* vExtBuffer,/* Stack Overflow, [X]InOutBuffer ... */
              const void* message,
              int message_len,
              const uint8_t signature[64],
@@ -368,6 +368,21 @@ public:
   virtual int GenerateKeyPairCurve25519(uint8_t pubkey[32], uint8_t prikey[32]);
   virtual int ComputePubkeyCurve25519(uint8_t pubkey[32], const uint8_t prikey[32]);
   virtual int ComputeSecretCurve25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
+
+ public: /* ... Ed25519 ... */
+  virtual int GenerateKeyPairEd25519(void* vExtBuffer, uint8_t pubkey[32], uint8_t prikey[32]);
+  virtual int ComputePubkeyEd25519(void* vExtBuffer, uint8_t pubkey[32], const uint8_t prikey[32]);
+  virtual int SignMessageEd25519(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffer ... */
+                                 uint8_t out_sig[64],
+                                 const void* message,
+                                 int message_len,
+                                 const uint8_t public_key[32],
+                                 const uint8_t private_key[32]);
+  virtual int VerifySignEd25519(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffer ... */
+                                const void* message,
+                                int message_len,
+                                const uint8_t signature[64],
+                                const uint8_t public_key[32]);
 
  public:
 #ifndef __RockeyARM__

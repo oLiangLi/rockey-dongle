@@ -1049,14 +1049,22 @@ int Testing_Ed25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 
   for (int i = 0; i < 2; ++i) {
     uint8_t pubkey[32], prikey[32], sign[64], message[64];
-    if (rockey.RandBytes(prikey, sizeof(prikey)) < 0)
+    if (rockey.GenerateKeyPairEd25519(ExtendBuf, pubkey, prikey) < 0)
       ++error;
+
+    if (rockey.ComputePubkeyEd25519(ExtendBuf, message, prikey) < 0)
+      ++error;
+
+    if (0 != memcmp(message, pubkey, 32))
+      ++error;
+
     if (rockey.RandBytes(message, sizeof(message)) < 0)
       ++error;
 
-    Ed25519().ComputePubkey(ExtendBuf, pubkey, prikey);
-    Ed25519().Sign(ExtendBuf, sign, message, sizeof(message), pubkey, prikey);
-    if (0 != Ed25519().Verify(ExtendBuf, message, sizeof(message), sign, pubkey))
+    if (rockey.SignMessageEd25519(ExtendBuf, sign, message, sizeof(message), pubkey, prikey) < 0)
+      ++error;
+
+    if (0 != rockey.VerifySignEd25519(ExtendBuf, message, sizeof(message), sign, pubkey))
       ++error;
   }
 
@@ -1064,10 +1072,11 @@ int Testing_Ed25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 }
 
 int Start(void* InOutBuf, void* ExtendBuf) {
+  const int kSizeGuardBytes = 16;
   int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
   uint8_t* GuardBytes = static_cast<uint8_t*>(InOutBuf) + 1024;
-  memset(GuardBytes, 0xCC, 64);
+  memset(GuardBytes, 0xCC, kSizeGuardBytes);
 
 #if !defined(__RockeyARM__)
   Context_t CopyContext = *Context;
@@ -1224,7 +1233,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     ++result;
 #endif /* __RockeyARM__ */
 
-  for (int i = 0; i < 64; ++i) {
+  for (int i = 0; i < kSizeGuardBytes; ++i) {
     if (GuardBytes[i] != 0xCC)
       result += 100;  
   }

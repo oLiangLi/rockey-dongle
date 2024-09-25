@@ -2395,6 +2395,34 @@ int Dongle::ComputeSecretCurve25519(uint8_t secret[32], const uint8_t prikey[32]
   return 0;
 }
 
+int Dongle::GenerateKeyPairEd25519(void* vExtBuffer, uint8_t pubkey[32], uint8_t prikey[32]) {
+  if (RandBytes(prikey, 32) < 0)
+    return -1;
+  Ed25519().ComputePubkey(vExtBuffer, pubkey, prikey);
+  return 0;
+}
+int Dongle::ComputePubkeyEd25519(void* vExtBuffer, uint8_t pubkey[32], const uint8_t prikey[32]) {
+  Ed25519().ComputePubkey(vExtBuffer, pubkey, prikey);
+  return 0;
+}
+int Dongle::SignMessageEd25519(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffer ... */
+                               uint8_t out_sig[64],
+                               const void* message,
+                               int message_len,
+                               const uint8_t public_key[32],
+                               const uint8_t private_key[32]) {
+  Ed25519().Sign(vExtBuffer, out_sig, message, message_len, public_key, private_key);
+  return 0;
+}
+int Dongle::VerifySignEd25519(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffer ... */
+                              const void* message,
+                              int message_len,
+                              const uint8_t signature[64],
+                              const uint8_t public_key[32]) {
+  return 0 == Ed25519().Verify(vExtBuffer, message, message_len, signature, public_key) ? 0 : -EFAULT;
+}
+
+
 } // namespace dongle ...
 
 rLANG_DECLARE_END
