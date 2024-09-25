@@ -536,6 +536,14 @@ int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
       rlLOGXI(TAG, K, 32, "P256.K");
     }
 
+    if (rockey.ComputePubkeyPrime256v1(R, S, K) < 0 || 0 != memcmp(X, R, 32) || 0 != memcmp(Y, S, 32)) {
+      ++error;
+      rlLOGE(TAG, "ComputePubkeyPrime256v1 Error ...");
+    } else {
+      rlLOGXI(TAG, R, 32, "P256.X");
+      rlLOGXI(TAG, S, 32, "P256.Y");
+    }
+
     if (rockey.CheckPointOnCurvePrime256v1(X, Y) < 0) {
       ++error;
       rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
@@ -801,6 +809,13 @@ int Testing_Secp256K1Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     if (rockey.GenerateKeyPairSecp256k1(X1, Y1, K1) < 0) {
       ++error;
       rlLOGE(TAG, "GenerateKeyPairSecp256k1..1 Error ...");
+    }
+    if (rockey.ComputePubkeySecp256k1(X2, Y2, K1) < 0 || 0 != memcmp(X1, X2, 32) || 0 != memcmp(Y1, Y2, 32)) {
+      ++error;
+      rlLOGE(TAG, "ComputePubkeySecp256k1 ..1 Error ...");
+    } else {
+      rlLOGXI(TAG, X1, 32, "Secp256k1.X");
+      rlLOGXI(TAG, Y1, 32, "Secp256k1.Y");
     }
     if (rockey.GenerateKeyPairSecp256k1(X2, Y2, K2) < 0) {
       ++error;

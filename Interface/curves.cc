@@ -399,6 +399,17 @@ int Dongle::DecompressPointPrime256v1(uint8_t Y[32], const uint8_t X[32], bool Y
   memcpy(Y, &pubkey[32], 32);
   return 0;
 }
+int Dongle::ComputePubkeyPrime256v1(uint8_t X[32], uint8_t Y[32], const uint8_t K[32]) {
+  uint8_t pubkey[64];
+
+  ScopeRNG __rng(this);
+  ScopeSecp256r1 __secp256r1;
+  if (!uECC_compute_public_key(K, pubkey, &curve_secp256r1))
+    return -EFAULT;
+  memcpy(X, &pubkey[0], 32);
+  memcpy(Y, &pubkey[32], 32);
+  return 0;
+}
 int Dongle::GenerateKeyPairPrime256v1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]) {
   uint8_t pubkey[64];
 
@@ -464,6 +475,17 @@ int Dongle::DecompressPointSecp256k1(uint8_t Y[32], const uint8_t X[32], bool Yo
 
   ScopeSecp256k1 __secp256k1;
   uECC_decompress(pubkey, pubkey, &curve_secp256k1);
+  memcpy(Y, &pubkey[32], 32);
+  return 0;
+}
+int Dongle::ComputePubkeySecp256k1(uint8_t X[32], uint8_t Y[32], const uint8_t K[32]) {
+  uint8_t pubkey[64];
+
+  ScopeRNG __rng(this);
+  ScopeSecp256k1 __secp256k1;
+  if (!uECC_compute_public_key(K, pubkey, &curve_secp256k1))
+    return -EFAULT;
+  memcpy(X, &pubkey[0], 32);
   memcpy(Y, &pubkey[32], 32);
   return 0;
 }

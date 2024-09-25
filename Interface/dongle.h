@@ -307,6 +307,7 @@ public:
    */
   virtual int CheckPointOnCurvePrime256v1(const uint8_t X[32], const uint8_t Y[32]);
   virtual int DecompressPointPrime256v1(uint8_t Y[32], const uint8_t X[32], bool Yodd);
+  virtual int ComputePubkeyPrime256v1(uint8_t X[32], uint8_t Y[32], const uint8_t K[32]);
   virtual int GenerateKeyPairPrime256v1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]);
   virtual int ComputeSecretPrime256v1(uint8_t secret[32],
                                       const uint8_t X[32],
@@ -324,6 +325,7 @@ public:
    */
   virtual int CheckPointOnCurveSecp256k1(const uint8_t X[32], const uint8_t Y[32]);
   virtual int DecompressPointSecp256k1(uint8_t Y[32], const uint8_t X[32], bool Yodd);
+  virtual int ComputePubkeySecp256k1(uint8_t X[32], uint8_t Y[32], const uint8_t K[32]);
   virtual int GenerateKeyPairSecp256k1(uint8_t X[32], uint8_t Y[32], uint8_t K[32]);
   virtual int ComputeSecretSecp256k1(uint8_t secret[32], const uint8_t X[32], const uint8_t Y[32], const uint8_t K[32]);
   virtual int SignMessageSecp256k1(const uint8_t K[32], const uint8_t H[32], uint8_t R[32], uint8_t S[32]);
