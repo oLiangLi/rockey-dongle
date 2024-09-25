@@ -20,6 +20,9 @@
 
 #ifdef _WIN32
 #include <windows.h>
+#include <malloc.h>
+#else /* _WIN32 */
+#include <alloca.h>
 #endif /* _WIN32 */
 
 rLANG_DECLARE_MACHINE

@@ -1140,7 +1140,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
 #endif  // __RockeyARM__
 
-  uint8_t buffer[240+64];
+  const int kSizeExtBuffer = 240 + 64;
+
+  uint8_t* buffer = static_cast<uint8_t*>(alloca(kSizeExtBuffer));
   result = rockey.RandBytes(buffer, 64);
   rlLOGXI(TAG, buffer, 64, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
 
