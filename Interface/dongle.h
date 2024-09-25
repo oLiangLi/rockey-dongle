@@ -24,6 +24,10 @@
 
 rLANG_DECLARE_MACHINE
 
+#ifndef SHA512_DIGEST_LENGTH
+#define SHA512_DIGEST_LENGTH  64
+#endif /* SHA512_DIGEST_LENGTH */
+
 namespace dongle {
 
 enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdminstrator };

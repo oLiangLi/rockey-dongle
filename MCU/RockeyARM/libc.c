@@ -15,6 +15,22 @@ rLANGEXPORT void* rLANGAPI memset(void* s, int c, size_t n) {
   return s;
 }
 
+rLANGEXPORT void* rLANGAPI memmove(void* dst, const void* src, size_t length) {
+  if rLANG_UNLIKELY (src < dst && (uint8_t*)dst < (uint8_t*)src + length) {
+    /* Destructive overlap...have to copy backwards */
+    uint8_t* out = (uint8_t*)dst + length;
+    const uint8_t* inp = (const uint8_t*)src + length;
+
+    while (length--) {
+      *--out = *--inp;
+    }
+  } else {
+    __aeabi_memcpy(dst, src, length);
+  }
+
+  return dst;
+}
+
 rLANGEXPORT int rLANGAPI memcmp(const void* s1, const void* s2, size_t n) {
   const uint8_t* p1 = s1;
   const uint8_t* p2 = s2;

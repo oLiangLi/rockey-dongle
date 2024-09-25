@@ -5501,6 +5501,7 @@ rLANGEXPORT void rLANGAPI rlCryptoSeedBytes(const void* p, int size) {
 
 /* for dongle */
 rLANGEXPORT void rLANGAPI rlCryptoEd25519PubkeyEx(uint8_t out_public_key[32], const uint8_t az_[32]) {
+#if 0
   ge_p3 A;
   uint8_t az[32];
 
@@ -5513,6 +5514,11 @@ rLANGEXPORT void rLANGAPI rlCryptoEd25519PubkeyEx(uint8_t out_public_key[32], co
   ge_scalarmult_base(&A, az);
   ge_p3_tobytes(out_public_key, &A);
   cipher_cleanse(az, sizeof(az));
+#else
+  ge_p3 A;
+  ge_scalarmult_base(&A, az_);
+  ge_p3_tobytes(out_public_key, &A);
+#endif
 }
 
 rLANG_DECLARE_END
