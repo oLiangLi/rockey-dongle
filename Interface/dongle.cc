@@ -56,7 +56,7 @@ int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t*
     return -EINVAL;
 
   int result = -EINVAL;
-  if (p - asn1_cipher == cipher_len && ciphertext->C3->length == 32 && ciphertext->C2->length > 0) {
+  if ((size_t)(p - asn1_cipher) == cipher_len && ciphertext->C3->length == 32 && ciphertext->C2->length > 0) {
     if (BN_bn2binpad(ciphertext->C1x, &buffer[0], 32) > 0 && BN_bn2binpad(ciphertext->C1y, &buffer[32], 32) > 0) {
       memcpy(&buffer[64], ciphertext->C3->data, 32);
       memcpy(&buffer[96], ciphertext->C2->data, ciphertext->C2->length);
@@ -386,8 +386,6 @@ int Dongle::P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[3
   CopyReverse<32>(hash, hash_);
   if (0 != DONGLE_CHECK(Dongle_EccSign(handle_, id, hash, 32, sign)))
     return -1;
-  memcpy(R, hash, 32);
-  memcpy(S, hash + 32, 32);
   CopyReverse<32>(R, &sign[0]);
   CopyReverse<32>(S, &sign[32]);
   return 0;
@@ -497,8 +495,6 @@ int Dongle::SM2Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32
   CopyReverse<32>(hash, hash_);
   if (0 != DONGLE_CHECK(Dongle_SM2Sign(handle_, id, hash, 32, sign)))
     return -1;
-  memcpy(R, hash, 32);
-  memcpy(S, hash + 32, 32);
   CopyReverse<32>(R, &sign[0]);
   CopyReverse<32>(S, &sign[32]);
   return 0;
@@ -669,7 +665,7 @@ int Dongle::SM2Encrypt(const uint8_t X[32],
     if (sm2_encrypt(eckey, EVP_sm3(), text, size_text, cipher, &cipher_len) <= 0)
       break;
 
-    DONGLE_VERIFY(96 + size_text == SM2Cipher_ASN1ToText(cipher, cipher_len, out_cipher));
+    DONGLE_VERIFY(96 + size_text == (size_t)SM2Cipher_ASN1ToText(cipher, cipher_len, out_cipher));
     result = 0;
   } while (0);
   EC_POINT_free(point);

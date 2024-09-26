@@ -1,5 +1,8 @@
 #include <Interface/dongle.h>
 #include <base/base.h>
+#include <signal.h>
+#include <set>
+#include <thread>
 
 rLANG_DECLARE_MACHINE
 
@@ -46,6 +49,16 @@ enum class kTestingIndex : int {
 
 };
 
+enum class kAdminTestingIndex : int {
+  FactoryReset = 1,
+
+  SelectProductId,
+
+  
+
+
+};
+
 struct Context_t {
   union {
     uint32_t argv_[4];
@@ -68,6 +81,191 @@ struct Context_t {
   DONGLE_INFO dongle_info_;
   uint8_t bytes[64];
 };
+
+#if !defined(__RockeyARM__)
+int AdminTesting_FactoryReset(RockeyARM& rockey, Context_t* Context, void* ExtendBuf) {
+  int error = 0;
+  rlLOGI(TAG, "... %s ...", __FUNCTION__);
+
+  int result = rockey.FactoryReset();
+  rlLOGI(TAG, "rockey.FactoryReset %d/%08x", result, rockey.GetLastError());
+  if (result < 0)
+    ++error;
+
+  return error;
+}
+
+static int ExitSelectProductId = 0;
+#ifdef _WIN32
+BOOL WINAPI CtrlHandler(DWORD fdwCtrlType) {
+  if (fdwCtrlType == CTRL_C_EVENT) {
+    rlLOGW(TAG, "CtrlHandler Ctrl+C %d", ++ExitSelectProductId);
+    return TRUE;
+  }
+  return FALSE;
+}
+#endif /* _WIN32 */
+int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* ExtendBuf) {
+  signal(SIGINT, [](int) {
+    rlLOGW(TAG, "SIGINT %d", ++ExitSelectProductId);
+  });
+#ifdef _WIN32
+  SetConsoleCtrlHandler(CtrlHandler, TRUE);
+#endif /* _WIN32 */
+  const char* keyWords[] = {"rLANG", "ALPHA", "ATOMC", "MAGIC", "POWER", "BRAVE", "BRAVO", "MARVY", "RAMAN",
+                            "World", "Admin", "Cloud", "@User", "@Root", "wheel", "@sudo", "@unit", "robot"};
+
+  std::set<uint32_t> keyWordsMagic;
+  for (auto word : keyWords) {
+    char copy[10] = "";
+    strncpy(copy, word, 6);
+    for (int i = 0; i < 32; ++i) {
+      for (int j = 0; j < 5; ++j) {
+        if (i & (1 << j))
+          copy[j] = toupper(copy[j]);
+        else
+          copy[j] = tolower(copy[j]);
+      }
+
+      const uint32_t magic = rLANG_DECLARE_MAGIC_Xs(copy) & 0xFFFFFF03;
+
+      for (int i = 0; i < (1 << 6); ++i) {
+        char check[10];
+        const auto v = magic + 4 * i;
+        rLANG_DECLARE_MAGIC_Vs(v, check);
+        DONGLE_VERIFY(0 == memcmp(copy, check, 4));
+        keyWordsMagic.emplace(v);
+      }
+    }
+  }
+  {
+    int index = 0;
+    rlLOGI(TAG, ">>>> keyWordsMagic size: %zd", keyWordsMagic.size());
+    for (const auto& magic : keyWordsMagic) {
+      DONGLE_VERIFY(3 == (magic & 3));
+      if ((index & 0x3FFF) == (rand() & 0x3FFF)) {
+        char string_magic[10];
+        rLANG_DECLARE_MAGIC_Vs(magic, string_magic);
+        rlLOGI(TAG, "keyWordsMagic[%d/%zd] : %08X/%s", index, keyWordsMagic.size(), magic, string_magic);
+      }
+      ++index;
+    }
+  }
+
+  std::this_thread::sleep_for(std::chrono::milliseconds(1000));
+
+  int error = 0;
+  char filename[100], admin[32], prodId[32];
+  rlLOGI(TAG, "... %s ...", __FUNCTION__);
+  int A = Context->argv_[0], B = Context->argv_[1], C = Context->argv_[2], D = Context->argv_[3];
+  if (B == 0)
+    rockey.RandBytes((uint8_t*)&B, sizeof(B));
+  if (C == 0)
+    rockey.RandBytes((uint8_t*)&C, sizeof(C));
+  if (D == 0)
+    rockey.RandBytes((uint8_t*)&D, sizeof(D));
+
+  sprintf(filename, ".bin/.select-product-id-%08x-%08x-%08x-%08x.log", A, B, C, D);
+  const char* const kWorldMagicFile = ".bin/magic-product-id.log";
+
+  FILE* magicFile = fopen(kWorldMagicFile, "a");
+  if (!magicFile) {
+    rlLOGE(TAG, "Can't open %s for append, errno %d", kWorldMagicFile, errno);
+    exit(42);
+  }
+  
+  FILE* fp = fopen(filename, "a");
+  if (!fp) {
+    rlLOGE(TAG, "Can't open %s for append, errno %d", filename, errno);
+    exit(42);
+  }
+
+  auto WriteLog = [&](FILE* fp, const void* data, size_t size, const char* fmt, ...) {
+    constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("PRD@G");
+    const size_t kSizeBuffer = 64 * 1024;
+    char buffer[kSizeBuffer * 2];
+
+    DONGLE_VERIFY(!data || size < 1024);
+
+    va_list ap;
+    va_start(ap, fmt);
+    size_t len = vsprintf(buffer, fmt, ap);
+    DONGLE_VERIFY(len > 0 && len < kSizeBuffer);
+    va_end(ap);
+
+    rlLOGXI(TAG, data, size, "%s", buffer);
+
+    buffer[len++] = '\n';
+    if (data && size > 0) {
+      memcpy(&buffer[len], "DATA$:", 6);
+      len += 6;
+      len += rl_HEX_Write(&buffer[len], (const uint8_t*)data, (int)size);
+      buffer[len++] = '\n';
+    }
+
+    buffer[len++] = '\n';
+    size_t write_size = fwrite(buffer, 1, len, fp);
+    fflush(fp);
+
+    if (write_size == len)
+      return 0;
+     
+    rlLOGW(TAG, "WriteLog Error %zd => %zd", len, write_size);
+    return -EFAULT;
+  };
+
+  int validWords = 0;
+  uint32_t chacha20_state_[16] = {(uint32_t)A, (uint32_t)B, (uint32_t)C, (uint32_t)D};
+  std::this_thread::sleep_for(std::chrono::milliseconds(2000));
+  const uint64_t tick_start = rLANG_GetTickCount();
+
+  for (int loop = 0; ExitSelectProductId < 10; ++loop) {
+    uint8_t stream[64];
+    chacha20_state_[12] = loop;
+
+    rlCryptoChaCha20Block(chacha20_state_, stream);
+    if (WriteLog(fp, stream, 64, "Prepare GenUniqueKey %08X/%.2lf", loop,
+                 1000. * loop / (rLANG_GetTickCount() - tick_start)) < 0)
+      exit(5);
+
+    int result = rockey.GenUniqueKey(stream, sizeof(stream), prodId, admin);
+    if (result < 0)
+      exit(6);
+    if (WriteLog(fp, nullptr, 0, "GenUniqueKey prodId: %s, AdminPIN: %s", prodId, admin) < 0)
+      exit(5);
+
+    result = rockey.ChangePIN(PERMISSION::kAdminstrator, admin, "FFFFFFFFFFFFFFFF", 255);
+    if (result < 0)
+      exit(7);
+    uint32_t pid = (uint32_t)strtoul(prodId, nullptr, 16);
+    if (keyWordsMagic.find(pid|3) != keyWordsMagic.end()) {
+      ++validWords;
+      char magic_tags[10];
+      rLANG_DECLARE_MAGIC_Vs(pid, magic_tags);
+      WriteLog(magicFile, stream, sizeof(stream), "%d) GenUniqueKey %08X/%s prodId: %s, Admin: %s", validWords, pid,
+               magic_tags, prodId, admin);
+      WriteLog(fp, stream, sizeof(stream), "%d) GenUniqueKey %08X/%s prodId: %s, Admin: %s", validWords, pid,
+               magic_tags, prodId, admin);
+     }
+
+#if 0
+    rlLOGI(TAG, ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
+    //std::this_thread::sleep_for(std::chrono::milliseconds(100));
+
+    result = rockey.Open(0);
+    if (result < 0)
+      exit(8);
+#endif
+
+    result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+    if (result < 0)
+      exit(9);
+  }
+
+  return error;
+}
+#endif /* RockeyARM */
+
 
 int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
@@ -1085,10 +1283,11 @@ int Testing_Ed25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 
 int Start(void* InOutBuf, void* ExtendBuf) {
   const int kSizeGuardBytes = 16;
-  int result = 0;
   Context_t* Context = (Context_t*)InOutBuf;
   uint8_t* GuardBytes = static_cast<uint8_t*>(InOutBuf) + 1024;
   memset(GuardBytes, 0xCC, kSizeGuardBytes);
+
+  int result = 0, result2 = 0, index = (Context->argv_[0] & 0xFF);  
 
 #if !defined(__RockeyARM__)
   Context_t CopyContext = *Context;
@@ -1118,6 +1317,26 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   }
 
   if (Context->permission_ == PERMISSION::kAdminstrator) {
+    if ((0xF0 & index) == 0xF0) {
+      index &= 0x0F;
+
+#define DONGLE_RUN_ADMINTESTING(Name)                                 \
+  do {                                                                \
+    if (index == static_cast<int>(kAdminTestingIndex::Name)) {        \
+      rlLOGI(TAG, "===== DONGLE_RUN_ADMINTESTING: %s ===== ", #Name); \
+      result2 = AdminTesting_##Name(rockey, Context, ExtendBuf);      \
+    }                                                                 \
+  } while (0)
+
+      DONGLE_RUN_ADMINTESTING(FactoryReset);
+      DONGLE_RUN_ADMINTESTING(SelectProductId);
+
+      result += result2;
+      rlLOGXI(TAG, Context, sizeof(Context_t), "rockey AdminTest.%d return %d/%08x", result, result2,
+              rockey.GetLastError());
+      return result;
+    }
+
     char pid[20] = "", admin[20] = "";
     result = rockey.GenUniqueKey("10086", 5, pid, admin);
     rlLOGI(TAG, "rockey.GenUniqueKey %d/%08x %s %s", result, rockey.GetLastError(), pid, admin);
@@ -1149,11 +1368,6 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   result = rockey.ResetUserPIN("FFFFFFFFFFFFFFFF");
   rlLOGI(TAG, "rockey.ResetUserPIN %d/%08x", result, rockey.GetLastError());
-
-#if 0
-  result = rockey.FactoryReset();
-  rlLOGI(TAG, "rockey.FactoryReset %d/%08x", result, rockey.GetLastError());
-#endif
 
   const char* app_dongle = getenv("WT_APP_DONGLE");
   if (app_dongle) {
@@ -1202,7 +1416,6 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rockey.WriteShareMemory(&Context->bytes[32]);
   rockey.ReadShareMemory(Context->share_memory_1_);  
 
-  int index = Context->argv_[0] & 0xFF, result2 = 0;
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
   rockey.ClearLastError();
 #define DONGLE_RUN_TESTING(Name)                                 \
