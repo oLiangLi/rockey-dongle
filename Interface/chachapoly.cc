@@ -23,7 +23,7 @@ int Dongle::CHACHAPOLY_Open(const uint8_t key[32], const uint8_t nonce[12], void
   size_t size = *size_;
   uint8_t mac[16];
   if (size < 16)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   size -= 16;
 
   rlCryptoChaChaPolyCtx ctx;
@@ -36,7 +36,7 @@ int Dongle::CHACHAPOLY_Open(const uint8_t key[32], const uint8_t nonce[12], void
   *size_ = size;
   if (0 == memcmp(mac, static_cast<uint8_t*>(buffer) + size, 16))
     return 0;
-  return -EFAULT;
+  return last_error_ = -EFAULT;
 }
 
 } // namespace dongle

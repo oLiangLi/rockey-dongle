@@ -403,6 +403,11 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
       ++error;
     X[0] ^= 1;
 
+    H[0] ^= 1;
+    if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+      ++error;
+    H[0] ^= 1;
+
     DONGLE_VERIFY(rockey.SM2Verify(X, Y, H, R, S) >= 0);
 #endif
   }
@@ -498,9 +503,11 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 #endif
 
   memset(VV, 0, sizeof(VV));
-  Context->result_[2] = rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 32, VV, &szVV);
-  if ((Context->result_[2] & (1<<31)) != 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
+  if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 32, VV, &szVV) < 0) {
     ++error;
+    rlLOGW(TAG, "SM2Decrypt 0x8101 Error %08X", Context->result_[2] = rockey.GetLastError());
+  } else {
+    DONGLE_VERIFY(szVV == 32 && 0 == memcmp(VV, H, 32));
   }
 
   return error;
@@ -644,6 +651,11 @@ int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   if (rockey.P256Verify(X, Y, H, R, S) >= 0)
     ++error;
   S[0] ^= 1;
+
+  H[0] ^= 1;
+  if (rockey.P256Verify(X, Y, H, R, S) >= 0)
+    ++error;
+  H[0] ^= 1;
 #endif
 
 #if 1

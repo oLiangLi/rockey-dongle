@@ -87,7 +87,7 @@ int Dongle::GetTickCount(DWORD* ticks) {
 
 int Dongle::GetDongleInfo(DONGLE_INFO* info) {
   if (!handle_)
-    return -EBADF;
+    return last_error_ = -EBADF;
   *info = dongle_info_;
   return 0;
 }
@@ -168,20 +168,20 @@ int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PK
   if (type_ == SECRET_STORAGE_TYPE::kRSA) {
     type = attr.m_Type = FILE_PRIKEY_RSA;
     if (bits != 2048)
-      return -EINVAL;
+      return last_error_ = -EINVAL;
     attr.m_Size = bits;
   } else if (type_ == SECRET_STORAGE_TYPE::kSM2) {
     type = attr.m_Type = FILE_PRIKEY_ECCSM2;
     if (bits != 256)
-      return -EINVAL;
+      return last_error_ = -EINVAL;
     attr.m_Size = 0x8100;
   } else if (type_ == SECRET_STORAGE_TYPE::kP256) {
     type = attr.m_Type = FILE_PRIKEY_ECCSM2;
     if (bits != 256)
-      return -EINVAL;
+      return last_error_ = -EINVAL;
     attr.m_Size = 256;
   } else {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   return DONGLE_CHECK(Dongle_CreateFile(handle_, type, id, reinterpret_cast<uint8_t*>(&attr)));
@@ -200,7 +200,7 @@ int Dongle::GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* p
 }
 int Dongle::ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) {
   if (bits != 2048)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   SecretBuffer<1, RSA_PRIVATE_KEY> pkey;
   pkey->bits = bits;
   pkey->modulus = modules;
@@ -254,14 +254,14 @@ int Dongle::CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE typ
   attr.m_Size = 16;
   attr.m_Lic.m_Priv_Enc = static_cast<uint8_t>(permission);
   if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   return DONGLE_CHECK(Dongle_CreateFile(handle_, FILE_KEY, id, reinterpret_cast<uint8_t*>(&attr)));
 }
 int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) {
   if (size != 16)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   return DONGLE_CHECK(
       Dongle_WriteFile(handle_, FILE_KEY, id, 0, static_cast<uint8_t*>(const_cast<void*>(buffer)), 16));
 }
@@ -273,9 +273,9 @@ int Dongle::RSAPrivate(int id,
   size_t size_in = *size_buffer;
   if (encrypt) {
     if (size_in > 256 - 11)
-      return -E2BIG;
+      return last_error_ = -E2BIG;
   } else if (size_in != 256) {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
   int size_out = 256;
   int result = DONGLE_CHECK(Dongle_RsaPri(handle_, id, encrypt ? FLAG_ENCODE : FLAG_DECODE, buffer,
@@ -294,13 +294,13 @@ int Dongle::RSAPrivate(int bits,
   int result = 0;
   size_t size_in = *size_buffer;
   if (bits != 2048)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
 
   if (encrypt) {
     if (size_in > 256 - 11)
-      return -E2BIG;
+      return last_error_ = -E2BIG;
   } else if (size_in != 256) {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   RSA* rsa = RSA_new();
@@ -342,13 +342,13 @@ int Dongle::RSAPublic(int bits,
   int result = 0;
   size_t size_in = *size_buffer;
   if (bits != 2048)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
 
   if (encrypt) {
     if (size_in > 256 - 11)
-      return -E2BIG;
+      return last_error_ = -E2BIG;
   } else if (size_in != 256) {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   RSA* rsa = RSA_new();
@@ -596,7 +596,7 @@ int Dongle::SM2Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R[
 
 int Dongle::SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) {
   rlLOGE(TAG, "Dongle_SM2Decrypt/%x Not implements yet!", id);
-  return -ENOSYS;
+  return last_error_ = -ENOSYS;
 }
 
 int Dongle::SM2Decrypt(const uint8_t private_[32],
@@ -606,12 +606,12 @@ int Dongle::SM2Decrypt(const uint8_t private_[32],
                        size_t* size_text) {
   int ret = -1;
   if (size_cipher < 96 || size_cipher > 512)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
 
   uint8_t asn1_cipher[1024];
   int asn1_len = SM2Cipher_TextToASN1(cipher, size_cipher, asn1_cipher);
   if (asn1_len <= 0)
-    return -EINVAL;
+    return last_error_ = -EFAULT;
 
   EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
   BIGNUM* pkey = BN_bin2bn(private_, 32, nullptr);
@@ -784,7 +784,7 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
     if (!pin)
       pin = CONST_USERPIN;
   } else {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   rlLOGW(TAG, "RockeyARM::VerifyPIN %d", static_cast<int>(perm));
@@ -799,7 +799,7 @@ int RockeyARM::ResetState() {
 int RockeyARM::UpdateExeFile(const void* file, size_t size) {
   EXE_FILE_INFO info;
   if (size >= 0xFFF8)
-    return -E2BIG;
+    return last_error_ = -E2BIG;
 
   rlLOGI(TAG, "RockeyARM::UpdateExeFile %zd", size);
 
@@ -812,7 +812,7 @@ int RockeyARM::UpdateExeFile(const void* file, size_t size) {
 int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
   int dummy = 0;
   if (szBuf > 1024)
-    return -E2BIG;
+    return last_error_ = -E2BIG;
   if (!ret)
     ret = &dummy;
   return DONGLE_CHECK(Dongle_RunExeFile(handle_, 1, static_cast<uint8_t*>(InOutBuf), static_cast<WORD>(szBuf), ret));
@@ -858,7 +858,7 @@ int RockeyARM::FactoryReset() {
 
 int RockeyARM::Open(int index) {
   if (index < 0 || index >= 64)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
 
   int count = 0;
   ::DONGLE_INFO dongle_info_all_[64];
@@ -869,7 +869,7 @@ int RockeyARM::Open(int index) {
     return -1;
 
   if (index >= count)
-    return -ERANGE;
+    return last_error_ = -ERANGE;
 
   GetRockeyDongleInfo(&dongle_info_, dongle_info_all_[index]);
   if (0 != DONGLE_CHECK(Dongle_Open(&handle, index)))

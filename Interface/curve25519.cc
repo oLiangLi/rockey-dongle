@@ -2419,7 +2419,7 @@ int Dongle::VerifySignEd25519(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffe
                               int message_len,
                               const uint8_t signature[64],
                               const uint8_t public_key[32]) {
-  return 0 == Ed25519().Verify(vExtBuffer, message, message_len, signature, public_key) ? 0 : -EFAULT;
+  return 0 == Ed25519().Verify(vExtBuffer, message, message_len, signature, public_key) ? 0 : last_error_ = -EFAULT;
 }
 
 

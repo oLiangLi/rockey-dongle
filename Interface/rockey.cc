@@ -62,7 +62,7 @@ int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
   } else if (type_ == SECRET_STORAGE_TYPE::kSM4 || type_ == SECRET_STORAGE_TYPE::kTDES) {
     type = FILE_KEY;
   } else {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   return DONGLE_CHECK(delete_file(type, id));
@@ -94,20 +94,20 @@ int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PK
   if (type_ == SECRET_STORAGE_TYPE::kRSA) {
     type = attr.m_Type = FILE_PRIKEY_RSA;
     if (bits != 2048)
-      return -EINVAL;
+      return last_error_ = -EINVAL;
     attr.m_Size = bits;
   } else if (type_ == SECRET_STORAGE_TYPE::kSM2) {
     type = attr.m_Type = FILE_PRIKEY_ECCSM2;
     if (bits != 256)
-      return -EINVAL;
+      return last_error_ = -EINVAL;
     attr.m_Size = 0x8100;
   } else if (type_ == SECRET_STORAGE_TYPE::kP256) {
     type = attr.m_Type = FILE_PRIKEY_ECCSM2;
     if (bits != 256)
-      return -EINVAL;
+      return last_error_ = -EINVAL;
     attr.m_Size = 256;
   } else {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   return DONGLE_CHECK(create_file(type, id, reinterpret_cast<uint8_t*>(&attr), sizeof(attr)));
@@ -125,7 +125,7 @@ int Dongle::GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* p
 }
 int Dongle::ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) {
   if (bits != 2048)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   SecretBuffer<1, RSA_PRIVATE_KEY> pkey;
   pkey->bits = bits;
   pkey->modulus = modules;
@@ -173,14 +173,14 @@ int Dongle::CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE typ
   attr.m_Size = 16;
   attr.m_Lic.m_Priv_Enc = static_cast<uint8_t>(permission);
   if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   return DONGLE_CHECK(create_file(FILE_KEY, id, reinterpret_cast<uint8_t*>(&attr), sizeof(attr)));
 }
 int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) {
   if (size != 16)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   return DONGLE_CHECK(write_file(FILE_KEY, id, 0, size, static_cast<uint8_t*>(const_cast<void*>(buffer))));
 }
 
@@ -191,9 +191,9 @@ int Dongle::RSAPrivate(int id,
   size_t size_in = *size_buffer;
   if (encrypt) {
     if (size_in > 256 - 11)
-      return -E2BIG;
+      return last_error_ = -E2BIG;
   } else if (size_in != 256) {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   WORD size_out = 256;
@@ -212,13 +212,13 @@ int Dongle::RSAPrivate(int bits,
                        bool encrypt) {
   size_t size_in = *size_buffer;
   if (bits != 2048)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
 
   if (encrypt) {
     if (size_in > 256 - 11)
-      return -E2BIG;
+      return last_error_ = -E2BIG;
   } else if (size_in != 256) {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   RSA_PRIVATE_KEY prikey;
@@ -242,12 +242,12 @@ int Dongle::RSAPublic(int bits,
                       bool encrypt) {
   size_t size_in = *size_buffer;
   if (bits != 2048)
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   if (encrypt) {
     if (size_in > 256 - 11)
-      return -E2BIG;
+      return last_error_ = -E2BIG;
   } else if (size_in != 256) {
-    return -EINVAL;
+    return last_error_ = -EINVAL;
   }
 
   RSA_PUBLIC_KEY pubkey;
