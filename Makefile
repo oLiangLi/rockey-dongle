@@ -7,7 +7,7 @@ X4C_NODE ?= /Machine/System/bin/node
 
 .PHONY : wasm wasmjs cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-wasmjs clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
-.PHONY : typescript typescript0 docker all-docker dongle clean-dongle
+.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar
 
 ##
 ## default build Release version ...
@@ -57,6 +57,16 @@ dongle:
 ##
 clean-dongle:
 	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=$(wORLD_DONGLE) wORLD_CONFIG=arm-none-eabi clean-all R=1
+
+##
+##
+##
+foobar:
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) prepare
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) optimize
+
+clean-foobar:
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) clean-all
 
 ##
 ##

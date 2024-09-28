@@ -440,7 +440,6 @@ class RockeyARM : public Dongle {
   virtual int ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret);
 
   virtual int LimitSeedCount(int count);
-  // virtual int SwitchProtocol(bool ccid);
   virtual int SetExpireTime(DWORD time);
   virtual int SetUserID(uint32_t id);
 
@@ -451,11 +450,6 @@ class RockeyARM : public Dongle {
   virtual int GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]);
   virtual int FactoryReset();
 };
-
-
-
-
-
 
 } // namespace dongle
 

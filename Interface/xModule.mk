@@ -3,16 +3,36 @@ LOCAL_PATH := $(my-dir)
 $(call clear-local-vars)
 LOCAL_MODULE := rockey
 
+##
+##
+##
 ifeq ("$(X4C_BOARD)","RockeyARM")
-LOCAL_SRC_FILES := rockey.cc
-else  ## RockeyARM
-ifneq ("$(X4C_BUILD)","emscripten")
-LOCAL_SRC_FILES := dongle.cc
-else  ## emscripten
-LOCAL_SRC_FILES := emulator.cc
-endif ## emscripten
+ROCKEY_DECLARE_FILE ?= rockey.cc
 endif ## RockeyARM
 
+##
+##
+##
+ifeq ("$(X4C_BOARD)","foobar")
+ROCKEY_DECLARE_FILE ?= emulator.cc
+endif ## foobar
+
+##
+##
+##
+ifeq ("$(X4C_BUILD)","emscripten")
+ROCKEY_DECLARE_FILE ?= emulator.cc
+endif ## emscripten
+
+##
+## default dongle.cc
+##
+ROCKEY_DECLARE_FILE ?= dongle.cc
+
+##
+##
+##
+LOCAL_SRC_FILES := $(ROCKEY_DECLARE_FILE)
 LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc sha512.cc curve25519.cc
 
 $(call build-library)
