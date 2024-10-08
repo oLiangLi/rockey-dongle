@@ -452,6 +452,19 @@ class RockeyARM : public Dongle {
   virtual int FactoryReset();
 };
 
+class Emulator : public Dongle {
+public:
+  Emulator();
+  virtual ~Emulator();
+
+  virtual int Close();
+  virtual int Create(const char* master_secret);
+  virtual int Open(const char* file, const char* master_secret);
+  virtual int Write(const char* file);
+};
+
+
+
 } // namespace dongle
 
 rLANG_DECLARE_END

@@ -26,7 +26,15 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   } *Context = (Context_t*)InOutBuf;
 
 
-#if !defined(__RockeyARM__)
+#if defined(__EMULATOR__)
+  const char* const kTestingDongleFile = ".foobar-dongle.bin";
+  const char* const kTestingDongleSecret = "1234567812345678";
+  Emulator rockey;
+
+  if (rockey.Open(kTestingDongleFile, kTestingDongleSecret) < 0)
+    rockey.Create(kTestingDongleSecret);
+
+#elif !defined(__RockeyARM__)
   RockeyARM rockey;
   DONGLE_INFO dongle_info[64];
 
@@ -67,6 +75,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey.RandBytes return %d/%08x", result, rockey.GetLastError());
 
+#if defined(__EMULATOR__)
+  rockey.Write(kTestingDongleFile);
+#endif /* __EMULATOR__ */
   
   std::ignore = TAG;
   return 10086 - result;

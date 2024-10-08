@@ -90,6 +90,15 @@ X4C_COMMON_LDFLAGS   += -libpath:$(wORLD_ROOT)/third_party/pre-built/$(X4C_ARCH)
 X4C_COMMON_LDFLAGS   += ws2_32.lib user32.lib kernel32.lib gdi32.lib advapi32.lib crypt32.lib
 endif
 
+
+ifeq ("$(X4C_BOARD)","foobar")
+COMMON_CFLAGS		+= -D__EMULATOR__
+else  ## foobar
+ifeq ("$(X4C_BUILD)","emscripten")
+COMMON_CFLAGS		+= -D__EMULATOR__
+endif ## emscripten
+endif ## foobar
+
 ##
 ##
 X4C_COMMON_CFLAGS   += $(COMMON_CFLAGS)

@@ -82,7 +82,7 @@ struct Context_t {
   uint8_t bytes[64];
 };
 
-#if !defined(__RockeyARM__)
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
 int AdminTesting_FactoryReset(RockeyARM& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
   rlLOGI(TAG, "... %s ...", __FUNCTION__);
@@ -1287,9 +1287,17 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   uint8_t* GuardBytes = static_cast<uint8_t*>(InOutBuf) + 1024;
   memset(GuardBytes, 0xCC, kSizeGuardBytes);
 
-  int result = 0, result2 = 0, index = (Context->argv_[0] & 0xFF);  
+  int result = 0, result2 = 0, index = (Context->argv_[0] & 0xFF);
 
-#if !defined(__RockeyARM__)
+#if defined(__EMULATOR__)
+  const char* const kTestingDongleFile = ".foobar-dongle.bin";
+  const char* const kTestingDongleSecret = "1234567812345678";
+  Emulator  rockey;
+
+  if (rockey.Open(kTestingDongleFile, kTestingDongleSecret) < 0)
+    rockey.Create(kTestingDongleSecret);
+
+#elif !defined(__RockeyARM__)
   Context_t CopyContext = *Context;
 
   RockeyARM rockey;
@@ -1448,7 +1456,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.%d return %d/%08x", index, result2, rockey.GetLastError());
   result += result2;
 
-#if !defined(__RockeyARM__)
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
   auto start = rLANG_GetTickCount();
   int main_result = 0, result3 = rockey.ExecuteExeFile(&CopyContext, sizeof(CopyContext), &main_result);
   auto end = rLANG_GetTickCount();
@@ -1463,6 +1471,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
       result += 100;  
   }
 
+#if defined(__EMULATOR__)
+  rockey.Write(kTestingDongleFile);
+#endif /* __EMULATOR__ */
 
   std::ignore = TAG;
   return 10086 - result;

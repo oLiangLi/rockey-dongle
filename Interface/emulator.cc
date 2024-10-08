@@ -274,55 +274,25 @@ int Dongle::CheckError(DWORD error) {
   return -1;
 }
 
-RockeyARM::~RockeyARM() {
+Emulator::Emulator() = default;
+Emulator::~Emulator() {
   Close();
 }
 
-int RockeyARM::Close() {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::Open(int index) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::Enum(DONGLE_INFO info[64]) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::ResetState() {
-  return DONGLE_CHECK(-ENOSYS);
+int Emulator::Close() {
+  return 0;
 }
 
-int RockeyARM::UpdateExeFile(const void* file, size_t size) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::LimitSeedCount(int count) {
-  return DONGLE_CHECK(-ENOSYS);
+int Emulator::Create(const char* master_secret) {
+  return -ENOSYS;
 }
 
-int RockeyARM::SetExpireTime(DWORD time) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::SetUserID(uint32_t id) {
-  return DONGLE_CHECK(-ENOSYS);
+int Emulator::Open(const char* file, const char* master_secret) {
+  return -ENOSYS;
 }
 
-int RockeyARM::ChangePIN(PERMISSION perm, const char* old, const char* pin, int count) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::ResetUserPIN(const char* admin) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-
-int RockeyARM::GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]) {
-  return DONGLE_CHECK(-ENOSYS);
-}
-int RockeyARM::FactoryReset() {
-  return DONGLE_CHECK(-ENOSYS);
+int Emulator::Write(const char* file) {
+  return -ENOSYS;
 }
 
 } // namespace dongle
