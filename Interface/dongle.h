@@ -135,10 +135,11 @@ rLANG_DECLARE_HANDLE(ROCKEY_HANDLE);
 #define override /* nothing */
 #endif /* X_BUILD_native */
 
-#ifndef X_BUILD_native
-int SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer);
-int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t* buffer);
-#endif /* X_BUILD_native */
+/**
+ *!
+ */
+rLANGEXPORT int rLANGAPI SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer);
+rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t* buffer);
 
 class Dongle {
  public:

@@ -30,7 +30,7 @@ constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DONGLE");
 
 namespace dongle {
 
-int SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer) {
+rLANGEXPORT int rLANGAPI SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer) {
   DONGLE_VERIFY(cipher_len > 96 && cipher_len <= 1024);
 
   rLANG_SM2_Ciphertext_st* ciphertext = rLANG_SM2_Ciphertext_new();
@@ -48,7 +48,7 @@ int SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t*
 
   return result;
 }
-int SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t* buffer) {
+rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t cipher_len, uint8_t* buffer) {
   const uint8_t* p = asn1_cipher;
   DONGLE_VERIFY(cipher_len <= 1024);
   rLANG_SM2_Ciphertext_st* ciphertext = d2i_rLANG_SM2_Ciphertext(nullptr, &p, static_cast<int>(cipher_len));
