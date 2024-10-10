@@ -3,7 +3,7 @@ wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 ##
 ##
 ##
-X4C_NODE ?= /Machine/System/bin/node
+X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machine/System/bin/node-rlang ; else echo /Machine/System/bin/node ; fi )
 
 .PHONY : wasm wasmjs cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-wasmjs clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform

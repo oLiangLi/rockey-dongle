@@ -2295,7 +2295,7 @@ void Ed25519::ComputePubkey(void* vExtBuffer, uint8_t pubkey[32], const uint8_t 
   Helper* helper = static_cast<Helper*>(vExtBuffer);
 
   uint8_t* const az = helper->sha512;
-  Sha512Ctx().Init().Update(prikey, 32).Final(az).Init();
+  Sha512Ctx().Init().Update(prikey, 32).Final(az).Clear();
 
   az[0] &= 248;
   az[31] &= 63;
@@ -2331,7 +2331,7 @@ int Ed25519::Verify(void* vExtBuffer,
   memcpy(rcopy, signature, 32);
   memcpy(scopy, signature + 32, 32);
 
-  Sha512Ctx().Init().Update(signature, 32).Update(public_key, 32).Update(message, message_len).Final(h);
+  Sha512Ctx().Init().Update(signature, 32).Update(public_key, 32).Update(message, message_len).Final(h).Clear();
 
   x25519_sc_reduce(h);
   helper->ge_scalarmult_base(&R, scopy);
@@ -2359,19 +2359,19 @@ void Ed25519::Sign(void* vExtBuffer,
   uint8_t* const nonce = helper->sha512_nonce;
   uint8_t* const hram = helper->sha512;
 
-  Sha512Ctx().Init().Update(private_key, 32).Final(az).Init();
+  Sha512Ctx().Init().Update(private_key, 32).Final(az).Clear();
 
   az[0] &= 248;
   az[31] &= 63;
   az[31] |= 64;
 
-  Sha512Ctx().Init().Update(&az[32], 32).Update(message, message_len).Final(nonce);
+  Sha512Ctx().Init().Update(&az[32], 32).Update(message, message_len).Final(nonce).Clear();
 
   x25519_sc_reduce(nonce);
   helper->ge_scalarmult_base(&R, nonce);
   ge_p3_tobytes(out_sig, &R);
 
-  Sha512Ctx().Init().Update(out_sig, 32).Update(public_key, 32).Update(message, message_len).Final(hram);
+  Sha512Ctx().Init().Update(out_sig, 32).Update(public_key, 32).Update(message, message_len).Final(hram).Clear();
 
   x25519_sc_reduce(hram);
   sc_muladd(out_sig + 32, hram, az, nonce);

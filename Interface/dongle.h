@@ -38,34 +38,37 @@ enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdminstrator };
 enum class LED_STATE : uint8_t { kOff, kOn, kBlink };
 enum class SECRET_STORAGE_TYPE : uint8_t { kData, kRSA, kP256, kSM2, kSM4, kTDES };
 
-class Sha256Ctx {
+template <typename T>
+class HashBase {
+ public:
+  T& Clear() {
+    memset(&ctx_, 0, sizeof(ctx_));
+    return *static_cast<T*>(this);
+  }
+
+ protected:
+  rlCryptoShaCtx ctx_;
+};
+
+class Sha256Ctx : public HashBase<Sha256Ctx> {
  public:
   Sha256Ctx& Init();
   Sha256Ctx& Update(const void* input, size_t size);
   Sha256Ctx& Final(uint8_t md[32]);
-
- private:
-  rlCryptoShaCtx ctx_;
 };
 
-class Sha384Ctx {
+class Sha384Ctx : public HashBase<Sha384Ctx> {
  public:
   Sha384Ctx& Init();
   Sha384Ctx& Update(const void* input, size_t size);
   Sha384Ctx& Final(uint8_t md[48]);
-
- private:
-  rlCryptoShaCtx ctx_;
 };
 
-class Sha512Ctx {
+class Sha512Ctx : public HashBase<Sha512Ctx> {
  public:
   Sha512Ctx& Init();
   Sha512Ctx& Update(const void* input, size_t size);
   Sha512Ctx& Final(uint8_t md[64]);
-
- private:
-  rlCryptoShaCtx ctx_;
 };
 
 class Curve25519 {
@@ -458,9 +461,13 @@ public:
   virtual ~Emulator();
 
   virtual int Close();
-  virtual int Create(const char* master_secret);
-  virtual int Open(const char* file, const char* master_secret);
+  virtual int Create(const uint8_t master_secret[64], uint32_t uid = 0, int loop = 256);
+  virtual int Open(const char* file, const uint8_t master_secret[64], int loop = 256);
   virtual int Write(const char* file);
+
+public:
+  int Create(const char* master_secret, uint32_t uid = 0, int loop = 256);
+  int Open(const char* file, const char* master_secret, int loop = 256);
 };
 
 

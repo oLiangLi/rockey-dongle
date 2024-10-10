@@ -1,6 +1,7 @@
 #include <Interface/dongle.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
+#include <map>
 
 /* Copy from sm2_crypt.c */
 typedef struct rLANG_SM2_Ciphertext_st rLANG_SM2_Ciphertext;
@@ -22,11 +23,318 @@ IMPLEMENT_ASN1_FUNCTIONS(rLANG_SM2_Ciphertext)
 
 rLANG_DECLARE_MACHINE
 
+namespace dongle {
+
 namespace {
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Foobar");
+
+constexpr size_t kDongleFileSizeLimit = 64 * 1024;
+
+/**! */
+#if defined(__EMSCRIPTEN__) && defined(rLANG_WORLD_STANDALONE)
+
+rLANGIMPORT int rLANGAPI LoadDongleFile(const char* file, uint8_t content[])
+    __attribute__((__import_module__("rLANG"), __import_name__("LoadDongleFile")));
+rLANGIMPORT int rLANGAPI WriteDongleFile(const char* file, const uint8_t content[], size_t size)
+    __attribute__((__import_module__("rLANG"), __import_name__("WriteDongleFile")));
+
+#else /* __EMSCRIPTEN__ && rLANG_WORLD_STANDALONE */
+
+int LoadDongleFile(const char* file, uint8_t content[]) {
+  FILE* fp = fopen(file, "rb");
+  if (NULL == fp) {
+    rlLOGE(TAG, "Can't open %s for read, error: %d", file, errno);
+    return -ENOENT;
+  }
+
+  size_t size = fread(content, 1, kDongleFileSizeLimit + 16, fp);
+  fclose(fp);
+
+  if (size > kDongleFileSizeLimit)
+    return -EFAULT;
+  return static_cast<int>(size);
 }
 
-namespace dongle {
+int WriteDongleFile(const char* file, const uint8_t content[], size_t size) {
+  DONGLE_VERIFY(size <= kDongleFileSizeLimit);
+
+  FILE* fp = fopen(file, "wb");
+  if (NULL == fp) {
+    rlLOGE(TAG, "Can't open %s for write, error: %d", file, errno);
+    return -EFAULT;
+  }
+
+  size_t sz = fwrite(content, 1, size, fp);
+  fclose(fp);
+
+  if (sz != size)
+    return -EFAULT;
+  return static_cast<int>(size);
+}
+
+#endif /* */
+
+class DongleHandle {
+public:
+  DongleHandle(const DongleHandle&) = delete;
+  DongleHandle& operator=(const DongleHandle&) = delete;
+
+  struct SupperBlock {
+    struct {
+      uint32_t world_magic_;
+      uint32_t file_magic_;
+      uint32_t reseved_;
+      uint8_t world_nonce_[12];
+      DONGLE_INFO dongle_info_;
+      uint8_t master_ed25519_[32];
+      uint8_t master_xx25519_[32];
+    } public_;
+    uint8_t master_prikey_encrypt_[64]; // Ed25519[32] + X25519[32]
+    uint8_t sign_[64];
+  };
+
+public:
+  static constexpr uint32_t rLANG_DONGLE_MAGIC = rLANG_DECLARE_MAGIC_Xs("DONGL");
+  static DongleHandle* Create(const uint8_t master_[64], uint32_t uid, int loop) {
+    DongleHandle* self = new DongleHandle;
+
+    SupperBlock& sb = self->sb_;
+    uint8_t secret[256], MASTER_PRIKEY[64], *MASTER_PKMASK = self->master_prikey_masked_;
+    
+    /* Loop.1 */
+    memcpy(secret, master_, 64);
+    ExtendMasterSecret(secret, loop);
+
+    /* Init.0 */
+    RAND_bytes(sb.public_.world_nonce_, sizeof(sb.public_.world_nonce_));
+    Sha512Ctx().Init().Update(secret, 64).Final(secret).Clear();
+    memcpy(&sb.public_.dongle_info_.pid_, &secret[42], 4);
+    Sha512Ctx().Init().Update(sb.public_.world_nonce_, 12).Update(secret, 64).Final(secret).Clear();
+    memcpy(&sb.public_.dongle_info_.hid_, secret, 12);
+    sb.public_.dongle_info_.hid_[0] = 0xFF;
+
+    sb.public_.world_magic_ = rLANG_WORLD_MAGIC;
+    sb.public_.file_magic_ = rLANG_DONGLE_MAGIC;
+    sb.public_.reseved_ = 0;
+
+    struct rlTM_t tm;
+    rLANG_GetTimeFromDate(&tm, rLANG_GetCurrentDate());
+
+    sb.public_.dongle_info_.ver_ = 0x0101;
+    sb.public_.dongle_info_.type_ = rLANG_DECLARE_MAGIC_Xs("EMULA");
+    sb.public_.dongle_info_.birthday_[0] = tm.tm_year / 100;
+    sb.public_.dongle_info_.birthday_[1] = tm.tm_year % 100;
+    sb.public_.dongle_info_.birthday_[2] = tm.tm_month;
+    sb.public_.dongle_info_.birthday_[3] = tm.tm_mday;
+    sb.public_.dongle_info_.birthday_[4] = tm.tm_hour;
+    sb.public_.dongle_info_.birthday_[5] = tm.tm_minute;
+    sb.public_.dongle_info_.birthday_[6] = tm.tm_second;
+    sb.public_.dongle_info_.birthday_[7] = 0;
+    sb.public_.dongle_info_.agentId_ = 0xFFFFFFFF;
+    sb.public_.dongle_info_.uid_ = uid;
+
+    /* MASK */
+    RAND_bytes((uint8_t*)&self->state_mask_[0], 64);
+    rlCryptoChaCha20Block(self->state_mask_, MASTER_PKMASK);
+
+    /* PKEY */
+    RAND_bytes(sb.master_prikey_encrypt_, 64);
+    memcpy(MASTER_PRIKEY, sb.master_prikey_encrypt_, 64);
+
+    /* SECRET */
+    ExtendMasterSecret(secret, loop);
+
+    for (int i = 0; i < 64; ++i) {
+      MASTER_PRIKEY[i] ^= secret[i];
+      MASTER_PKMASK[i] ^= MASTER_PRIKEY[i];
+    }
+    rlCryptoEd25519Pubkey(sb.public_.master_ed25519_, &MASTER_PRIKEY[0]);
+    rlCryptoX25519Pubkey(sb.public_.master_xx25519_, &MASTER_PRIKEY[32]);
+    rlCryptoEd25519Sign(sb.sign_, &sb, sizeof(SupperBlock) - 64, sb.public_.master_ed25519_, &MASTER_PRIKEY[0]);
+    DONGLE_VERIFY(Ed25519Verify(&sb, sizeof(SupperBlock), sb.public_.master_ed25519_));
+
+    memset(MASTER_PRIKEY, 0, sizeof(MASTER_PRIKEY));
+
+    uint32_t total = 0;
+    memset(secret, 0, 64);
+    self->EncryptBuffer(secret, 64);
+    DONGLE_VERIFY(self->DecryptBuffer(secret, 64));
+    for (int i = 0; i < 64; ++i)
+      total += secret[i];
+    DONGLE_VERIFY(0 == total);
+
+    {
+      DongleHandle* check = nullptr;
+      DONGLE_VERIFY(0 == LoadSupperBlock(self->sb_, master_, loop, &check));
+      delete check;
+    }
+
+    return self;
+  }
+
+  static int LoadSupperBlock(const SupperBlock& sb, const uint8_t master_[64], int loop, DongleHandle** outHandle) {
+    DONGLE_VERIFY(nullptr == outHandle || nullptr == *outHandle);
+    if(rLANG_WORLD_MAGIC != sb.public_.world_magic_ ||
+      rLANG_DONGLE_MAGIC != sb.public_.file_magic_ ||
+      0xFF != sb.public_.dongle_info_.hid_[0] ||
+      !Ed25519Verify(&sb, sizeof(SupperBlock), sb.public_.master_ed25519_)) {
+      return -EFAULT;
+    }
+
+    if (0 != sb.public_.reseved_)
+      return -EFAULT;
+
+    uint8_t secret[256];
+    Dongle::SecretBuffer<16, uint32_t> state_mask_;
+    Dongle::SecretBuffer<64> MASTER_PKMASK, MASTER_PRIKEY;    
+
+    RAND_bytes((uint8_t*)&state_mask_[0], 64);
+    rlCryptoChaCha20Block(state_mask_, MASTER_PKMASK);
+
+    /* Loop.1 */
+    memcpy(secret, master_, 64);
+    ExtendMasterSecret(secret, loop);
+
+    /* Init.0 */
+    Sha512Ctx().Init().Update(secret, 64).Final(secret).Clear();
+    if (0 != memcmp(&sb.public_.dongle_info_.pid_, &secret[42], 4))
+      return -EACCES;
+    Sha512Ctx().Init().Update(sb.public_.world_nonce_, 12).Update(secret, 64).Final(secret).Clear();
+    if (0 != memcmp(&sb.public_.dongle_info_.hid_[1], &secret[1], 11))
+      return -EACCES;
+
+    /* SECRET */
+    ExtendMasterSecret(secret, loop);
+    memcpy(&MASTER_PRIKEY[0], sb.master_prikey_encrypt_, 64);
+
+    for (int i = 0; i < 64; ++i) {
+      MASTER_PRIKEY[i] ^= secret[i];
+      MASTER_PKMASK[i] ^= MASTER_PRIKEY[i];
+    }
+
+    rlCryptoEd25519Pubkey(&secret[0], &MASTER_PRIKEY[0]);
+    rlCryptoX25519Pubkey(&secret[32], &MASTER_PRIKEY[32]);
+    if (0 != memcmp(&secret[0], sb.public_.master_ed25519_, 32) ||
+        0 != memcmp(&secret[32], sb.public_.master_xx25519_, 32))
+      return -EACCES;
+
+    if (outHandle) {
+      DongleHandle* self = *outHandle = new DongleHandle;
+      self->sb_ = sb; /* */
+      memcpy(&self->state_mask_[0], &state_mask_[0], 64);
+      memcpy(&self->master_prikey_masked_, &MASTER_PKMASK[0], 64);
+
+      uint32_t total = 0;
+      memset(secret, 0, 64);
+      self->EncryptBuffer(secret, 64);
+      DONGLE_VERIFY(self->DecryptBuffer(secret, 64));
+      for (int i = 0; i < 64; ++i)
+        total += secret[i];
+      DONGLE_VERIFY(0 == total);
+    }
+    return 0;
+  }
+
+public:
+  static bool Ed25519Verify(const void* storage, size_t size, const uint8_t pubkey[32]) {
+    DONGLE_VERIFY(size >= 64);
+
+    size -= 64;
+    const uint8_t* v = static_cast<const uint8_t*>(storage);
+    return rlCryptoEd25519Verify(v, (int)size, &v[size], pubkey) == 0;
+  }
+
+  bool Ed25519Verify(const void* storage, size_t size) {
+    return Ed25519Verify(storage, size, sb_.public_.master_ed25519_);
+  }
+
+  static void ExtendMasterSecret(uint8_t master_secret[64], int loop) {
+    if (loop < 256)
+      loop = 256;
+    
+    for (int i = 0; i < loop; ++i) {
+      struct {
+        uint8_t ed25519[32];
+        uint8_t x25519[32];
+        uint8_t stream[64];
+      } v;
+
+      uint32_t state[16];
+      memcpy(state, master_secret, 64);
+      rlCryptoChaCha20Block(state, v.stream);
+      rlCryptoEd25519Pubkey(v.ed25519, &master_secret[0]);
+      rlCryptoX25519Pubkey(v.x25519, &master_secret[32]);
+      Sha512Ctx().Init().Update(&v, sizeof(v)).Final(master_secret);
+    }
+  }
+
+public:
+  bool DecryptBuffer(uint8_t buffer[], size_t size) { // buffer : data[size]|pubkey[32]|sign[64]
+    if (!Ed25519Verify(buffer, size + 32 + 64))
+      return false;
+
+    Dongle::SecretBuffer<32> key;
+    Dongle::SecretBuffer<1, rlCryptoChaCha20Ctx> ctx;
+
+    {
+      Dongle::SecretBuffer<64> stream;
+      rlCryptoChaCha20Block(state_mask_, stream);
+      for (int i = 0; i < 64; ++i)
+        stream[i] ^= master_prikey_masked_[i];
+      rlCryptoX25519(key, &stream[32], &buffer[size]);
+      if (0 == ++state_mask_[12])
+        ++state_mask_[13];
+      rlCryptoChaCha20Block(state_mask_, master_prikey_masked_);
+      for (int i = 0; i < 64; ++i)
+        master_prikey_masked_[i] ^= stream[i];
+    }
+
+    rlCryptoChaCha20Init(ctx);
+    rlCryptoChaCha20SetKey(ctx, key);
+    rlCryptoChaCha20Starts(ctx, sb_.public_.world_nonce_, 0);
+    rlCryptoChaCha20Update(ctx, buffer, buffer, size);
+    return true;
+  }
+
+  void EncryptBuffer(uint8_t buffer[], size_t size) {  // buffer : data[size]|pubkey[32]|sign[64]
+    {
+      Dongle::SecretBuffer<32> key;
+      Dongle::SecretBuffer<1, rlCryptoChaCha20Ctx> ctx;
+
+      RAND_bytes(key, 32);
+      rlCryptoX25519Pubkey(&buffer[size], key);
+      rlCryptoX25519(key, key, sb_.public_.master_xx25519_);
+
+      rlCryptoChaCha20Init(ctx);
+      rlCryptoChaCha20SetKey(ctx, key);
+      rlCryptoChaCha20Starts(ctx, sb_.public_.world_nonce_, 0);
+      rlCryptoChaCha20Update(ctx, buffer, buffer, size);
+    }
+
+    {
+      Dongle::SecretBuffer<64> stream;
+      rlCryptoChaCha20Block(state_mask_, stream);
+      for (int i = 0; i < 64; ++i)
+        stream[i] ^= master_prikey_masked_[i];
+      rlCryptoEd25519Sign(&buffer[size + 32], buffer, (int)size + 32, sb_.public_.master_ed25519_, &stream[0]);
+      if (0 == ++state_mask_[12])
+        ++state_mask_[13];
+      rlCryptoChaCha20Block(state_mask_, master_prikey_masked_);
+      for (int i = 0; i < 64; ++i)
+        master_prikey_masked_[i] ^= stream[i];
+    }
+  }
+
+protected:
+  DongleHandle() = default;
+  Dongle::SecretBuffer<16, uint32_t> state_mask_;
+  Dongle::SecretBuffer<64> master_prikey_masked_;
+  SupperBlock sb_;
+};
+
+rLANG_ABIREQUIRE(sizeof(DongleHandle::SupperBlock) == 256);
+
+}  // namespace
 
 rLANGEXPORT int rLANGAPI SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t cipher_len, uint8_t* buffer) {
   DONGLE_VERIFY(cipher_len > 96 && cipher_len <= 1024);
@@ -283,16 +591,63 @@ int Emulator::Close() {
   return 0;
 }
 
-int Emulator::Create(const char* master_secret) {
-  return -ENOSYS;
+int Emulator::Create(const uint8_t master_secret[64], uint32_t uid, int loop) {
+  DongleHandle* handle = DongleHandle::Create(master_secret, uid, loop);
+
+  for(int i = 0; i < 10; ++i) {
+    uint8_t input[1024 + 100], verify[1024];
+    int len = rand() % 1000 + 10;
+    
+    RAND_bytes(verify, len);
+    memcpy(input, verify, len);
+
+    handle->EncryptBuffer(input, len);
+    DONGLE_VERIFY(handle->DecryptBuffer(input, len));
+
+    DONGLE_VERIFY(0 == memcmp(input, verify, len));  
+  }
+
+  handle_ = reinterpret_cast<ROCKEY_HANDLE>(handle);
+  return 0;
 }
 
-int Emulator::Open(const char* file, const char* master_secret) {
+int Emulator::Open(const char* file, const uint8_t master_secret[64], int loop) {
+  SecretBuffer<kDongleFileSizeLimit + 256> content;
+  int size = LoadDongleFile(file, content);
+
+  if (size < 0) {
+    rlLOGE(TAG, "LoadDongleFile %s, Error %d", file, size);
+    return size;
+  }
+
+
+
+
+
   return -ENOSYS;
 }
 
 int Emulator::Write(const char* file) {
+  if (!handle_)
+    return -EBADF;
+
+
+
+
+
   return -ENOSYS;
+}
+
+int Emulator::Create(const char* master_secret, uint32_t uid, int loop) {
+  SecretBuffer<64> buffer;
+  Sha512Ctx().Init().Update(master_secret, strlen(master_secret)).Final(buffer).Clear();
+  return Create(&buffer[0], uid, loop);
+}
+
+int Emulator::Open(const char* file, const char* master_secret, int loop) {
+  SecretBuffer<64> buffer;
+  Sha512Ctx().Init().Update(master_secret, strlen(master_secret)).Final(buffer).Clear();
+  return Open(file, &buffer[0], loop);
 }
 
 } // namespace dongle
