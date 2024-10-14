@@ -1405,7 +1405,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 #endif  // __RockeyARM__
 
   result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
-  rlLOGI(TAG, "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
+  rlLOGXI(TAG, Context->bytes, sizeof(Context->bytes), "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
 
   result = rockey.SeedSecret(Context->argv_, sizeof(Context->argv_), Context->seed_);
   rlLOGI(TAG, "rockey.SeedSecret %d/%08x", result, rockey.GetLastError(false));
@@ -1421,8 +1421,13 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   rockey.GetPINState(&Context->permission_);
 
   rockey.ReadShareMemory(Context->share_memory_2_);
+  rlLOGXI(TAG, Context->share_memory_2_, 32, "SharedMemroy.2");
+
   rockey.WriteShareMemory(&Context->bytes[32]);
-  rockey.ReadShareMemory(Context->share_memory_1_);  
+  rlLOGXI(TAG, &Context->bytes[32], 32, "Context->bytes.2");
+
+  rockey.ReadShareMemory(Context->share_memory_1_);
+  rlLOGXI(TAG, Context->share_memory_1_, 32, "SharedMemroy.1");
 
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
   rockey.ClearLastError();

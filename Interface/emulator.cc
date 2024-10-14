@@ -1,6 +1,7 @@
 #include <Interface/dongle.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
+#include <vector>
 #include <map>
 
 /* Copy from sm2_crypt.c */
@@ -37,7 +38,8 @@ rLANGIMPORT int rLANGAPI LoadDongleFile(const char* file, uint8_t content[])
     __attribute__((__import_module__("rLANG"), __import_name__("LoadDongleFile")));
 rLANGIMPORT int rLANGAPI WriteDongleFile(const char* file, const uint8_t content[], size_t size)
     __attribute__((__import_module__("rLANG"), __import_name__("WriteDongleFile")));
-
+rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state)
+    __attribute__((__import_module__("rLANG"), __import_name__("SetDongleLEDState")));
 #else /* __EMSCRIPTEN__ && rLANG_WORLD_STANDALONE */
 
 int LoadDongleFile(const char* file, uint8_t content[]) {
@@ -71,7 +73,10 @@ int WriteDongleFile(const char* file, const uint8_t content[], size_t size) {
     return -EFAULT;
   return static_cast<int>(size);
 }
-
+rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state) {
+  rlLOGE(TAG, "TODO: Implements SetDongleLEDState %p/%d", thiz, state);
+  return 0;
+}
 #endif /* */
 
 class DongleHandle {
@@ -236,6 +241,121 @@ public:
   }
 
 public:
+  size_t Write(uint8_t* buffer) {
+    uint8_t* p = buffer;
+
+    memcpy(p, &sb_, sizeof(sb_));
+    p += sizeof(sb_);
+
+    memcpy(p, factory_datafile_, sizeof(factory_datafile_));
+    p += sizeof(factory_datafile_);
+
+    for (const auto& file : secret_files_) {
+      const auto& header = file.first;
+      memcpy(p, &header, sizeof(header));
+      p += sizeof(header);
+
+      if (!header.empty_file_) {
+        const auto& content = file.second;
+        size_t size = FileContentSize(header.size_);
+        memcpy(p, &content[0], size);
+        p += size;
+      }
+    }
+
+    Sha256Ctx().Init().Update(buffer, p - buffer).Final(p);
+    EncryptBuffer(p, 32);
+    p += 128;
+
+    return p - buffer;
+  }
+
+  static int Load(const uint8_t* p, size_t size, const uint8_t master_[64], int loop, DongleHandle** outHandle) {
+    DONGLE_VERIFY(outHandle && !*outHandle);
+    SupperBlock sb;
+    if (size < sizeof(sb) + kFactoryFileSize + 128)
+      return -EFAULT;
+
+    uint8_t sha256[32];
+    Sha256Ctx().Init().Update(p, size - 128).Final(sha256);
+
+    memcpy(&sb, p, sizeof(sb));
+    size -= sizeof(sb);
+    p += sizeof(sb);
+
+    DongleHandle* thiz = nullptr;
+    int r = LoadSupperBlock(sb, master_, loop, &thiz);
+    if (r < 0)
+      return r;
+
+    memcpy(thiz->factory_datafile_, p, kFactoryFileSize);
+    size -= kFactoryFileSize;
+    p += kFactoryFileSize;
+
+    size -= 128;
+    uint8_t verify[128];
+    memcpy(verify, p + size, 128);
+    if (!thiz->DecryptBuffer(verify, 32) || 0 != memcmp(sha256, verify, 32)) {
+      r = -EFAULT;
+    }
+
+    while(size > 0 && r >= 0) {
+      FileHeader header;
+
+      if (size < sizeof(header)) {
+        r = -EFAULT;
+        break;
+      }
+
+      memcpy(&header, p, sizeof(header));
+      size -= sizeof(header);
+      p += sizeof(header);
+
+      if (header.type_ > SECRET_STORAGE_TYPE::kTDES || header.index_ <= 0 || header.index_ >= 0xFFFF ||
+          header.size_ <= 0 || header.size_ >= 0xFFF0) {
+        r = -EFAULT;
+        break;
+      }
+
+      if(thiz->secret_files_.find(header) != thiz->secret_files_.end()) {
+        r = -EFAULT;
+        break;
+      }
+
+      thiz->current_file_size_ += FileStorageSize(header.size_);
+      if (thiz->current_file_size_ > kDongleFileSizeLimit) {
+        r = -EFAULT;
+        break;
+      }
+
+      if (!header.empty_file_) {
+        size_t file_size = FileContentSize(header.size_);
+        if (size < file_size) {
+          r = -EFAULT;
+          break;
+        }
+        if (!thiz->Ed25519Verify(p, file_size)) {
+          r = -EFAULT;
+          break;
+        }
+
+        thiz->secret_files_.insert(std::make_pair(header, std::vector<uint8_t>{p, p + file_size}));
+        size -= file_size;
+        p += file_size;
+      } else {
+        thiz->secret_files_.insert(std::make_pair(header, std::vector<uint8_t>{}));
+      }
+    }
+
+    if (r < 0) {
+      delete thiz;
+    } else {
+      *outHandle = thiz;
+    }
+    return r;
+  }
+
+public:
   static bool Ed25519Verify(const void* storage, size_t size, const uint8_t pubkey[32]) {
     DONGLE_VERIFY(size >= 64);
 
@@ -268,8 +388,8 @@ public:
     }
   }
 
-public:
-  bool DecryptBuffer(uint8_t buffer[], size_t size) { // buffer : data[size]|pubkey[32]|sign[64]
+ public:
+  bool DecryptBuffer(uint8_t buffer[], size_t size) {  // buffer : data[size]|pubkey[32]|sign[64]
     if (!Ed25519Verify(buffer, size + 32 + 64))
       return false;
 
@@ -325,13 +445,122 @@ public:
     }
   }
 
-protected:
+ public:
+  struct FileHeader {
+    SECRET_STORAGE_TYPE type_;
+    uint8_t empty_file_;
+    uint16_t index_;
+    uint32_t size_;
+  };
+
+  friend bool operator<(const FileHeader& lhs, const FileHeader& rhs) {
+    if (lhs.type_ != rhs.type_)
+      return lhs.type_ < rhs.type_;
+    return lhs.index_ < rhs.index_;
+  }
+
+  static constexpr size_t FileStorageSize(size_t size) {
+    return size + 128;  /* Header[8] + ACL[...] + X25519.pubkey[32] + Ed25519.Sign[64] */
+  }
+  static constexpr size_t FileContentSize(size_t size) {
+    return size + 96;   /* X25519.pubkey[32] + Ed25519.Sign[64] */
+  }
+
+  int CreateSecretFile(SECRET_STORAGE_TYPE type, uint16_t index, size_t size) {
+    if (size >= 0xFF00)
+      return -E2BIG;
+
+    FileHeader header{ type, 1, index, (uint32_t)size };
+    if (secret_files_.find(header) != secret_files_.end())
+      return -EEXIST;
+
+    if (kDongleFileSizeLimit - current_file_size_ < FileStorageSize(size))
+      return -ENOSPC;
+
+    secret_files_.insert(std::make_pair(header, std::vector<uint8_t>{}));
+    current_file_size_ += FileStorageSize(size);
+
+    return 0;
+  }
+
+  int RemoveSecretFile(SECRET_STORAGE_TYPE type, uint16_t index) {
+    auto iter = secret_files_.find(FileHeader{type, 1, index});
+    if (iter == secret_files_.end())
+      return -ENOENT;
+
+    auto& header = iter->first;
+    size_t size = header.size_;
+    current_file_size_ -= FileStorageSize(size);
+    secret_files_.erase(iter);
+    return 0;
+  }
+
+  template<typename CALLBACK_FUNCTION_>
+  int OpWriteSecretFile(SECRET_STORAGE_TYPE type, uint16_t index, CALLBACK_FUNCTION_ callback) {
+    auto iter = secret_files_.find(FileHeader{type, 1, index});
+    if (iter == secret_files_.end())
+      return -ENOENT;
+
+    auto& header = iter->first;
+    size_t size = header.size_;
+    int result = 0;
+    
+    if (header.empty_file_) {
+      *const_cast<uint8_t*>(&header.empty_file_) = 0;
+      DONGLE_VERIFY(iter->second.empty());
+      iter->second.resize(FileContentSize(size));
+      result = callback(&iter->second[0], size);
+    } else {
+      DONGLE_VERIFY(iter->second.size() == FileContentSize(size));
+      if (!DecryptBuffer(&iter->second[0], size))
+        return -EFAULT;
+      result = callback(&iter->second[0], size);
+    }
+
+    EncryptBuffer(&iter->second[0], size);
+    return result;
+  }
+
+  template <typename CALLBACK_FUNCTION_>
+  int OpReadSecretFile(SECRET_STORAGE_TYPE type, uint16_t index, CALLBACK_FUNCTION_ callback) {
+    auto iter = secret_files_.find(FileHeader{type, 1, index});
+    if (iter == secret_files_.end())
+      return -ENOENT;
+
+    auto& header = iter->first;
+    size_t size = header.size_;
+
+    std::vector<uint8_t> buffer(FileContentSize(size));
+
+    if (!header.empty_file_) {
+      memcpy(&buffer[0], &iter->second[0], FileContentSize(size));
+      if (!DecryptBuffer(&buffer[0], size))
+        return -EFAULT;
+    }
+
+    int result = callback(&buffer[0], size);
+    memset(&buffer[0], 0, buffer.size());
+    return result;
+  }
+
+ public:
+  static constexpr size_t kFactoryFileSize = 8192;
+  static constexpr size_t kSharedMemorySize = 32;
+  uint8_t shared_memory_[kSharedMemorySize] = {0};
+  uint8_t factory_datafile_[kFactoryFileSize] = {0};
+
+ protected:
   DongleHandle() = default;
   Dongle::SecretBuffer<16, uint32_t> state_mask_;
   Dongle::SecretBuffer<64> master_prikey_masked_;
   SupperBlock sb_;
+
+  size_t current_file_size_ = sizeof(SupperBlock) + kFactoryFileSize + 128 /* sha256[32] + pubkey[32] + sign[64] */;
+
+  std::map<FileHeader, std::vector<uint8_t>> secret_files_;
 };
 
+rLANG_ABIREQUIRE(sizeof(DongleHandle::FileHeader) == 8);
 rLANG_ABIREQUIRE(sizeof(DongleHandle::SupperBlock) == 256);
 
 }  // namespace
@@ -407,30 +636,92 @@ int Dongle::GetPINState(PERMISSION* state) {
 }
 
 int Dongle::SetLEDState(LED_STATE state) {
-  return DONGLE_CHECK(-ENOSYS);
+  return DONGLE_CHECK(SetDongleLEDState(this, state));
 }
 
 int Dongle::ReadShareMemory(uint8_t buffer[32]) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  memcpy(buffer, thiz->shared_memory_, 32);
+  return 0;
 }
 int Dongle::WriteShareMemory(const uint8_t buffer[32]) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  memcpy(thiz->shared_memory_, buffer, 32);
+  return 0;
 }
 
 int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (id <= 0 || id >= 0xFFFF)
+    return DONGLE_CHECK(-EINVAL);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return DONGLE_CHECK(thiz->RemoveSecretFile(type_, id));
 }
 
 int Dongle::CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION write) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (id <= 0 || id >= 0xFFFF || size <= 0 || size > 0xFF00)
+    return DONGLE_CHECK(-EINVAL);
+
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return DONGLE_CHECK(thiz->CreateSecretFile(SECRET_STORAGE_TYPE::kData, id, size));
 }
 
 int Dongle::WriteDataFile(int id, size_t offset, const void* buffer, size_t size) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (0 == size)
+    return 0;
+
+  if (id <= 0 || id > 0xFFFF ||  offset >= 0xFFF0 || size >= 0xFFF0)
+    return DONGLE_CHECK(-EINVAL);
+
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  auto callback = [offset, buffer, size](void* content, size_t size_content) {
+    if (offset >= size_content)
+      return -ERANGE;
+    if (size_content - offset < size)
+      return -ERANGE;
+    memcpy((uint8_t*)content + offset, buffer, size);
+    return 0;
+  };
+
+  if (id == 0xFFFF)
+    return DONGLE_CHECK(callback(thiz->factory_datafile_, DongleHandle::kFactoryFileSize));
+  return DONGLE_CHECK(thiz->OpWriteSecretFile(SECRET_STORAGE_TYPE::kData, id, callback));
 }
 
 int Dongle::ReadDataFile(int id, size_t offset, void* buffer, size_t size) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (0 == size)
+    return 0;
+
+  if (id <= 0 || id > 0xFFFF || offset >= 0xFFF0 || size >= 0xFFF0)
+    return DONGLE_CHECK(-EINVAL);
+
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  auto callback = [offset, buffer, size](const void* content, size_t size_content) {
+    if (offset >= size_content)
+      return -ERANGE;
+    if (size_content - offset < size)
+      return -ERANGE;
+    memcpy(buffer, (uint8_t*)content + offset, size);
+    return 0;
+  };
+
+  if (id == 0xFFFF)
+    return DONGLE_CHECK(callback(thiz->factory_datafile_, DongleHandle::kFactoryFileSize));
+  return DONGLE_CHECK(thiz->OpReadSecretFile(SECRET_STORAGE_TYPE::kData, id, callback));
 }
 
 int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PKEY_LICENCE& licence) {
@@ -588,30 +879,24 @@ Emulator::~Emulator() {
 }
 
 int Emulator::Close() {
+  if (handle_) {
+    delete reinterpret_cast<DongleHandle*>(handle_);
+    handle_ = nullptr;
+  }
+
   return 0;
 }
 
 int Emulator::Create(const uint8_t master_secret[64], uint32_t uid, int loop) {
+  Close();
   DongleHandle* handle = DongleHandle::Create(master_secret, uid, loop);
-
-  for(int i = 0; i < 10; ++i) {
-    uint8_t input[1024 + 100], verify[1024];
-    int len = rand() % 1000 + 10;
-    
-    RAND_bytes(verify, len);
-    memcpy(input, verify, len);
-
-    handle->EncryptBuffer(input, len);
-    DONGLE_VERIFY(handle->DecryptBuffer(input, len));
-
-    DONGLE_VERIFY(0 == memcmp(input, verify, len));  
-  }
-
   handle_ = reinterpret_cast<ROCKEY_HANDLE>(handle);
   return 0;
 }
 
 int Emulator::Open(const char* file, const uint8_t master_secret[64], int loop) {
+  Close();
+
   SecretBuffer<kDongleFileSizeLimit + 256> content;
   int size = LoadDongleFile(file, content);
 
@@ -619,23 +904,19 @@ int Emulator::Open(const char* file, const uint8_t master_secret[64], int loop) 
     rlLOGE(TAG, "LoadDongleFile %s, Error %d", file, size);
     return size;
   }
-
-
-
-
-
-  return -ENOSYS;
+  return DongleHandle::Load(&content[0], size, master_secret, loop, reinterpret_cast<DongleHandle**>(&handle_));
 }
 
 int Emulator::Write(const char* file) {
   if (!handle_)
     return -EBADF;
 
-
-
-
-
-  return -ENOSYS;
+  SecretBuffer<kDongleFileSizeLimit + 256> dongle_file_;
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  size_t size = thiz->Write(&dongle_file_[0]);
+  DONGLE_VERIFY(size <= kDongleFileSizeLimit &&
+                size >= sizeof(DongleHandle::SupperBlock) + DongleHandle::kFactoryFileSize + 128);
+  return WriteDongleFile(file, &dongle_file_[0], size);
 }
 
 int Emulator::Create(const char* master_secret, uint32_t uid, int loop) {
