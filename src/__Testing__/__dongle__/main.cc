@@ -433,61 +433,70 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
   int error = 0;
   uint8_t input[128], output[256], verify[256];
 
-  size_t szOut = 256;
-  uint32_t modules = 0;
-  if (rockey.GenerateRSA(100, &modules, Context->pubkey_, Context->prikey_) < 0) {
-    rlLOGE(TAG, "rockey.GenerateRSA 100 Error");
-    return 123;
-  }
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 1000;
+#else /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
 
-  rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA %x", modules);
-
-  rockey.RandBytes(input, sizeof(input));
-
-  szOut = sizeof(input);
-  memcpy(output, input, sizeof(input));
-  if (rockey.RSAPrivate(100, output, &szOut, true) < 0) {
-    rlLOGE(TAG, "rockey.RSAPrivate sign error");
-    ++error;
-  } else {
-    memcpy(verify, output, szOut);
-    if (rockey.RSAPublic(2048, modules, Context->pubkey_, verify, &szOut, false) < 0) {
-      rlLOGE(TAG, "rockey.RSAPublic verify error");
-      ++error;
-    } else {
-      DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
-    }
-  }
-
-  if (rockey.ImportRSA(102, 2048, modules, Context->pubkey_, Context->prikey_) < 0) {
-    rlLOGE(TAG, "rockey.ImportRSA 102 Error");
-    return 234;
-  }
-
-  szOut = sizeof(input);
-  memcpy(output, input, sizeof(input));
-  if (rockey.RSAPublic(2048, modules, Context->pubkey_, output, &szOut, true) < 0) {
-    rlLOGE(TAG, "rockey.RSAPublic encrypt error");
-    ++error;
-  } else {
-    DONGLE_VERIFY(szOut == 256);
-    memcpy(verify, output, szOut);
-
-    if (rockey.RSAPrivate(102, verify, &szOut, false) < 0) {
-      rlLOGE(TAG, "rockey.RSAPrivate decrypt 102 error");
-      ++error;
-    } else {
-      DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
+  for (int i = 0; i < kTestLoop; ++i) {
+    size_t szOut = 256;
+    uint32_t modules = 0;
+    if (rockey.GenerateRSA(100, &modules, Context->pubkey_, Context->prikey_) < 0) {
+      rlLOGE(TAG, "rockey.GenerateRSA 100 Error");
+      return 123;
     }
 
-    szOut = 256;
-    if (rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, output, &szOut, false) < 0) {
-      rlLOGE(TAG, "rockey.RSAPrivate decrypt error");
+    rlLOGXI(TAG, Context->pubkey_, 256, "rockey.GenerateRSA %x", modules);
+
+    rlLOGI(TAG, "RSA.Test.loop %d => %d", i, error);
+    rockey.RandBytes(input, sizeof(input));
+
+    szOut = sizeof(input);
+    memcpy(output, input, sizeof(input));
+    if (rockey.RSAPrivate(100, output, &szOut, true) < 0) {
+      rlLOGE(TAG, "rockey.RSAPrivate sign error");
       ++error;
     } else {
-      DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, output, sizeof(input)));
+      memcpy(verify, output, szOut);
+      if (rockey.RSAPublic(2048, modules, Context->pubkey_, verify, &szOut, false) < 0) {
+        rlLOGE(TAG, "rockey.RSAPublic verify error");
+        ++error;
+      } else {
+        DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
+      }
     }
-  }
+
+    if (rockey.ImportRSA(102, 2048, modules, Context->pubkey_, Context->prikey_) < 0) {
+      rlLOGE(TAG, "rockey.ImportRSA 102 Error");
+      return 234;
+    }
+
+    szOut = sizeof(input);
+    memcpy(output, input, sizeof(input));
+    if (rockey.RSAPublic(2048, modules, Context->pubkey_, output, &szOut, true) < 0) {
+      rlLOGE(TAG, "rockey.RSAPublic encrypt error");
+      ++error;
+    } else {
+      DONGLE_VERIFY(szOut == 256);
+      memcpy(verify, output, szOut);
+
+      if (rockey.RSAPrivate(102, verify, &szOut, false) < 0) {
+        rlLOGE(TAG, "rockey.RSAPrivate decrypt 102 error");
+        ++error;
+      } else {
+        DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, verify, sizeof(input)));
+      }
+
+      szOut = 256;
+      if (rockey.RSAPrivate(2048, modules, Context->pubkey_, Context->prikey_, output, &szOut, false) < 0) {
+        rlLOGE(TAG, "rockey.RSAPrivate decrypt error");
+        ++error;
+      } else {
+        DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, output, sizeof(input)));
+      }
+    }
+  }  
 
   return error;
 }
