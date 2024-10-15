@@ -738,7 +738,7 @@ int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 #endif /* __EMULATOR__ */
 
   for (int loop = 0; loop < kTestLoop; ++loop) {
-    rlLOGI(TAG, "Testing_SM2Exec %d/%d => %d", loop, kTestLoop, error);
+    rlLOGI(TAG, "Testing_P256Exec %d/%d => %d", loop, kTestLoop, error);
 
     if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x100) < 0) {
       ++error;
@@ -1025,7 +1025,7 @@ int Testing_HashExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 #endif /* __EMULATOR__ */
 
   for (int loop = 0; loop < kTestLoop; ++loop) {
-    rlLOGI(TAG, "Testing_KeyExec %d/%d %d", loop, kTestLoop, error);
+    rlLOGI(TAG, "Testing_HashExec %d/%d %d", loop, kTestLoop, error);
 
     for (int i = 1; i <= 10; ++i) {
       if (rockey.RandBytes(input, sizeof(input)) < 0)
@@ -1066,82 +1066,89 @@ int Testing_Secp256K1Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   uint8_t X1[32], Y1[32], K1[32], V1[32];
   uint8_t X2[32], Y2[32], K2[32], V2[32];
 
-  for (int i = 0; i < 2; ++i) {
-    if (rockey.GenerateKeyPairSecp256k1(X1, Y1, K1) < 0) {
-      ++error;
-      rlLOGE(TAG, "GenerateKeyPairSecp256k1..1 Error ...");
-    }
-    if (rockey.ComputePubkeySecp256k1(X2, Y2, K1) < 0 || 0 != memcmp(X1, X2, 32) || 0 != memcmp(Y1, Y2, 32)) {
-      ++error;
-      rlLOGE(TAG, "ComputePubkeySecp256k1 ..1 Error ...");
-    } else {
-      rlLOGXI(TAG, X1, 32, "Secp256k1.X");
-      rlLOGXI(TAG, Y1, 32, "Secp256k1.Y");
-    }
-    if (rockey.GenerateKeyPairSecp256k1(X2, Y2, K2) < 0) {
-      ++error;
-      rlLOGE(TAG, "GenerateKeyPairSecp256k1..2 Error ...");
-    }
-    if (rockey.CheckPointOnCurveSecp256k1(X1, Y1) < 0) {
-      ++error;
-      rlLOGE(TAG, "CheckPointOnCurveSecp256k1 Error ...");
-    }
-    X1[0] ^= 1;
-    if (rockey.CheckPointOnCurveSecp256k1(X1, Y1) >= 0) {
-      ++error;
-      rlLOGE(TAG, "CheckPointOnCurveSecp256k1 Error ...");
-    }
-    X1[0] ^= 1;
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 1000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
 
-    if (rockey.ComputeSecretSecp256k1(V1, X1, Y1, K2) < 0) {
-      ++error;
-      rlLOGE(TAG, "ComputeSecretSecp256k1 .. 1 Error ...");
-    }
-    if (rockey.ComputeSecretSecp256k1(V2, X2, Y2, K1) < 0) {
-      ++error;
-      rlLOGE(TAG, "ComputeSecretSecp256k1 .. 2 Error ...");
-    }
+  for (int loop = 0; loop < kTestLoop; ++loop) {
+    rlLOGI(TAG, "Testing_Secp256K1Exec %d/%d %d", loop, kTestLoop, error);
 
-    if (0 != memcmp(V1, V2, 32)) {
-      ++error;
-      rlLOGE(TAG, "0 != memcmp(V1, V2, 32)");
-    } else {
-      rlLOGXI(TAG, V1, 32, "ComputeSecretSecp256k1 OK");
-    }
+    for (int i = 0; i < 2; ++i) {
+      if (rockey.GenerateKeyPairSecp256k1(X1, Y1, K1) < 0) {
+        ++error;
+        rlLOGE(TAG, "GenerateKeyPairSecp256k1..1 Error ...");
+      }
+      if (rockey.ComputePubkeySecp256k1(X2, Y2, K1) < 0 || 0 != memcmp(X1, X2, 32) || 0 != memcmp(Y1, Y2, 32)) {
+        ++error;
+        rlLOGE(TAG, "ComputePubkeySecp256k1 ..1 Error ...");
+      } else {
+        rlLOGXI(TAG, X1, 32, "Secp256k1.X");
+        rlLOGXI(TAG, Y1, 32, "Secp256k1.Y");
+      }
+      if (rockey.GenerateKeyPairSecp256k1(X2, Y2, K2) < 0) {
+        ++error;
+        rlLOGE(TAG, "GenerateKeyPairSecp256k1..2 Error ...");
+      }
+      if (rockey.CheckPointOnCurveSecp256k1(X1, Y1) < 0) {
+        ++error;
+        rlLOGE(TAG, "CheckPointOnCurveSecp256k1 Error ...");
+      }
+      X1[0] ^= 1;
+      if (rockey.CheckPointOnCurveSecp256k1(X1, Y1) >= 0) {
+        ++error;
+        rlLOGE(TAG, "CheckPointOnCurveSecp256k1 Error ...");
+      }
+      X1[0] ^= 1;
 
-    uint8_t H[32], R[32], S[32];
-    if (rockey.RandBytes(H, 32) < 0) {
-      ++error;
-      rlLOGE(TAG, "RandBytes 32 Error ...");
-    }
+      if (rockey.ComputeSecretSecp256k1(V1, X1, Y1, K2) < 0) {
+        ++error;
+        rlLOGE(TAG, "ComputeSecretSecp256k1 .. 1 Error ...");
+      }
+      if (rockey.ComputeSecretSecp256k1(V2, X2, Y2, K1) < 0) {
+        ++error;
+        rlLOGE(TAG, "ComputeSecretSecp256k1 .. 2 Error ...");
+      }
 
-    if (rockey.SignMessageSecp256k1(K1, H, R, S) < 0) {
-      ++error;
-      rlLOGE(TAG, "SignMessageSecp256k1 Error ...");
-    }
+      if (0 != memcmp(V1, V2, 32)) {
+        ++error;
+        rlLOGE(TAG, "0 != memcmp(V1, V2, 32)");
+      } else {
+        rlLOGXI(TAG, V1, 32, "ComputeSecretSecp256k1 OK");
+      }
 
-    R[0] ^= 1;
-    if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) >= 0) {
-      ++error;
-      rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
-    }
-    R[0] ^= 1;
+      uint8_t H[32], R[32], S[32];
+      if (rockey.RandBytes(H, 32) < 0) {
+        ++error;
+        rlLOGE(TAG, "RandBytes 32 Error ...");
+      }
 
-    H[0] ^= 1;
-    if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) >= 0) {
-      ++error;
-      rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
-    }
-    H[0] ^= 1;
+      if (rockey.SignMessageSecp256k1(K1, H, R, S) < 0) {
+        ++error;
+        rlLOGE(TAG, "SignMessageSecp256k1 Error ...");
+      }
 
-    if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) < 0) {
-      ++error;
-      rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+      R[0] ^= 1;
+      if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) >= 0) {
+        ++error;
+        rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+      }
+      R[0] ^= 1;
+
+      H[0] ^= 1;
+      if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) >= 0) {
+        ++error;
+        rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+      }
+      H[0] ^= 1;
+
+      if (rockey.VerifySignSecp256k1(X1, Y1, H, R, S) < 0) {
+        ++error;
+        rlLOGE(TAG, "VerifySignSecp256k1 ... 1 Error ...");
+      }
     }
   }
-
-
-
 
   return error;
 }
@@ -1149,76 +1156,87 @@ int Testing_Secp256K1Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
   uint32_t state[16];
-  rockey.RandBytes(reinterpret_cast<uint8_t*>(state), sizeof(state));
 
-  for (int i = 0; i < 10; ++i) {
-    uint8_t sm3[32], verify[32];
-    uint8_t key[64];
-    uint8_t buffer[512 + 16];
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 100000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
+
+  for (int loop = 0; loop < kTestLoop; ++loop) {
+    rlLOGI(TAG, "Testing_ChaChaPoly %d/%d %d", loop, kTestLoop, error);
+
+    rockey.RandBytes(reinterpret_cast<uint8_t*>(state), sizeof(state));
+
+    for (int i = 0; i < 10; ++i) {
+      uint8_t sm3[32], verify[32];
+      uint8_t key[64];
+      uint8_t buffer[512 + 16];
 
 #if !defined(X_BUILD_native)
-    uint8_t check_[1024];
+      uint8_t check_[1024];
 #endif /* X_BUILD_native */
 
-    rockey.RandBytes(key, sizeof(key));
-    for (int off = 0; off < 512; off += 64, ++state[12])
-      rlCryptoChaCha20Block(state, &buffer[off]);
+      rockey.RandBytes(key, sizeof(key));
+      for (int off = 0; off < 512; off += 64, ++state[12])
+        rlCryptoChaCha20Block(state, &buffer[off]);
 
-    size_t size = 1 + state[0] % 512, size_origin = size;
-    if (rockey.SM3(buffer, size, sm3) < 0)
-      ++error;
+      size_t size = 1 + state[0] % 512, size_origin = size;
+      if (rockey.SM3(buffer, size, sm3) < 0)
+        ++error;
 
 #if !defined(X_BUILD_native)
-    {
-      int out_size = 1024, mac_size = 16;
-      EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-      DONGLE_VERIFY(ctx && EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
-      DONGLE_VERIFY(EVP_EncryptUpdate(ctx, check_, &out_size, buffer, (int)size) == 1);
-      DONGLE_VERIFY((int)size == out_size);
-      DONGLE_VERIFY(EVP_EncryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1);
-      DONGLE_VERIFY(mac_size == 0);
-      mac_size = 16;
-      DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, check_ + out_size) == 1);
-      EVP_CIPHER_CTX_free(ctx);
-    }
+      {
+        int out_size = 1024, mac_size = 16;
+        EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+        DONGLE_VERIFY(ctx && EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
+        DONGLE_VERIFY(EVP_EncryptUpdate(ctx, check_, &out_size, buffer, (int)size) == 1);
+        DONGLE_VERIFY((int)size == out_size);
+        DONGLE_VERIFY(EVP_EncryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1);
+        DONGLE_VERIFY(mac_size == 0);
+        mac_size = 16;
+        DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, check_ + out_size) == 1);
+        EVP_CIPHER_CTX_free(ctx);
+      }
 #endif /* X_BUILD_native */
 
-    if (rockey.CHACHAPOLY_Seal(key, key + 32, buffer, &size) < 0)
-      ++error;
+      if (rockey.CHACHAPOLY_Seal(key, key + 32, buffer, &size) < 0)
+        ++error;
 
-    if (size != size_origin + 16)
-      ++error;
+      if (size != size_origin + 16)
+        ++error;
 
 #if !defined(X_BUILD_native)
-    {
-      int out_size = 1024, mac_size = 16;
+      {
+        int out_size = 1024, mac_size = 16;
+        DONGLE_VERIFY(0 == memcmp(buffer, check_, size));
+
+        EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+        DONGLE_VERIFY(ctx && EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
+        DONGLE_VERIFY(EVP_DecryptUpdate(ctx, check_, &out_size, buffer, (int)size - 16) == 1);
+        DONGLE_VERIFY(out_size == (int)size - 16);
+        DONGLE_VERIFY(EVP_DecryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1 && mac_size == 0);
+        DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, check_ + out_size) == 1);
+        EVP_CIPHER_CTX_free(ctx);
+      }
+#endif /* X_BUILD_native */
+
+      if (rockey.CHACHAPOLY_Open(key, key + 32, buffer, &size) < 0)
+        ++error;
+
+      if (size_origin != size)
+        ++error;
+
+#if !defined(X_BUILD_native)
       DONGLE_VERIFY(0 == memcmp(buffer, check_, size));
+#endif /* X_BUILD_native */
 
-      EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
-      DONGLE_VERIFY(ctx && EVP_DecryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
-      DONGLE_VERIFY(EVP_DecryptUpdate(ctx, check_, &out_size, buffer, (int)size - 16) == 1);
-      DONGLE_VERIFY(out_size == (int)size - 16);
-      DONGLE_VERIFY(EVP_DecryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1 && mac_size == 0);
-      DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_SET_TAG, 16, check_ + out_size) == 1);
-      EVP_CIPHER_CTX_free(ctx);
+      if (rockey.SM3(buffer, size, verify) < 0)
+        ++error;
+
+      if (0 != memcmp(sm3, verify, 32))
+        ++error;
     }
-#endif /* X_BUILD_native */
-
-    if (rockey.CHACHAPOLY_Open(key, key + 32, buffer, &size) < 0)
-      ++error;
-
-    if (size_origin != size)
-      ++error;
-
-#if !defined(X_BUILD_native)
-    DONGLE_VERIFY(0 == memcmp(buffer, check_, size));
-#endif /* X_BUILD_native */
-
-    if (rockey.SM3(buffer, size, verify) < 0)
-      ++error;
-
-    if (0 != memcmp(sm3, verify, 32))
-      ++error;
   }
 
   return error;
@@ -1244,7 +1262,16 @@ int Testing_Sha512Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 
 int Testing_Curve25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
-  for (int i = 0; i < 5; ++i) {
+
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 100000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 5;
+#endif /* __EMULATOR__ */
+
+ for (int i = 0; i < kTestLoop; ++i) {
+   rlLOGI(TAG, "Testing_Curve25519Test %d/%d %d", i, kTestLoop, error);
+
     uint8_t pub1[32], pub2[32], pkey1[32], pkey2[32], sec1[32], sec2[32];
     if (rockey.GenerateKeyPairCurve25519(pub1, pkey1) < 0) {
       Context->error_[0] = 0x1111;
@@ -1303,7 +1330,15 @@ int Testing_Curve25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) 
 int Testing_Ed25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
 
-  for (int i = 0; i < 2; ++i) {
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 10000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
+
+  for (int i = 0; i < kTestLoop; ++i) {
+    rlLOGI(TAG, "Testing_Ed25519Test %d/%d %d", i, kTestLoop, error);
+
     uint8_t pubkey[32], prikey[32], sign[64], message[64];
     if (rockey.GenerateKeyPairEd25519(ExtendBuf, pubkey, prikey) < 0)
       ++error;
@@ -1449,6 +1484,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   Dongle rockey;
 
 #endif  // __RockeyARM__
+
+  {
+    DONGLE_INFO dongle_info_;
+    result = rockey.GetDongleInfo(&dongle_info_);
+    rlLOGXI(TAG, &dongle_info_, sizeof(dongle_info_), "rockey.GetDongleInfo %d", result);
+  }
 
   result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
   rlLOGXI(TAG, Context->bytes, sizeof(Context->bytes), "rockey.RandBytes %d/%08x", result, rockey.GetLastError());

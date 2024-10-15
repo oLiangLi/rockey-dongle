@@ -80,7 +80,6 @@ rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state) {
 #endif /* */
 
 class DongleHandle {
-  friend class Dongle;
 public:
   DongleHandle(const DongleHandle&) = delete;
   DongleHandle& operator=(const DongleHandle&) = delete;
@@ -98,6 +97,11 @@ public:
     uint8_t master_prikey_encrypt_[64]; // Ed25519[32] + X25519[32]
     uint8_t sign_[64];
   };
+
+  int GetDongleInfo(DONGLE_INFO* info) {
+    *info = sb_.public_.dongle_info_;
+    return 0;
+  }
 
 public:
   static constexpr uint32_t rLANG_DONGLE_MAGIC = rLANG_DECLARE_MAGIC_Xs("DONGL");
@@ -633,8 +637,7 @@ int Dongle::GetDongleInfo(DONGLE_INFO* info) {
   if (!handle_)
     return DONGLE_CHECK(-EBADF);
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
-  *info = thiz->sb_.public_.dongle_info_;
-  return 0;
+  return thiz->GetDongleInfo(info);
 }
 
 int Dongle::GetPINState(PERMISSION* state) {
@@ -915,9 +918,9 @@ int Dongle::CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE typ
 }
 
 int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) {
-  if (id <= 0 || id >= 0xFFFF)
+  if (id <= 0 || id >= 0xFFFF || size != 16)
     return last_error_ = -EINVAL;
-  if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4 || size != 16)
+  if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
     return last_error_ = -EINVAL;
   if (!handle_)
     return DONGLE_CHECK(-EBADF);
