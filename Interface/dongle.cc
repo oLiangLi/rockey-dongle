@@ -34,10 +34,8 @@ rLANGEXPORT int rLANGAPI SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t
   DONGLE_VERIFY(cipher_len > 96 && cipher_len <= 1024);
 
   rLANG_SM2_Ciphertext_st* ciphertext = rLANG_SM2_Ciphertext_new();
-  ciphertext->C1x = BN_bin2bn(&text_cipher[0], 32, nullptr);
-  ciphertext->C1y = BN_bin2bn(&text_cipher[32], 32, nullptr);
-  ciphertext->C3 = ASN1_OCTET_STRING_new();
-  ciphertext->C2 = ASN1_OCTET_STRING_new();
+  BN_bin2bn(&text_cipher[0], 32, ciphertext->C1x);
+  BN_bin2bn(&text_cipher[32], 32, ciphertext->C1y);
 
   DONGLE_VERIFY(ciphertext->C1x && ciphertext->C1y && ciphertext->C3 && ciphertext->C2);
   DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C3, &text_cipher[64], 32) > 0);

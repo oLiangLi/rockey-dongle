@@ -54,7 +54,6 @@ enum class kAdminTestingIndex : int {
 
   SelectProductId,
 
-  
 
 
 };
@@ -68,7 +67,7 @@ struct Context_t {
 
   uint8_t hash_[64];
   uint32_t ts_[8];
-  
+
   uint32_t seed_[8];
   uint32_t error_[8];
 
@@ -173,7 +172,7 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
     rlLOGE(TAG, "Can't open %s for append, errno %d", kWorldMagicFile, errno);
     exit(42);
   }
-  
+
   FILE* fp = fopen(filename, "a");
   if (!fp) {
     rlLOGE(TAG, "Can't open %s for append, errno %d", filename, errno);
@@ -209,7 +208,7 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
 
     if (write_size == len)
       return 0;
-     
+
     rlLOGW(TAG, "WriteLog Error %zd => %zd", len, write_size);
     return -EFAULT;
   };
@@ -496,225 +495,234 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
         DONGLE_VERIFY(szOut == sizeof(input) && 0 == memcmp(input, output, sizeof(input)));
       }
     }
-  }  
+  }
 
   return error;
 }
 
 int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
-  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8100) < 0) {
-    ++error;
-    Context->error_[0] = rockey.GetLastError();
-  }
 
-  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8101) < 0) {
-    ++error;
-    Context->error_[1] = rockey.GetLastError();
-  }
-
-  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 0x8100) < 0) {
-    ++error;
-    Context->error_[2] = rockey.GetLastError();
-  }
-
-  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 0x8101) < 0) {
-    ++error;
-    Context->error_[3] = rockey.GetLastError();
-  }
-
-  uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
-  DWORD tick0 = 0, tick1 = 0, tick2 = 0, tick3 = 0, tick4 = 0, tick5 = 0;
-  rockey.GetTickCount(&tick0);
-
-  for (int i = 0; i < 5; ++i) {
-    if (rockey.GenerateSM2(0x8100, X, Y, K)) {
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 1000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
+  for(int loop = 0; loop < kTestLoop; ++loop) {
+    rlLOGI(TAG, "Testing_SM2Exec %d/%d => %d", loop, kTestLoop, error);
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8100) < 0) {
       ++error;
-      Context->error_[4] = rockey.GetLastError();
-      return 111;
-    } else {
-      rlLOGXI(TAG, X, 32, "SM2.X");
-      rlLOGXI(TAG, Y, 32, "SM2.Y");
-      rlLOGXI(TAG, K, 32, "SM2.K");
+      Context->error_[0] = rockey.GetLastError();
     }
 
-    rockey.GetTickCount(&tick1);
-    if (rockey.CheckPointOnCurveSM2(X, Y) < 0) {
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8101) < 0) {
       ++error;
-      rlLOGE(TAG, "rockey.CheckPointOnCurveSM2 Error ...");    
+      Context->error_[1] = rockey.GetLastError();
     }
-    rockey.GetTickCount(&tick2);
-    X[0] ^= 1;
-    if (rockey.CheckPointOnCurveSM2(X, Y) >= 0) {
+
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 0x8100) < 0) {
       ++error;
-      rlLOGE(TAG, "rockey.CheckPointOnCurveSM2 Error ...");    
+      Context->error_[2] = rockey.GetLastError();
     }
-    X[0] ^= 1;
-    rockey.GetTickCount(&tick3);
-    rockey.DecompressPointSM2(S, X, Y[31] % 2 == 1);
-    rockey.GetTickCount(&tick4);
 
-    Context->ts_[0] = tick1;
-    Context->ts_[1] = tick2;
-    Context->ts_[2] = tick3;
-    Context->ts_[3] = tick4;
-
-    if (0 != memcmp(Y, S, 32)) {
-      rlLOGXW(TAG, Y, 32, "DecompressPointSM2 Error!");
-      rlLOGXW(TAG, S, 32, "DecompressPointSM2 Error!");
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 0x8101) < 0) {
       ++error;
+      Context->error_[3] = rockey.GetLastError();
     }
-  }
-  rockey.GetTickCount(&tick5);
-  Context->ts_[5] = tick5 - tick0;
-  Context->ts_[6] = tick0;
-  Context->ts_[7] = tick5;
 
-  for (int i = 0; i < 2; ++i) {
+    uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
+    DWORD tick0 = 0, tick1 = 0, tick2 = 0, tick3 = 0, tick4 = 0, tick5 = 0;
+    rockey.GetTickCount(&tick0);
+
+    for (int i = 0; i < 5; ++i) {
+      if (rockey.GenerateSM2(0x8100, X, Y, K)) {
+        ++error;
+        Context->error_[4] = rockey.GetLastError();
+        return 111;
+      } else {
+        rlLOGXI(TAG, X, 32, "SM2.X");
+        rlLOGXI(TAG, Y, 32, "SM2.Y");
+        rlLOGXI(TAG, K, 32, "SM2.K");
+      }
+
+      rockey.GetTickCount(&tick1);
+      if (rockey.CheckPointOnCurveSM2(X, Y) < 0) {
+        ++error;
+        rlLOGE(TAG, "rockey.CheckPointOnCurveSM2 Error ...");
+      }
+      rockey.GetTickCount(&tick2);
+      X[0] ^= 1;
+      if (rockey.CheckPointOnCurveSM2(X, Y) >= 0) {
+        ++error;
+        rlLOGE(TAG, "rockey.CheckPointOnCurveSM2 Error ...");
+      }
+      X[0] ^= 1;
+      rockey.GetTickCount(&tick3);
+      rockey.DecompressPointSM2(S, X, Y[31] % 2 == 1);
+      rockey.GetTickCount(&tick4);
+
+      Context->ts_[0] = tick1;
+      Context->ts_[1] = tick2;
+      Context->ts_[2] = tick3;
+      Context->ts_[3] = tick4;
+
+      if (0 != memcmp(Y, S, 32)) {
+        rlLOGXW(TAG, Y, 32, "DecompressPointSM2 Error!");
+        rlLOGXW(TAG, S, 32, "DecompressPointSM2 Error!");
+        ++error;
+      }
+    }
+    rockey.GetTickCount(&tick5);
+    Context->ts_[5] = tick5 - tick0;
+    Context->ts_[6] = tick0;
+    Context->ts_[7] = tick5;
+
+    for (int i = 0; i < 2; ++i) {
+      rockey.RandBytes(H, 32);
+      if (rockey.SM2Sign(0x8100, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 ||
+          rockey.SM2Sign(K, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0) {
+        ++error;
+        Context->error_[5] = rockey.GetLastError();
+      }
+    }
+
+    for (int i = 0; i < 2; ++i) {
+      if (rockey.ImportSM2(0x8101, K) < 0) {
+        ++error;
+        Context->error_[6] = rockey.GetLastError();
+      }
+    }
+
+    for (int i = 0; i < 2; ++i) {
+      if (rockey.SM2Sign(0x8101, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 ||
+          rockey.SM2Sign(K, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0) {
+        ++error;
+        Context->error_[7] = rockey.GetLastError();
+      }
+    }
+
+#if 1
+    for (int i = 0; i < 2; ++i) {
+      S[0] ^= 1;
+      if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+        ++error;
+      S[0] ^= 1;
+    }
+#endif
+
+    for (int i = 0; i < 2; ++i) {
+#if 1
+      X[0] ^= 1;
+      if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+        ++error;
+      X[0] ^= 1;
+
+      H[0] ^= 1;
+      if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+        ++error;
+      H[0] ^= 1;
+
+      DONGLE_VERIFY(rockey.SM2Verify(X, Y, H, R, S) >= 0);
+#endif
+    }
+
+    uint8_t VV[32];
+    size_t szVV = 32;
+    uint8_t sm2_cipher_[128];
+    memset(sm2_cipher_, 0xEE, sizeof(sm2_cipher_));
+
+#if 1
+    for (int i = 0; i < 3; ++i) {
+      X[0] ^= 1;
+      if (rockey.CheckPointOnCurveSM2(X, Y) >= 0)
+        ++error;
+      X[0] ^= 1;
+    }
+#endif
+
+    uint8_t CK[32];
     rockey.RandBytes(H, 32);
-    if (rockey.SM2Sign(0x8100, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
-        rockey.SM2Verify(X, Y, H, R, S) < 0) {
+    if (rockey.SM2Encrypt(X, Y, H, 16, sm2_cipher_) < 0) {
       ++error;
-      Context->error_[5] = rockey.GetLastError();
+      rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
+    } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
+      ++error;
+      rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
     }
-  }
 
-  for (int i = 0; i < 2; ++i) {
-    if (rockey.ImportSM2(0x8101, K) < 0) {
+    if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
       ++error;
-      Context->error_[6] = rockey.GetLastError();
+      rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
     }
-  }
 
-  for (int i = 0; i < 2; ++i) {
-    if (rockey.SM2Sign(0x8101, H, R, S) < 0 || rockey.SM2Verify(X, Y, H, R, S) < 0 || rockey.SM2Sign(K, H, R, S) < 0 ||
-        rockey.SM2Verify(X, Y, H, R, S) < 0) {
+    szVV = 32;
+    if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 16, VV, &szVV) < 0 || szVV != 16 || 0 != memcmp(VV, H, 16)) {
       ++error;
-      Context->error_[7] = rockey.GetLastError();
+      rlLOGW(TAG, "sm2_cipher_.decrypt.16 error");
     }
-  }
+
+    rockey.RandBytes(H, 32);
+    if (rockey.SM2Encrypt(X, Y, H, 10, sm2_cipher_) < 0) {
+      ++error;
+      rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
+    } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
+      ++error;
+      rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
+    }
+
+    if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
+      ++error;
+      rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
+    }
+
+    szVV = 32;
+    if (rockey.SM2Decrypt(K, sm2_cipher_, 96 + 10, VV, &szVV) < 0 || szVV != 10 || 0 != memcmp(VV, H, 10)) {
+      ++error;
+      rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.decrypt.16");
+    }
+
+    if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) < 0) {
+      ++error;
+      rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_");
+    } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
+      ++error;
+      rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
+    }
+
+    if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
+      ++error;
+      rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
+    }
+
+    szVV = 32;
+    Context->result_[3] = rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV);
+    if (Context->result_[3] < 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
+      ++error;
+    }
 
 #if 1
-  for (int i = 0; i < 2; ++i) {
-    S[0] ^= 1;
-    if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
-      ++error;
-    S[0] ^= 1;
-  }
+    K[0] ^= 1;
+    DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
+    K[0] ^= 1;
+
+    sm2_cipher_[0] ^= 1;
+    DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
+    sm2_cipher_[0] ^= 1;
+
+    sm2_cipher_[64] ^= 1;
+    DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
+    sm2_cipher_[64] ^= 1;
+
+    DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) >= 0);
 #endif
 
-  for (int i = 0; i < 2; ++i) {
-#if 1
-    X[0] ^= 1;
-    if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
+    memset(VV, 0, sizeof(VV));
+    if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 32, VV, &szVV) < 0) {
       ++error;
-    X[0] ^= 1;
-
-    H[0] ^= 1;
-    if (rockey.SM2Verify(X, Y, H, R, S) >= 0)
-      ++error;
-    H[0] ^= 1;
-
-    DONGLE_VERIFY(rockey.SM2Verify(X, Y, H, R, S) >= 0);
-#endif
-  }
-
-  uint8_t VV[32];
-  size_t szVV = 32;
-  uint8_t sm2_cipher_[128];
-  memset(sm2_cipher_, 0xEE, sizeof(sm2_cipher_));
-
-#if 1
-  for (int i = 0; i < 3; ++i) {
-    X[0] ^= 1;
-    if (rockey.CheckPointOnCurveSM2(X, Y) >= 0)
-      ++error;
-    X[0] ^= 1;
-  }
-#endif
-
-  uint8_t CK[32];
-  rockey.RandBytes(H, 32);
-  if (rockey.SM2Encrypt(X, Y, H, 16, sm2_cipher_) < 0) {
-    ++error;
-    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
-  } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
-    ++error;
-    rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
-  }
-
-  if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
-    ++error;
-    rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
-  }
-
-  szVV = 32;
-  if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 16, VV, &szVV) < 0 || szVV != 16 || 0 != memcmp(VV, H, 16)) {
-    ++error;
-    rlLOGW(TAG, "sm2_cipher_.decrypt.16 error");
-  }
-
-  rockey.RandBytes(H, 32);
-  if (rockey.SM2Encrypt(X, Y, H, 10, sm2_cipher_) < 0) {
-    ++error;
-    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.encrypt.16");
-  } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
-    ++error;
-    rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
-  }
-
-  if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
-    ++error;
-    rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
-  }
-
-  szVV = 32;
-  if (rockey.SM2Decrypt(K, sm2_cipher_, 96 + 10, VV, &szVV) < 0 || szVV != 10 || 0 != memcmp(VV, H, 10)) {
-    ++error;
-    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_.decrypt.16");
-  }
-
-  if (rockey.SM2Encrypt(X, Y, H, 32, sm2_cipher_) < 0) {
-    ++error;
-    rlLOGXI(TAG, sm2_cipher_, sizeof(sm2_cipher_), "sm2_cipher_");
-  } else if (rockey.CheckPointOnCurveSM2(sm2_cipher_, sm2_cipher_ + 32) < 0) {
-    ++error;
-    rlLOGI(TAG, "CheckPointOnCurveSM2.sm2.cipher Error ....");
-  }
-
-  if (rockey.DecompressPointSM2(CK, sm2_cipher_, sm2_cipher_[63] % 2) < 0 || 0 != memcmp(CK, sm2_cipher_ + 32, 32)) {
-    ++error;
-    rlLOGI(TAG, "DecompressPointSM2.sm2.cipher Error ....");
-  }
-
-  szVV = 32;
-  Context->result_[3] = rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV);
-  if (Context->result_[3] < 0 || szVV != 32 || 0 != memcmp(VV, H, 32)) {
-    ++error;
-  }
-
-#if 1
-  K[0] ^= 1;
-  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
-  K[0] ^= 1;
-
-  sm2_cipher_[0] ^= 1;
-  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
-  sm2_cipher_[0] ^= 1;
-
-  sm2_cipher_[64] ^= 1;
-  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) < 0);
-  sm2_cipher_[64] ^= 1;
-
-  DONGLE_VERIFY(rockey.SM2Decrypt(K, sm2_cipher_, 96 + 32, VV, &szVV) >= 0);
-#endif
-
-  memset(VV, 0, sizeof(VV));
-  if (rockey.SM2Decrypt(0x8101, sm2_cipher_, 96 + 32, VV, &szVV) < 0) {
-    ++error;
-    rlLOGW(TAG, "SM2Decrypt 0x8101 Error %08X", Context->result_[2] = rockey.GetLastError());
-  } else {
-    DONGLE_VERIFY(szVV == 32 && 0 == memcmp(VV, H, 32));
+      rlLOGW(TAG, "SM2Decrypt 0x8101 Error %08X", Context->result_[2] = rockey.GetLastError());
+    } else {
+      DONGLE_VERIFY(szVV == 32 && 0 == memcmp(VV, H, 32));
+    }
   }
 
   return error;
@@ -722,158 +730,168 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 
 int Testing_P256Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
-  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x100) < 0) {
-    ++error;
-    Context->error_[0] = rockey.GetLastError();
-  }
 
-  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x101) < 0) {
-    ++error;
-    Context->error_[1] = rockey.GetLastError();
-  }
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 1000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
 
-  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 0x100) < 0) {
-    ++error;
-    Context->error_[2] = rockey.GetLastError();
-  }
+  for (int loop = 0; loop < kTestLoop; ++loop) {
+    rlLOGI(TAG, "Testing_SM2Exec %d/%d => %d", loop, kTestLoop, error);
 
-  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 0x101) < 0) {
-    ++error;
-    Context->error_[3] = rockey.GetLastError();
-  }
-
-  uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
-  for (int i = 0; i < 2; ++i) {
-    if (rockey.GenerateP256(0x100, X, Y, K)) {
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x100) < 0) {
       ++error;
-      Context->error_[4] = rockey.GetLastError();
-      return 111;
-    } else {
-      rlLOGXI(TAG, X, 32, "P256.X");
-      rlLOGXI(TAG, Y, 32, "P256.Y");
-      rlLOGXI(TAG, K, 32, "P256.K");
+      Context->error_[0] = rockey.GetLastError();
     }
 
-    if (rockey.ComputePubkeyPrime256v1(R, S, K) < 0 || 0 != memcmp(X, R, 32) || 0 != memcmp(Y, S, 32)) {
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, 0x101) < 0) {
       ++error;
-      rlLOGE(TAG, "ComputePubkeyPrime256v1 Error ...");
-    } else {
-      rlLOGXI(TAG, R, 32, "P256.X");
-      rlLOGXI(TAG, S, 32, "P256.Y");
+      Context->error_[1] = rockey.GetLastError();
     }
 
-    if (rockey.CheckPointOnCurvePrime256v1(X, Y) < 0) {
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 0x100) < 0) {
       ++error;
-      rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
+      Context->error_[2] = rockey.GetLastError();
     }
 
-    X[0] ^= 1;
-    if (rockey.CheckPointOnCurvePrime256v1(X, Y) >= 0) {
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 0x101) < 0) {
       ++error;
-      rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
+      Context->error_[3] = rockey.GetLastError();
     }
-    X[0] ^= 1;
 
-    uint8_t V[32];
-    if (rockey.DecompressPointPrime256v1(V, X, Y[31] % 2 != 0) < 0 || 0 != memcmp(V, Y, 32)) {
-      ++error;
-      rlLOGXE(TAG, V, 32, "DecompressPointPrime256v1 Error ...");
+    uint8_t X[32], Y[32], K[32], H[32], R[32], S[32];
+    for (int i = 0; i < 2; ++i) {
+      if (rockey.GenerateP256(0x100, X, Y, K)) {
+        ++error;
+        Context->error_[4] = rockey.GetLastError();
+        return 111;
+      } else {
+        rlLOGXI(TAG, X, 32, "P256.X");
+        rlLOGXI(TAG, Y, 32, "P256.Y");
+        rlLOGXI(TAG, K, 32, "P256.K");
+      }
+
+      if (rockey.ComputePubkeyPrime256v1(R, S, K) < 0 || 0 != memcmp(X, R, 32) || 0 != memcmp(Y, S, 32)) {
+        ++error;
+        rlLOGE(TAG, "ComputePubkeyPrime256v1 Error ...");
+      } else {
+        rlLOGXI(TAG, R, 32, "P256.X");
+        rlLOGXI(TAG, S, 32, "P256.Y");
+      }
+
+      if (rockey.CheckPointOnCurvePrime256v1(X, Y) < 0) {
+        ++error;
+        rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
+      }
+
+      X[0] ^= 1;
+      if (rockey.CheckPointOnCurvePrime256v1(X, Y) >= 0) {
+        ++error;
+        rlLOGE(TAG, "CheckPointOnCurvePrime256v1 Error ...");
+      }
+      X[0] ^= 1;
+
+      uint8_t V[32];
+      if (rockey.DecompressPointPrime256v1(V, X, Y[31] % 2 != 0) < 0 || 0 != memcmp(V, Y, 32)) {
+        ++error;
+        rlLOGXE(TAG, V, 32, "DecompressPointPrime256v1 Error ...");
+      }
+
+      rockey.RandBytes(H, 32);
+      if (rockey.SignMessagePrime256v1(K, H, R, S) < 0) {
+        ++error;
+        rlLOGE(TAG, "SignMessagePrime256v1 Error ...");
+      }
+
+      if (rockey.P256Verify(X, Y, H, R, S) < 0) {
+        ++error;
+        rlLOGE(TAG, "SignMessagePrime256v1/P256Verify Error ...");
+      }
+
+      if (rockey.VerifySignPrime256v1(X, Y, H, R, S) < 0) {
+        ++error;
+        rlLOGE(TAG, "VerifySignPrime256v1 Error ...");
+      }
+
+      R[0] ^= 1;
+      if (rockey.VerifySignPrime256v1(X, Y, H, R, S) >= 0) {
+        ++error;
+        rlLOGE(TAG, "VerifySignPrime256v1 Error ...");
+      }
+      R[0] ^= 1;
+
+      uint8_t K2[32], X2[32], Y2[32];
+      if (rockey.GenerateKeyPairPrime256v1(X2, Y2, K2) < 0) {
+        ++error;
+        rlLOGE(TAG, "GenerateKeyPairPrime256v1 Error ...");
+      }
+
+      uint8_t SECRET1[32], SECRET2[32];
+      if (rockey.ComputeSecretPrime256v1(SECRET1, X, Y, K2) < 0) {
+        ++error;
+        rlLOGE(TAG, "ComputeSecretPrime256v1 Error ...");
+      }
+
+      if (rockey.ComputeSecretPrime256v1(SECRET2, X2, Y2, K) < 0) {
+        ++error;
+        rlLOGE(TAG, "ComputeSecretPrime256v1 Error ...");
+      }
+
+      if (0 != memcmp(SECRET1, SECRET2, 32)) {
+        ++error;
+        rlLOGE(TAG, "0 != memcmp(SECRET1, SECRET2, 32)");
+        rlLOGXE(TAG, SECRET1, 32, "SECRET1");
+        rlLOGXE(TAG, SECRET2, 32, "SECRET2");
+      } else {
+        rlLOGXI(TAG, SECRET1, 32, "ComputeSecretPrime256v1 OK");
+      }
     }
 
     rockey.RandBytes(H, 32);
-    if (rockey.SignMessagePrime256v1(K, H, R, S) < 0) {
+    if (rockey.P256Sign(0x100, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 ||
+        rockey.P256Sign(K, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0) {
       ++error;
-      rlLOGE(TAG, "SignMessagePrime256v1 Error ...");
+      Context->error_[5] = rockey.GetLastError();
     }
 
-    if (rockey.P256Verify(X, Y, H, R, S) < 0) {
+    if (rockey.GenerateKeyPairPrime256v1(X, Y, K) < 0) {
       ++error;
-      rlLOGE(TAG, "SignMessagePrime256v1/P256Verify Error ...");
+      rlLOGE(TAG, "GenerateKeyPairPrime256v1 ... 2 Error ...");
     }
 
-    if (rockey.VerifySignPrime256v1(X, Y, H, R, S) < 0) {
+    if (rockey.ImportP256(0x101, K) < 0) {
       ++error;
-      rlLOGE(TAG, "VerifySignPrime256v1 Error ...");
+      Context->error_[6] = rockey.GetLastError();
     }
 
-    R[0] ^= 1;
-    if (rockey.VerifySignPrime256v1(X, Y, H, R, S) >= 0) {
+    if (rockey.P256Sign(0x101, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 ||
+        rockey.P256Sign(K, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0) {
       ++error;
-      rlLOGE(TAG, "VerifySignPrime256v1 Error ...");
+      Context->error_[7] = rockey.GetLastError();
     }
-    R[0] ^= 1;
-
-    uint8_t K2[32], X2[32], Y2[32];
-    if (rockey.GenerateKeyPairPrime256v1(X2, Y2, K2) < 0) {
-      ++error;
-      rlLOGE(TAG, "GenerateKeyPairPrime256v1 Error ...");
-    }
-
-    uint8_t SECRET1[32], SECRET2[32];
-    if (rockey.ComputeSecretPrime256v1(SECRET1, X, Y, K2) < 0) {
-      ++error;
-      rlLOGE(TAG, "ComputeSecretPrime256v1 Error ...");
-    }
-
-    if (rockey.ComputeSecretPrime256v1(SECRET2, X2, Y2, K) < 0) {
-      ++error;
-      rlLOGE(TAG, "ComputeSecretPrime256v1 Error ...");
-    }
-
-    if (0 != memcmp(SECRET1, SECRET2, 32)) {
-      ++error;
-      rlLOGE(TAG, "0 != memcmp(SECRET1, SECRET2, 32)");
-      rlLOGXE(TAG, SECRET1, 32, "SECRET1");
-      rlLOGXE(TAG, SECRET2, 32, "SECRET2");
-    } else {
-      rlLOGXI(TAG, SECRET1, 32, "ComputeSecretPrime256v1 OK");
-    }
-  }
-
-  rockey.RandBytes(H, 32);
-  if (rockey.P256Sign(0x100, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 || rockey.P256Sign(K, H, R, S) < 0 ||
-      rockey.P256Verify(X, Y, H, R, S) < 0) {
-    ++error;
-    Context->error_[5] = rockey.GetLastError();
-  }
-
-  if (rockey.GenerateKeyPairPrime256v1(X, Y, K) < 0) {
-    ++error;
-    rlLOGE(TAG, "GenerateKeyPairPrime256v1 ... 2 Error ...");
-  }
-
-  if (rockey.ImportP256(0x101, K) < 0) {
-    ++error;
-    Context->error_[6] = rockey.GetLastError();
-  }
-
-  if (rockey.P256Sign(0x101, H, R, S) < 0 || rockey.P256Verify(X, Y, H, R, S) < 0 || rockey.P256Sign(K, H, R, S) < 0 ||
-      rockey.P256Verify(X, Y, H, R, S) < 0) {
-    ++error;
-    Context->error_[7] = rockey.GetLastError();
-  }
 
 #if 1
-  S[0] ^= 1;
-  if (rockey.P256Verify(X, Y, H, R, S) >= 0)
-    ++error;
-  S[0] ^= 1;
+    S[0] ^= 1;
+    if (rockey.P256Verify(X, Y, H, R, S) >= 0)
+      ++error;
+    S[0] ^= 1;
 
-  H[0] ^= 1;
-  if (rockey.P256Verify(X, Y, H, R, S) >= 0)
-    ++error;
-  H[0] ^= 1;
+    H[0] ^= 1;
+    if (rockey.P256Verify(X, Y, H, R, S) >= 0)
+      ++error;
+    H[0] ^= 1;
 #endif
 
 #if 1
-  X[0] ^= 1;
-  if (rockey.P256Verify(X, Y, H, R, S) >= 0)
-    ++error;
-  X[0] ^= 1;
+    X[0] ^= 1;
+    if (rockey.P256Verify(X, Y, H, R, S) >= 0)
+      ++error;
+    X[0] ^= 1;
 
-
-  DONGLE_VERIFY(rockey.P256Verify(X, Y, H, R, S) >= 0);
+    DONGLE_VERIFY(rockey.P256Verify(X, Y, H, R, S) >= 0);
 #endif
+  }
 
   return error;
 }
@@ -980,7 +998,6 @@ int Testing_KeyExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   memcpy(verify, cipher, sizeof(cipher));
   if (rockey.SM4ECB(9, verify, sizeof(verify), false) < 0)
     ++error;
-  
   return error;
 }
 
@@ -1137,7 +1154,6 @@ int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
       DONGLE_VERIFY(ctx && EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, key + 32) == 1);
       DONGLE_VERIFY(EVP_EncryptUpdate(ctx, check_, &out_size, buffer, (int)size) == 1);
       DONGLE_VERIFY((int)size == out_size);
-      
       DONGLE_VERIFY(EVP_EncryptFinal_ex(ctx, check_ + out_size, &mac_size) == 1);
       DONGLE_VERIFY(mac_size == 0);
       mac_size = 16;
@@ -1154,7 +1170,7 @@ int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 
 #if !defined(X_BUILD_native)
     {
-      int out_size = 1024, mac_size = 16;      
+      int out_size = 1024, mac_size = 16;
       DONGLE_VERIFY(0 == memcmp(buffer, check_, size));
 
       EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
@@ -1227,17 +1243,17 @@ int Testing_Curve25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) 
     if (rockey.ComputePubkeyCurve25519(pub2, pkey2) < 0) {
       Context->error_[3] = 0x4444;
       ++error;
-    }    
+    }
 
     if (rockey.ComputeSecretCurve25519(sec1, pkey1, pub2) < 0) {
       Context->error_[4] = 0x5555;
       ++error;
-    }    
+    }
 
     if (rockey.ComputeSecretCurve25519(sec2, pkey2, pub1) < 0) {
       Context->error_[5] = 0x6666;
       ++error;
-    }    
+    }
 
     if (0 != memcmp(sec1, sec2, 32)) {
       Context->error_[6] = 0x7777;
@@ -1482,7 +1498,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   for (int i = 0; i < kSizeGuardBytes; ++i) {
     if (GuardBytes[i] != 0xCC)
-      result += 100;  
+      result += 100;
   }
 
 #if defined(__EMULATOR__)
