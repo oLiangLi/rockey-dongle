@@ -398,7 +398,9 @@ public:
  protected:
 #ifndef __RockeyARM__
   ROCKEY_HANDLE handle_{nullptr};
+#ifndef __EMULATOR__
   DONGLE_INFO dongle_info_{0};
+#endif /* __EMULATOR__  */
 #endif /* __RockeyARM__ */
 
   mutable DWORD last_error_ = 0;

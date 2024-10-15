@@ -900,104 +900,115 @@ int Testing_KeyExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
   uint8_t K[16], input[64], cipher[64], verify[64];
 
-  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kTDES, 8) < 0)
-    ++error;
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 10000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
 
-  if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM4, 9) < 0)
-    ++error;
+  for (int loop = 0; loop < kTestLoop; ++loop) {
+    rlLOGI(TAG, "Testing_KeyExec %d/%d %d", loop, kTestLoop, error);
 
-  if (rockey.CreateKeyFile(8, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kTDES) < 0)
-    ++error;
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kTDES, 8) < 0)
+      ++error;
 
-  if (rockey.CreateKeyFile(9, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kSM4) < 0)
-    ++error;
+    if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM4, 9) < 0)
+      ++error;
 
-  if (rockey.RandBytes(K, sizeof(K)) < 0)
-    ++error;
+    if (rockey.CreateKeyFile(8, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kTDES) < 0)
+      ++error;
 
-  if (rockey.RandBytes(input, sizeof(input)) < 0)
-    ++error;
+    if (rockey.CreateKeyFile(9, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kSM4) < 0)
+      ++error;
 
-  memcpy(cipher, input, sizeof(input));
-  if (rockey.SM4ECB(K, cipher, sizeof(input), true) < 0)
-    ++error;
+    if (rockey.RandBytes(K, sizeof(K)) < 0)
+      ++error;
 
-  memcpy(verify, cipher, sizeof(cipher));
-  if (rockey.SM4ECB(K, verify, sizeof(input), false) < 0)
-    ++error;
+    if (rockey.RandBytes(input, sizeof(input)) < 0)
+      ++error;
 
-  if (0 != memcmp(input, verify, sizeof(input)))
-    ++error;
+    memcpy(cipher, input, sizeof(input));
+    if (rockey.SM4ECB(K, cipher, sizeof(input), true) < 0)
+      ++error;
 
-  if (rockey.RandBytes(K, sizeof(K)) < 0)
-    ++error;
+    memcpy(verify, cipher, sizeof(cipher));
+    if (rockey.SM4ECB(K, verify, sizeof(input), false) < 0)
+      ++error;
 
-  if (rockey.RandBytes(input, sizeof(input)) < 0)
-    ++error;
+    if (0 != memcmp(input, verify, sizeof(input)))
+      ++error;
 
-  memcpy(cipher, input, sizeof(input));
-  if (rockey.TDESECB(K, cipher, sizeof(input), true) < 0)
-    ++error;
+    if (rockey.RandBytes(K, sizeof(K)) < 0)
+      ++error;
 
-  memcpy(verify, cipher, sizeof(cipher));
-  if (rockey.TDESECB(K, verify, sizeof(input), false) < 0)
-    ++error;
+    if (rockey.RandBytes(input, sizeof(input)) < 0)
+      ++error;
 
-  if (0 != memcmp(input, verify, sizeof(input)))
-    ++error;
+    memcpy(cipher, input, sizeof(input));
+    if (rockey.TDESECB(K, cipher, sizeof(input), true) < 0)
+      ++error;
 
-  if (rockey.RandBytes(K, sizeof(K)) < 0)
-    ++error;
+    memcpy(verify, cipher, sizeof(cipher));
+    if (rockey.TDESECB(K, verify, sizeof(input), false) < 0)
+      ++error;
 
-  if (rockey.WriteKeyFile(8, K, 16, SECRET_STORAGE_TYPE::kTDES) < 0)
-    ++error;
+    if (0 != memcmp(input, verify, sizeof(input)))
+      ++error;
 
-  if (rockey.RandBytes(input, sizeof(input)) < 0)
-    ++error;
+    if (rockey.RandBytes(K, sizeof(K)) < 0)
+      ++error;
 
-  memcpy(cipher, input, sizeof(input));
-  if (rockey.TDESECB(8, cipher, sizeof(cipher), true) < 0)
-    ++error;
+    if (rockey.WriteKeyFile(8, K, 16, SECRET_STORAGE_TYPE::kTDES) < 0)
+      ++error;
 
-  memcpy(verify, cipher, sizeof(input));
-  if (rockey.TDESECB(K, verify, sizeof(verify), false) < 0)
-    ++error;
+    if (rockey.RandBytes(input, sizeof(input)) < 0)
+      ++error;
 
-  memcpy(cipher, input, sizeof(input));
-  if (rockey.TDESECB(K, cipher, sizeof(cipher), true) < 0)
-    ++error;
+    memcpy(cipher, input, sizeof(input));
+    if (rockey.TDESECB(8, cipher, sizeof(cipher), true) < 0)
+      ++error;
 
-  memcpy(verify, cipher, sizeof(input));
-  if (rockey.TDESECB(8, verify, sizeof(verify), false) < 0)
-    ++error;
+    memcpy(verify, cipher, sizeof(input));
+    if (rockey.TDESECB(K, verify, sizeof(verify), false) < 0)
+      ++error;
 
-  if (0 != memcmp(input, verify, sizeof(input)))
-    ++error;
+    memcpy(cipher, input, sizeof(input));
+    if (rockey.TDESECB(K, cipher, sizeof(cipher), true) < 0)
+      ++error;
 
-  if (rockey.RandBytes(K, sizeof(K)) < 0)
-    ++error;
-  if (rockey.WriteKeyFile(9, K, 16, SECRET_STORAGE_TYPE::kSM4) < 0)
-    ++error;
+    memcpy(verify, cipher, sizeof(input));
+    if (rockey.TDESECB(8, verify, sizeof(verify), false) < 0)
+      ++error;
 
-  if (rockey.RandBytes(input, sizeof(input)) < 0)
-    ++error;
-  memcpy(cipher, input, sizeof(input));
-  if (rockey.SM4ECB(9, cipher, sizeof(cipher), true) < 0)
-    ++error;
+    if (0 != memcmp(input, verify, sizeof(input)))
+      ++error;
 
-  memcpy(verify, cipher, sizeof(cipher));
-  if (rockey.SM4ECB(K, verify, sizeof(verify), false) < 0)
-    ++error;
+    if (rockey.RandBytes(K, sizeof(K)) < 0)
+      ++error;
+    if (rockey.WriteKeyFile(9, K, 16, SECRET_STORAGE_TYPE::kSM4) < 0)
+      ++error;
 
-  if (rockey.RandBytes(input, sizeof(input)) < 0)
-    ++error;
-  memcpy(cipher, input, sizeof(input));
-  if (rockey.SM4ECB(K, cipher, sizeof(cipher), true) < 0)
-    ++error;
+    if (rockey.RandBytes(input, sizeof(input)) < 0)
+      ++error;
+    memcpy(cipher, input, sizeof(input));
+    if (rockey.SM4ECB(9, cipher, sizeof(cipher), true) < 0)
+      ++error;
 
-  memcpy(verify, cipher, sizeof(cipher));
-  if (rockey.SM4ECB(9, verify, sizeof(verify), false) < 0)
-    ++error;
+    memcpy(verify, cipher, sizeof(cipher));
+    if (rockey.SM4ECB(K, verify, sizeof(verify), false) < 0)
+      ++error;
+
+    if (rockey.RandBytes(input, sizeof(input)) < 0)
+      ++error;
+    memcpy(cipher, input, sizeof(input));
+    if (rockey.SM4ECB(K, cipher, sizeof(cipher), true) < 0)
+      ++error;
+
+    memcpy(verify, cipher, sizeof(cipher));
+    if (rockey.SM4ECB(9, verify, sizeof(verify), false) < 0)
+      ++error;
+  }
+
   return error;
 }
 
@@ -1007,34 +1018,44 @@ int Testing_HashExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   uint8_t sm3[32];
   uint8_t input[100];
 
-  for (int i = 1; i <= 10; ++i) {
-    if (rockey.RandBytes(input, sizeof(input)) < 0)
-      ++error;
+#if defined(__EMULATOR__)
+  constexpr int kTestLoop = 1000000;
+#else  /* __EMULATOR__ */
+  constexpr int kTestLoop = 2;
+#endif /* __EMULATOR__ */
 
-    if (rockey.SHA1(input, i * 10, sha1) < 0)
-      ++error;
+  for (int loop = 0; loop < kTestLoop; ++loop) {
+    rlLOGI(TAG, "Testing_KeyExec %d/%d %d", loop, kTestLoop, error);
 
-    if (rockey.SM3(input, i * 10, sm3) < 0)
-      ++error;
+    for (int i = 1; i <= 10; ++i) {
+      if (rockey.RandBytes(input, sizeof(input)) < 0)
+        ++error;
+
+      if (rockey.SHA1(input, i * 10, sha1) < 0)
+        ++error;
+
+      if (rockey.SM3(input, i * 10, sm3) < 0)
+        ++error;
 
 #if !defined(X_BUILD_native)
-    auto SM3 = [](const unsigned char* d, size_t n, unsigned char* md) {
-      SM3_CTX ctx;
-      sm3_init(&ctx);
-      sm3_update(&ctx, d, n);
-      sm3_final(md, &ctx);
-    };
+      auto SM3 = [](const unsigned char* d, size_t n, unsigned char* md) {
+        SM3_CTX ctx;
+        sm3_init(&ctx);
+        sm3_update(&ctx, d, n);
+        sm3_final(md, &ctx);
+      };
 
-    //input[0] ^= 1;
-    uint8_t v_sha1[20], v_sm3[32];
-    SHA1(input, i * 10, v_sha1);
-    SM3(input, i * 10, v_sm3);
+      // input[0] ^= 1;
+      uint8_t v_sha1[20], v_sm3[32];
+      SHA1(input, i * 10, v_sha1);
+      SM3(input, i * 10, v_sm3);
 
-    if (0 != memcmp(v_sha1, sha1, sizeof(sha1)))
-      ++error;
-    if (0 != memcmp(v_sm3, sm3, sizeof(sm3)))
-      ++error;
+      if (0 != memcmp(v_sha1, sha1, sizeof(sha1)))
+        ++error;
+      if (0 != memcmp(v_sm3, sm3, sizeof(sm3)))
+        ++error;
 #endif /* X_BUILD_native */
+    }
   }
 
   return error;

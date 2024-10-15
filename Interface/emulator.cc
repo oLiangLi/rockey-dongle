@@ -80,6 +80,7 @@ rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state) {
 #endif /* */
 
 class DongleHandle {
+  friend class Dongle;
 public:
   DongleHandle(const DongleHandle&) = delete;
   DongleHandle& operator=(const DongleHandle&) = delete;
@@ -631,7 +632,8 @@ int Dongle::GetTickCount(DWORD* ticks) {
 int Dongle::GetDongleInfo(DONGLE_INFO* info) {
   if (!handle_)
     return DONGLE_CHECK(-EBADF);
-  *info = dongle_info_;
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  *info = thiz->sb_.public_.dongle_info_;
   return 0;
 }
 
@@ -753,7 +755,7 @@ int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PK
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
-  return thiz->CreateSecretFile(type_, id, size);
+  return DONGLE_CHECK(thiz->CreateSecretFile(type_, id, size));
 }
 
 int Dongle::GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_) {
@@ -901,11 +903,33 @@ int Dongle::ImportSM2(int id, const uint8_t K[32]) {
 }
 
 int Dongle::CreateKeyFile(int id, PERMISSION permission, SECRET_STORAGE_TYPE type) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (id <= 0 || id >= 0xFFFF)
+    return last_error_ = -EINVAL;
+  if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
+    return last_error_ = -EINVAL;
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return DONGLE_CHECK(thiz->CreateSecretFile(type, id, 16));
 }
 
 int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (id <= 0 || id >= 0xFFFF)
+    return last_error_ = -EINVAL;
+  if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4 || size != 16)
+    return last_error_ = -EINVAL;
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  auto callback = [&](void* p, size_t size) -> int {
+    if (size != 16)
+      return last_error_ = -EFAULT;
+    memcpy(p, buffer, 16);
+    return 0;
+  };
+  return DONGLE_CHECK(thiz->OpWriteSecretFile(type, id, std::move(callback)));
 }
 
 int Dongle::RSAPrivate(int id,
@@ -1351,27 +1375,75 @@ int Dongle::SM2Encrypt(const uint8_t X[32],
 }
 
 int Dongle::SHA1(const void* input, size_t size, uint8_t md[20]) {
-  return DONGLE_CHECK(-ENOSYS);
+  ::SHA1((const uint8_t*)input, size, md);
+  return 0;
 }
 
 int Dongle::SM3(const void* input, size_t size, uint8_t md[32]) {
-  return DONGLE_CHECK(-ENOSYS);
+  SM3_CTX ctx;
+  sm3_init(&ctx);
+  sm3_update(&ctx, input, size);
+  sm3_final(md, &ctx);
+  return 0;
 }
 
 int Dongle::TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  auto callback = [&](const void* key, size_t size) -> int {
+    if (size != 16)
+      return last_error_ = -EFAULT;
+    return TDESECB((const uint8_t*)key, buffer, size, encrypt);
+  };
+  return thiz->OpReadSecretFile(SECRET_STORAGE_TYPE::kTDES, id, std::move(callback));
 }
 
 int Dongle::TDESECB(const uint8_t key[16], uint8_t* buffer, size_t size_, bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  int size = static_cast<int>(size_);
+
+  const EVP_CIPHER* cipher = EVP_des_ede_ecb();
+  EVP_CIPHER_CTX* cipherCtx = EVP_CIPHER_CTX_new();
+  DONGLE_VERIFY(size % 8 == 0 && 8 == EVP_CIPHER_block_size(cipher) && 16 == EVP_CIPHER_key_length(cipher));
+
+  if (encrypt) {
+    DONGLE_VERIFY(EVP_EncryptInit(cipherCtx, cipher, key, nullptr) > 0);
+    DONGLE_VERIFY(EVP_EncryptUpdate(cipherCtx, buffer, &size, buffer, size) > 0);
+  } else {
+    DONGLE_VERIFY(EVP_DecryptInit(cipherCtx, cipher, key, nullptr) > 0);
+    DONGLE_VERIFY(EVP_DecryptUpdate(cipherCtx, buffer, &size, buffer, size) > 0);
+  }
+  EVP_CIPHER_CTX_free(cipherCtx);
+
+  return 0;
 }
 
 int Dongle::SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  auto callback = [&](const void* key, size_t size) -> int {
+    if (size != 16)
+      return last_error_ = -EFAULT;
+    return SM4ECB((const uint8_t*)key, buffer, size, encrypt);
+  };
+  return thiz->OpReadSecretFile(SECRET_STORAGE_TYPE::kSM4, id, std::move(callback));
 }
 
 int Dongle::SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  SM4_KEY sm4key;
+  DONGLE_VERIFY(size % 16 == 0 && SM4_set_key(key, &sm4key));
+  if (encrypt) {
+    for (size_t off = 0; off < size; off += 16, buffer += 16)
+      SM4_encrypt(buffer, buffer, &sm4key);
+  } else {
+    for (size_t off = 0; off < size; off += 16, buffer += 16)
+      SM4_decrypt(buffer, buffer, &sm4key);
+  }
+
+  return 0;
 }
 
 void Dongle::Abort() {
