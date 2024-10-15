@@ -448,9 +448,15 @@ public:
  public:
   struct FileHeader {
     SECRET_STORAGE_TYPE type_;
-    uint8_t empty_file_;
+    mutable uint8_t empty_file_;
     uint16_t index_;
     uint32_t size_;
+  };
+
+  struct RSA2048File {
+    uint32_t modulus_;
+    uint8_t public_[256];
+    uint8_t private_[256];
   };
 
   friend bool operator<(const FileHeader& lhs, const FileHeader& rhs) {
@@ -506,7 +512,7 @@ public:
     int result = 0;
     
     if (header.empty_file_) {
-      *const_cast<uint8_t*>(&header.empty_file_) = 0;
+      header.empty_file_ = 0;
       DONGLE_VERIFY(iter->second.empty());
       iter->second.resize(FileContentSize(size));
       result = callback(&iter->second[0], size);
@@ -725,15 +731,87 @@ int Dongle::ReadDataFile(int id, size_t offset, void* buffer, size_t size) {
 }
 
 int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PKEY_LICENCE& licence) {
-  return DONGLE_CHECK(-ENOSYS);
+  size_t size = 0;
+  if (id <= 0 || id >= 0xFFFF)
+    return last_error_ = -EINVAL;
+
+  if (type_ == SECRET_STORAGE_TYPE::kRSA) {
+    size = sizeof(DongleHandle::RSA2048File);
+    if (bits != 2048)
+      return last_error_ = -EINVAL;
+  } else if (type_ == SECRET_STORAGE_TYPE::kSM2) {
+    size = 32;
+    if (bits != 256)
+      return last_error_ = -EINVAL;
+  } else if (type_ == SECRET_STORAGE_TYPE::kP256) {
+    size = 32;
+    if (bits != 256)
+      return last_error_ = -EINVAL;
+  } else {
+    return last_error_ = -EINVAL;
+  }
+
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return thiz->CreateSecretFile(type_, id, size);
 }
 
 int Dongle::GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return thiz->OpWriteSecretFile(SECRET_STORAGE_TYPE::kRSA, id, [&](void* buffer, size_t size)->int {
+    if (size != sizeof(DongleHandle::RSA2048File))
+      return last_error_ = -EFAULT;
+
+    DongleHandle::RSA2048File* file = static_cast<DongleHandle::RSA2048File*>(buffer);
+
+    RSA* rsa = RSA_new();
+    BIGNUM* e = BN_new();
+    BN_set_word(e, RSA_F4);
+
+    if (!RSA_generate_key_ex(rsa, 2048, e, nullptr)) {
+      rlLOGE(TAG, "RSA_generate_key_ex error %ld", ERR_get_error());
+      RSA_free(rsa);
+      BN_free(e);
+      return last_error_ = -EFAULT;
+    }
+
+    file->modulus_ = *modulus = RSA_F4;
+    BN_bn2binpad(RSA_get0_d(rsa), file->private_, 256);
+    BN_bn2binpad(RSA_get0_n(rsa), file->public_, 256);
+    RSA_free(rsa);
+    BN_free(e);
+
+    memcpy(public_, file->public_, 256);
+    if (private_)
+      memcpy(private_, file->private_, 256);
+    return 0;
+  });
 }
 
 int Dongle::ImportRSA(int id, int bits, uint32_t modules, const uint8_t public_[], const uint8_t private_[]) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (bits != 2048)
+    return last_error_ = -EINVAL;
+
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return thiz->OpWriteSecretFile(SECRET_STORAGE_TYPE::kRSA, id, [&](void* buffer, size_t size)->int {
+    if (size != sizeof(DongleHandle::RSA2048File))
+      return last_error_ = -EFAULT;
+
+    DongleHandle::RSA2048File* file = static_cast<DongleHandle::RSA2048File*>(buffer);
+    file->modulus_ = modules;
+    memcpy(file->private_, private_, 256);
+    memcpy(file->public_, public_, 256);
+
+    return 0;
+  });
 }
 
 int Dongle::GenerateP256(int id, uint8_t X[32], uint8_t Y[32], uint8_t* private_) {
@@ -764,7 +842,25 @@ int Dongle::RSAPrivate(int id,
                        uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
                        size_t* size_buffer,
                        bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  size_t size_in = *size_buffer;
+  if (encrypt) {
+    if (size_in > 256 - 11)
+      return last_error_ = -E2BIG;
+  } else if (size_in != 256) {
+    return last_error_ = -EINVAL;
+  }
+
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  return thiz->OpReadSecretFile(SECRET_STORAGE_TYPE::kRSA, id, [&](const void* p, size_t size)->int {
+    if (size != sizeof(DongleHandle::RSA2048File))
+      return last_error_ = -EFAULT;
+
+    const DongleHandle::RSA2048File* file = static_cast<const DongleHandle::RSA2048File*>(p);
+    return RSAPrivate(2048, file->modulus_, file->public_, file->private_, buffer, size_buffer, encrypt);
+  });
 }
 
 int Dongle::RSAPrivate(int bits,
@@ -774,7 +870,47 @@ int Dongle::RSAPrivate(int bits,
                        uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
                        size_t* size_buffer,
                        bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  int result = 0;
+  size_t size_in = *size_buffer;
+  if (bits != 2048)
+    return last_error_ = -EINVAL;
+
+  if (encrypt) {
+    if (size_in > 256 - 11)
+      return last_error_ = -E2BIG;
+  } else if (size_in != 256) {
+    return last_error_ = -EINVAL;
+  }
+
+  RSA* rsa = RSA_new();
+  BIGNUM* d = BN_bin2bn(private_, 256, nullptr);
+  BIGNUM* n = BN_bin2bn(public_, 256, nullptr);
+  BIGNUM* e = BN_new();
+
+  DONGLE_VERIFY(rsa && d && n && e);
+  DONGLE_VERIFY(1 == BN_set_word(e, modules));
+  DONGLE_VERIFY(1 == RSA_set0_key(rsa, n, e, d));
+
+  if (encrypt) {
+    int len = RSA_private_encrypt(static_cast<int>(size_in), buffer, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_private_encrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      *size_buffer = len;
+    }
+  } else {
+    int len = RSA_private_decrypt(static_cast<int>(size_in), buffer, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_private_decrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      *size_buffer = len;
+    }
+  }
+  RSA_free(rsa);
+
+  return result;
 }
 
 int Dongle::RSAPublic(int bits,
@@ -783,7 +919,46 @@ int Dongle::RSAPublic(int bits,
                       uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
                       size_t* size_buffer,
                       bool encrypt) {
-  return DONGLE_CHECK(-ENOSYS);
+  int result = 0;
+  size_t size_in = *size_buffer;
+  if (bits != 2048)
+    return last_error_ = -EINVAL;
+
+  if (encrypt) {
+    if (size_in > 256 - 11)
+      return last_error_ = -E2BIG;
+  } else if (size_in != 256) {
+    return last_error_ = -EINVAL;
+  }
+
+  RSA* rsa = RSA_new();
+  BIGNUM* n = BN_bin2bn(public_, 256, nullptr);
+  BIGNUM* e = BN_new();
+
+  DONGLE_VERIFY(rsa && n && e);
+  DONGLE_VERIFY(1 == BN_set_word(e, modules));
+  DONGLE_VERIFY(1 == RSA_set0_key(rsa, n, e, nullptr));
+
+  if (encrypt) {
+    int len = RSA_public_encrypt(static_cast<int>(size_in), buffer, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_public_encrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      *size_buffer = len;
+    }
+  } else {
+    int len = RSA_public_decrypt(static_cast<int>(size_in), buffer, buffer, rsa, RSA_PKCS1_PADDING);
+    if (len < 0) {
+      rlLOGE(TAG, "RSA_public_decrypt %zd error %ld", size_in, ERR_get_error());
+      result = -1;
+    } else {
+      *size_buffer = len;
+    }
+  }
+
+  RSA_free(rsa);
+  return result;
 }
 
 int Dongle::P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32]) {
