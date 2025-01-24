@@ -1,3 +1,8 @@
+#pragma once
+
+#ifndef __WTINC_DONGLE_PUBLIC__
+#define __WTINC_DONGLE_PUBLIC__
+
 #include <base/base.h>
 #include <memory>
 #include <tuple>
@@ -459,7 +464,7 @@ class RockeyARM : public Dongle {
 
 class Emulator : public Dongle {
 public:
-  Emulator();
+  Emulator(PERMISSION perm = PERMISSION::kAnonymous);
   virtual ~Emulator();
 
   virtual int Close();
@@ -470,6 +475,9 @@ public:
 public:
   int Create(const char* master_secret, uint32_t uid = 0, int loop = 256);
   int Open(const char* file, const char* master_secret, int loop = 256);
+
+protected:
+  const PERMISSION permission_;
 };
 
 
@@ -478,3 +486,4 @@ public:
 
 rLANG_DECLARE_END
 
+#endif /* __WTINC_DONGLE_PUBLIC__ */

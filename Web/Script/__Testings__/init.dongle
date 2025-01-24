@@ -1,0 +1,119 @@
+public 1024;
+
+const {
+  kOffsetDonglePublic = 7 * 1024;
+
+  kFileSM2ECDSA = 1;
+  kFileSECP256r1 = 2;
+  kFileRSA2048 = 3;
+  kFileSM2ECIES = 4;
+
+  kOffsetPubkey_SM2ECDSA = 20;
+  kOffsetPubkey_Secp256r1 = 84;
+  kOffsetPubkey_RSA2048 = 148;
+  kOffsetPubkey_SM2ECIES = 408;
+
+  kOffsetDongleNonce1 = 472;
+  kOffsetDongleInfo = 504;
+  kOffsetDongleNonce2 = 544;
+
+  kOffsetSign_SM2ECIES = 576;
+  kOffsetSign_RSA2048 = 640;
+  kOffsetSign_Secp256r1 = 896;
+  kOffsetSign_SM2ECDSA = 960;
+  kSizePublic = 1024;
+
+  /**!! */
+  rLANG_WORLD_MAGIC = 0xc8c04e1f; // rLANG  
+  kCategory_MAGIC = 0xc35880af; // "pub@k"
+
+  kMagicCreate = 0x0d214153; // "CREAT"
+  kMagicWorld = 0x5cf48c13; // "WORLD"
+  kAdminFileMagic = 0x0443493b; // "ADMIN"
+
+  /**!! */
+  i = 1024 - 64;
+}
+
+kMemset(0, 0, 1024);
+
+if(kValidPINState() < 2)
+  kExit(1);
+
+/**
+ *! 完全初始化 DataFile 代码会导致脚本程序超过100条指令 ...
+ */
+kWriteDataFile(0xffff, kOffsetDonglePublic, 0, 1024);
+
+/**
+///
+/// for (i = 0; i < 16; ++i) ;; LiangLI, Ugly, 是否需要在脚本语言中实现变量
+///
+for(kStoreI8(i, 0); kLoadI8(i) < 16; kStoreI8(i, kLoadI8(i) + 1)) {
+   kWriteDataFile(0xffff, kLoadI8(i) << 9, 0, 512);
+}
+**/
+
+///
+/// 读取Dongle信息
+///
+kReadDongleInfo(kOffsetDongleInfo);
+
+///
+/// 初始化基本的随机数 ...
+///
+kRandBytes(kOffsetDongleNonce1, 32);
+kRandBytes(kOffsetDongleNonce2, 32);
+
+///
+/// 删除可能存在的私钥文件 ...
+///
+kDeleteRSAFile(kFileRSA2048);
+kDeleteP256File(kFileSECP256r1);
+kDeleteSM2File(kFileSM2ECDSA);
+kDeleteSM2File(kFileSM2ECIES);
+
+///
+/// 创建新的私钥文件, 允许普通用户登录后使用私钥 ...
+///
+kCreateRSAFile(kFileRSA2048, 1);
+kCreateP256File(kFileSECP256r1, 1);
+kCreateSM2File(kFileSM2ECDSA, 1);
+kCreateSM2File(kFileSM2ECIES, 1);
+
+///
+/// 产生三个用于签名的私钥文件, 这些私钥从未被导出 ...
+///
+kGenerateRSA(kFileRSA2048, kOffsetPubkey_RSA2048);
+kGenerateP256(kFileSECP256r1, kOffsetPubkey_Secp256r1);
+kGenerateSM2(kFileSM2ECDSA, kOffsetPubkey_SM2ECDSA);
+
+///
+/// DonglePublicHeader
+///
+kStoreI32(0, rLANG_WORLD_MAGIC); //
+kStoreI32(4, kCategory_MAGIC); //
+kStoreI32(16, 0x04000101);  // ver_major_ = 1, ver_minor_ = 1, siz_public_ = 1024
+
+///
+/// RSA.Sign ...
+///
+kExDigestSHA256(0, kOffsetSign_RSA2048, kOffsetSign_RSA2048);
+kRSAPrivateEncrypt(kFileRSA2048, kOffsetSign_RSA2048, 32);
+
+///
+/// P256.Sign ...
+///
+kExDigestSHA256(0, kOffsetSign_Secp256r1, kOffsetSign_Secp256r1);
+kP256Sign(kFileSECP256r1, kOffsetSign_Secp256r1, kOffsetSign_Secp256r1);
+
+///
+/// SM2.Sign ...
+///
+kDigestSM3(0, kOffsetSign_SM2ECDSA, kOffsetSign_SM2ECDSA);
+kSM2Sign(kFileSM2ECDSA, kOffsetSign_SM2ECDSA, kOffsetSign_SM2ECDSA);
+
+///
+/// 写入公共信息 ...
+///
+kWriteDataFile(0xffff, kOffsetDonglePublic, 0, 1024);

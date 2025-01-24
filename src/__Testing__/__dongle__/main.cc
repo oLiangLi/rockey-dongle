@@ -1373,7 +1373,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 #if defined(__EMULATOR__)
   const char* const kTestingDongleFile = ".foobar-dongle.bin";
   const char* const kTestingDongleSecret = "1234567812345678";
-  Emulator  rockey;
+  Emulator  rockey(Context->permission_);
 
   if (rockey.Open(kTestingDongleFile, kTestingDongleSecret) < 0)
     rockey.Create(kTestingDongleSecret);

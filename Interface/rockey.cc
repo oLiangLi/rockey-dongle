@@ -75,11 +75,50 @@ int Dongle::CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION writ
   attr.m_Lic.m_WritePriv = static_cast<uint8_t>(write);
   return DONGLE_CHECK(create_file(FILE_DATA, id, reinterpret_cast<uint8_t*>(&attr), sizeof(attr)));
 }
-int Dongle::WriteDataFile(int id, size_t offset, const void* buffer, size_t size) {
-  return DONGLE_CHECK(write_file(FILE_DATA, id, offset, size, static_cast<uint8_t*>(const_cast<void*>(buffer))));
+int Dongle::WriteDataFile(int id, size_t offset, const void* buffer_, size_t size) {
+  if (size > 4096)
+    return -EINVAL;
+
+  auto Write = [this](int id, size_t offset, const void* buffer, size_t size) {
+    return DONGLE_CHECK(write_file(FILE_DATA, id, offset, size, static_cast<uint8_t*>(const_cast<void*>(buffer))));
+  };
+
+  const uint8_t* buffer = (const uint8_t*)buffer_;
+
+  while (size >= 256) {
+    int r = Write(id, offset, buffer, 256);
+    if (0 != r)
+      return r;
+    offset += 256;
+    buffer += 256;
+    size -= 256;
+  }
+
+  if (size)
+    return Write(id, offset, buffer, size);
+  return 0;
 }
-int Dongle::ReadDataFile(int id, size_t offset, void* buffer, size_t size) {
-  return DONGLE_CHECK(read_file(id, offset, size, static_cast<uint8_t*>(buffer)));
+int Dongle::ReadDataFile(int id, size_t offset, void* buffer_, size_t size) {
+  if (size > 4096)
+    return -EINVAL;
+
+  auto Read = [this](int id, size_t offset, void* buffer, size_t size) {
+    return DONGLE_CHECK(read_file(id, offset, size, static_cast<uint8_t*>(buffer)));
+  };
+
+  uint8_t* buffer = (uint8_t*)buffer_;
+  while (size >= 256) {
+    int r = Read(id, offset, buffer, 256);
+    if (0 != r)
+      return r;
+    offset += 256;
+    buffer += 256;
+    size -= 256;
+  }
+
+  if (size)
+    return Read(id, offset, buffer, size);
+  return 0;
 }
 
 int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PKEY_LICENCE& licence) {
@@ -184,6 +223,16 @@ int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE
   return DONGLE_CHECK(write_file(FILE_KEY, id, 0, size, static_cast<uint8_t*>(const_cast<void*>(buffer))));
 }
 
+///
+/// RockeyARM, Bug: RSAPrivate([256 dup 0]) freeze ...
+///
+static int BugCheckZeroInput(const uint8_t* input) {
+  int sum = 0;
+  for (int i = 0; i < 256; ++i)
+    sum += input[i];
+  return sum == 0;
+}
+
 int Dongle::RSAPrivate(int id,
                        uint8_t buffer[] /* length_is(*size_buffer), max_size(bits/8) */,
                        size_t* size_buffer,
@@ -195,6 +244,9 @@ int Dongle::RSAPrivate(int id,
   } else if (size_in != 256) {
     return last_error_ = -EINVAL;
   }
+
+  if (!encrypt && BugCheckZeroInput(buffer))
+    return -EINVAL;
 
   WORD size_out = 256;
   int result = DONGLE_CHECK(
@@ -220,6 +272,9 @@ int Dongle::RSAPrivate(int bits,
   } else if (size_in != 256) {
     return last_error_ = -EINVAL;
   }
+
+  if (!encrypt && BugCheckZeroInput(buffer))
+    return -EINVAL;
 
   RSA_PRIVATE_KEY prikey;
   prikey.bits = bits;

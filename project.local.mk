@@ -32,7 +32,7 @@ COMMON_CFLAGS	   += -DrLANG_WORLD_STANDALONE=1 -DX_ARCH_wasm=1
 COMMON_CFLAGS      += -I$(wORLD_ROOT)/third_party/build/wasm -I$(wORLD_ROOT)/third_party/build/wasmjs
 X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/wasm -L$(wORLD_ROOT)/third_party/build/wasmjs
 X4C_COMMON_LDFLAGS += -s WASM=1 -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s STANDALONE_WASM=1
-X4C_COMMON_CXXFLAGS+= -fno-rtti -fno-common -fno-use-cxa-atexit -fno-exceptions -fno-non-call-exceptions -std=c++17
+X4C_COMMON_CXXFLAGS+= -fno-rtti -fno-common -fno-use-cxa-atexit -std=c++17
 X4C_OPTIMIZE_OUTPUT:= $(wORLD_ROOT)/Web/Assembly
 
 optimize: $(X4C_OPTIMIZE_OUTPUT)
@@ -60,7 +60,7 @@ wasmjs_add_ldflags  = $(eval LOCAL_LDFLAGS  += $1)
 COMMON_CFLAGS      += -I$(wORLD_ROOT)/third_party/build/wasmjs
 X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/wasmjs
 X4C_COMMON_LDFLAGS += -s EXIT_RUNTIME=0 -s WASM=1 -s MODULARIZE=1
-X4C_COMMON_CXXFLAGS+= -fno-rtti -fno-common -fno-use-cxa-atexit -fno-exceptions -fno-non-call-exceptions -std=c++17
+X4C_COMMON_CXXFLAGS+= -fno-rtti -fno-common -fno-use-cxa-atexit -std=c++17
 endif
 
 ##

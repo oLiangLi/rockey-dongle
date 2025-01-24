@@ -33,7 +33,7 @@ ROCKEY_DECLARE_FILE ?= dongle.cc
 ##
 ##
 LOCAL_SRC_FILES := $(ROCKEY_DECLARE_FILE)
-LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc sha512.cc curve25519.cc
+LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc sha512.cc curve25519.cc script.cc
 
 $(call build-library)
 

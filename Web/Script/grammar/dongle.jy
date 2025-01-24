@@ -1,0 +1,199 @@
+%token TK_NUMBER
+%token TK_IF
+%token TK_ELSE
+%token TK_FOR
+%token TK_WHILE
+%token TK_DO
+%token TK_CONST
+%token TK_IDEN
+%token TK_PUBLIC
+
+%token OP_LOGIC_OR
+%token OP_LOGIC_AND
+%token OP_EQ
+%token OP_NE
+%token OP_LE
+%token OP_GE
+%token OP_SHIFT_LEFT
+%token OP_SHIFT_RIGHT
+%token OP_SHIFT_RIGHT_U
+
+%left OP_LOGIC_OR
+%left OP_LOGIC_AND
+%left '|'
+%left '^'
+%left '&'
+%left OP_EQ OP_NE
+%left '<' '>' OP_LE OP_GE
+%left OP_SHIFT_LEFT OP_SHIFT_RIGHT OP_SHIFT_RIGHT_U
+%left '+' '-'
+%left '*' '/' '%'
+
+%precedence PREC_THEN
+%precedence TK_ELSE
+
+%%
+
+goal:
+	public_size const_declares declares
+	|
+	public_size declares
+	;
+
+public_size:
+	/* NULL */					{ /**@ AC_PUBLIC_SIZE_0 */ }
+	|
+	TK_PUBLIC TK_NUMBER ';'		{ /**@ AC_PUBLIC_SIZE_X */ }
+	;
+
+const_declares:
+	TK_CONST '{' '}'
+	|
+	TK_CONST '{' const_statement_declare_list '}'
+	;
+
+const_statement_declare_list:
+	const_statement
+	|
+	const_statement_declare_list const_statement
+	;
+
+const_statement:
+	TK_IDEN '=' expr ';'	{ /**@ AC_CONST_STATEMENT */ }
+	;
+
+declares:
+	statement							{ /**@ AC_DECL_1 */ }
+	|
+	declares statement		{ /**@ AC_DECL_X */ }
+	;
+
+statement:
+	empty_statement
+	|
+	expr_statement
+	|
+	if_statement
+	|
+	while_statement
+	|
+	do_while_statement
+	|
+	for_statement
+	|
+	block_statement	
+	;
+
+empty_statement:
+	/* NULL */ ';'	{ /**@ AC_EMPTY_STMT */ }
+	;
+
+block_statement:
+	'{' '}'					{ /**@ AC_BLOCK_EMPTY   */ }
+	|
+	'{' declares '}'		{ /**@ AC_BLOCK_DECLARE */ }
+	;
+
+expr_statement:
+	expr ';'				{ /**@ AC_EXPRESSION_DECLARE */ }
+	;
+
+if_statement:
+	TK_IF '(' expr ')' statement %prec PREC_THEN	{ /**@ AC_IF_STATEMENT */ }
+	|
+	TK_IF '(' expr ')' statement TK_ELSE statement	{ /**@ AC_IF_ELSE_STATEMENT */ }
+	;
+
+while_statement:
+	TK_WHILE '(' expr ')' statement	{ /**@ AC_WHILE_STATEMENT */ }
+	;
+
+do_while_statement:
+	TK_DO statement TK_WHILE '(' expr ')' ';'	{ /**@ AC_DO_WHILE_STATEMENT */ }
+	;
+
+for_statement:
+	TK_FOR '(' opt_expr ';' opt_expr ';' opt_expr ')' statement		{ /**@ AC_FOR_STATEMENT */ }
+	;
+
+opt_expr:
+	/* NULL */			{ /**@ AC_OPT_EXPR_NULL */ }
+	|
+	expr
+	;
+
+expr:
+	unary_expression
+	|
+	expr OP_LOGIC_OR expr    { /**@ AC_EXPR_LOGIC_OR  */ }
+	|
+	expr OP_LOGIC_AND expr   { /**@ AC_EXPR_LOGIC_AND */ }
+	|
+	expr '|' expr       { /**@ AC_EXPR_BIT_OR */ }
+	|
+	expr '^' expr       { /**@ AC_EXPR_BIT_XOR */ }
+	|
+	expr '&' expr       { /**@ AC_EXPR_BIT_AND */ }
+	|
+	expr OP_EQ expr     { /**@ AC_EXPR_EQ */ }
+	|
+	expr OP_NE expr     { /**@ AC_EXPR_NE */ }
+	|
+	expr OP_LE expr     { /**@ AC_EXPR_LE */ }
+	|
+	expr OP_GE expr     { /**@ AC_EXPR_GE */ }
+	|
+	expr '>' expr       { /**@ AC_EXPR_GT */ }
+	|
+	expr '<' expr       { /**@ AC_EXPR_LT */ }
+	|
+	expr OP_SHIFT_LEFT expr     { /**@ AC_EXPR_SHIFT_LEFT  */   }
+	|
+	expr OP_SHIFT_RIGHT expr    { /**@ AC_EXPR_SHIFT_RIGHT */   }
+	|
+	expr OP_SHIFT_RIGHT_U expr  { /**@ AC_EXPR_SHIFT_RIGHT_U */ }
+	|
+	expr '+' expr       { /**@ AC_EXPR_ADD */ }
+	|
+	expr '-' expr       { /**@ AC_EXPR_SUB */ }
+	|
+	expr '*' expr       { /**@ AC_EXPR_MUL */ }
+	|
+	expr '/' expr       { /**@ AC_EXPR_DIV */ }
+	|
+	expr '%' expr       { /**@ AC_EXPR_MOD */ }
+	;
+
+unary_expression:
+	primary_expression
+	|
+	'+' unary_expression		{ /**@ AC_EXPR_UNARY_ADD */ }
+	|
+	'-' unary_expression		{ /**@ AC_EXPR_UNARY_SUB */ }
+	|
+	'~' unary_expression		{ /**@ AC_EXPR_BIT_NOT   */ }
+	|
+	'!' unary_expression		{ /**@ AC_EXPR_LOGIC_NOT */ }
+	;
+
+primary_expression:	
+	'(' expr ')'				{ /**@ AC_PRI_EXPR_0     */ }
+	|
+	TK_IDEN						{ /**@ AC_PRI_IDEN   */ }
+	|
+	TK_NUMBER					{ /**@ AC_PRI_NUMBER */ }
+	|
+	callfunc
+	;
+
+callfunc:
+	TK_IDEN '(' ')'				{ /**@ AC_CALL_0 */ }
+	|
+	TK_IDEN '(' arglist ')'		{ /**@ AC_CALL_X */ }
+	;
+
+arglist:
+	expr						{ /**@ AC_ARGLIST_1 */ }
+	|
+	arglist ',' expr			{ /**@ AC_ARGLIST_X */ }
+	;

@@ -105,12 +105,12 @@ public:
 
 public:
   static constexpr uint32_t rLANG_DONGLE_MAGIC = rLANG_DECLARE_MAGIC_Xs("DONGL");
-  static DongleHandle* Create(const uint8_t master_[64], uint32_t uid, int loop) {
-    DongleHandle* self = new DongleHandle;
+  static DongleHandle* Create(PERMISSION perm, const uint8_t master_[64], uint32_t uid, int loop) {
+    DongleHandle* self = new DongleHandle(perm);
 
     SupperBlock& sb = self->sb_;
     uint8_t secret[256], MASTER_PRIKEY[64], *MASTER_PKMASK = self->master_prikey_masked_;
-    
+
     /* Loop.1 */
     memcpy(secret, master_, 64);
     ExtendMasterSecret(secret, loop);
@@ -175,14 +175,18 @@ public:
 
     {
       DongleHandle* check = nullptr;
-      DONGLE_VERIFY(0 == LoadSupperBlock(self->sb_, master_, loop, &check));
+      DONGLE_VERIFY(0 == LoadSupperBlock(perm, self->sb_, master_, loop, &check));
       delete check;
     }
 
     return self;
   }
 
-  static int LoadSupperBlock(const SupperBlock& sb, const uint8_t master_[64], int loop, DongleHandle** outHandle) {
+  static int LoadSupperBlock(PERMISSION perm,
+                             const SupperBlock& sb,
+                             const uint8_t master_[64],
+                             int loop,
+                             DongleHandle** outHandle) {
     DONGLE_VERIFY(nullptr == outHandle || nullptr == *outHandle);
     if(rLANG_WORLD_MAGIC != sb.public_.world_magic_ ||
       rLANG_DONGLE_MAGIC != sb.public_.file_magic_ ||
@@ -229,7 +233,7 @@ public:
       return -EACCES;
 
     if (outHandle) {
-      DongleHandle* self = *outHandle = new DongleHandle;
+      DongleHandle* self = *outHandle = new DongleHandle(perm);
       self->sb_ = sb; /* */
       memcpy(&self->state_mask_[0], &state_mask_[0], 64);
       memcpy(&self->master_prikey_masked_, &MASTER_PKMASK[0], 64);
@@ -275,7 +279,12 @@ public:
     return p - buffer;
   }
 
-  static int Load(const uint8_t* p, size_t size, const uint8_t master_[64], int loop, DongleHandle** outHandle) {
+  static int Load(PERMISSION perm,
+                  const uint8_t* p,
+                  size_t size,
+                  const uint8_t master_[64],
+                  int loop,
+                  DongleHandle** outHandle) {
     DONGLE_VERIFY(outHandle && !*outHandle);
     SupperBlock sb;
     if (size < sizeof(sb) + kFactoryFileSize + 128)
@@ -289,7 +298,7 @@ public:
     p += sizeof(sb);
 
     DongleHandle* thiz = nullptr;
-    int r = LoadSupperBlock(sb, master_, loop, &thiz);
+    int r = LoadSupperBlock(perm, sb, master_, loop, &thiz);
     if (r < 0)
       return r;
 
@@ -559,9 +568,10 @@ public:
   static constexpr size_t kSharedMemorySize = 32;
   uint8_t shared_memory_[kSharedMemorySize] = {0};
   uint8_t factory_datafile_[kFactoryFileSize] = {0};
+  const PERMISSION permission_;
 
  protected:
-  DongleHandle() = default;
+  DongleHandle(PERMISSION perm) : permission_(perm) {}
   Dongle::SecretBuffer<16, uint32_t> state_mask_;
   Dongle::SecretBuffer<64> master_prikey_masked_;
   SupperBlock sb_;
@@ -641,7 +651,13 @@ int Dongle::GetDongleInfo(DONGLE_INFO* info) {
 }
 
 int Dongle::GetPINState(PERMISSION* state) {
-  return DONGLE_CHECK(-ENOSYS);
+  if (!handle_)
+    return DONGLE_CHECK(-EBADF);
+  if (!state)
+    return DONGLE_CHECK(-EINVAL);
+  DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  *state = thiz->permission_;
+  return 0;
 }
 
 int Dongle::SetLEDState(LED_STATE state) {
@@ -1460,7 +1476,7 @@ int Dongle::CheckError(DWORD error) {
   return -1;
 }
 
-Emulator::Emulator() = default;
+Emulator::Emulator(PERMISSION perm) : permission_(perm) {}
 Emulator::~Emulator() {
   Close();
 }
@@ -1476,7 +1492,7 @@ int Emulator::Close() {
 
 int Emulator::Create(const uint8_t master_secret[64], uint32_t uid, int loop) {
   Close();
-  DongleHandle* handle = DongleHandle::Create(master_secret, uid, loop);
+  DongleHandle* handle = DongleHandle::Create(permission_, master_secret, uid, loop);
   handle_ = reinterpret_cast<ROCKEY_HANDLE>(handle);
   return 0;
 }
@@ -1491,7 +1507,8 @@ int Emulator::Open(const char* file, const uint8_t master_secret[64], int loop) 
     rlLOGE(TAG, "LoadDongleFile %s, Error %d", file, size);
     return size;
   }
-  return DongleHandle::Load(&content[0], size, master_secret, loop, reinterpret_cast<DongleHandle**>(&handle_));
+  return DongleHandle::Load(permission_, &content[0], size, master_secret, loop,
+                            reinterpret_cast<DongleHandle**>(&handle_));
 }
 
 int Emulator::Write(const char* file) {
