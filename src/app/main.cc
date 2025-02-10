@@ -365,7 +365,14 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   } else
 #endif /* !__RockeyARM__ && !__EMULATOR__ */
   {
+#if !defined(__RockeyARM__)
+    long long ticks = rLANG_GetTickCount();
+#endif /* __RockeyARM__ */
     result = vm.Execute();
+#if !defined(__RockeyARM__)
+    ticks = rLANG_GetTickCount() - ticks;
+    rlLOGW(TAG, "rockey.VM.Execute Error %d/%x in %lld", result, result, ticks);
+#endif /* __RockeyARM__ */
   }
 
 #if !defined(__RockeyARM__) && defined(__EMULATOR__)

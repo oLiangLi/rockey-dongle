@@ -1759,6 +1759,8 @@ export class Context {
   }
 
   private acFuncCall(name: string, args: Arguments): Expression {
+    if (name[0] !== 'k') name = 'k' + name;
+
     if (table_memory_op.has(name)) {
       const entry = table_memory_op.get(name)!;
       if (entry.argc !== args.argv_.length)
