@@ -1,8 +1,11 @@
 #include <Interface/dongle.h>
 #include <base/base.h>
+
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
 #include <signal.h>
 #include <set>
 #include <thread>
+#endif /* #if !defined(__RockeyARM__) && !defined(__EMULATOR__) */
 
 rLANG_DECLARE_MACHINE
 

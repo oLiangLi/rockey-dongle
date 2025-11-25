@@ -51,7 +51,7 @@ int Dongle::WriteShareMemory(const uint8_t buffer[32]) {
   return DONGLE_CHECK(set_sharememory(const_cast<uint8_t*>(buffer)));
 }
 
-int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
+__attribute__((optimize("O0"))) int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
   WORD type;
   if (type_ == SECRET_STORAGE_TYPE::kData) {
     type = FILE_DATA;
