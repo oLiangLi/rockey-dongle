@@ -50,14 +50,14 @@ enum class kTestingIndex : int {
 
   Ed25519Test,
 
+  PKeyCountDownTest
+
 };
 
 enum class kAdminTestingIndex : int {
   FactoryReset = 1,
 
   SelectProductId,
-
-
 
 };
 
@@ -108,9 +108,7 @@ BOOL WINAPI CtrlHandler(DWORD fdwCtrlType) {
 }
 #endif /* _WIN32 */
 int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* ExtendBuf) {
-  signal(SIGINT, [](int) {
-    rlLOGW(TAG, "SIGINT %d", ++ExitSelectProductId);
-  });
+  signal(SIGINT, [](int) { rlLOGW(TAG, "SIGINT %d", ++ExitSelectProductId); });
 #ifdef _WIN32
   SetConsoleCtrlHandler(CtrlHandler, TRUE);
 #endif /* _WIN32 */
@@ -240,7 +238,7 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
     if (result < 0)
       exit(7);
     uint32_t pid = (uint32_t)strtoul(prodId, nullptr, 16);
-    if (keyWordsMagic.find(pid|3) != keyWordsMagic.end()) {
+    if (keyWordsMagic.find(pid | 3) != keyWordsMagic.end()) {
       ++validWords;
       char magic_tags[10];
       rLANG_DECLARE_MAGIC_Vs(pid, magic_tags);
@@ -248,7 +246,7 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
                magic_tags, prodId, admin);
       WriteLog(fp, stream, sizeof(stream), "%d) GenUniqueKey %08X/%s prodId: %s, Admin: %s", validWords, pid,
                magic_tags, prodId, admin);
-     }
+    }
 
 #if 0
     rlLOGI(TAG, ">>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>>");
@@ -267,7 +265,6 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
   return error;
 }
 #endif /* RockeyARM */
-
 
 int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
@@ -437,7 +434,7 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
 
 #if defined(__EMULATOR__)
   constexpr int kTestLoop = 1000;
-#else /* __EMULATOR__ */
+#else  /* __EMULATOR__ */
   constexpr int kTestLoop = 2;
 #endif /* __EMULATOR__ */
 
@@ -511,7 +508,7 @@ int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 #else  /* __EMULATOR__ */
   constexpr int kTestLoop = 2;
 #endif /* __EMULATOR__ */
-  for(int loop = 0; loop < kTestLoop; ++loop) {
+  for (int loop = 0; loop < kTestLoop; ++loop) {
     rlLOGI(TAG, "Testing_SM2Exec %d/%d => %d", loop, kTestLoop, error);
     if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, 0x8100) < 0) {
       ++error;
@@ -1272,8 +1269,8 @@ int Testing_Curve25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) 
   constexpr int kTestLoop = 5;
 #endif /* __EMULATOR__ */
 
- for (int i = 0; i < kTestLoop; ++i) {
-   rlLOGI(TAG, "Testing_Curve25519Test %d/%d %d", i, kTestLoop, error);
+  for (int i = 0; i < kTestLoop; ++i) {
+    rlLOGI(TAG, "Testing_Curve25519Test %d/%d %d", i, kTestLoop, error);
 
     uint8_t pub1[32], pub2[32], pkey1[32], pkey2[32], sec1[32], sec2[32];
     if (rockey.GenerateKeyPairCurve25519(pub1, pkey1) < 0) {
@@ -1365,6 +1362,59 @@ int Testing_Ed25519Test(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_PKeyCountDownTest(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
+  struct TestingContext : Context_t {
+    uint8_t z_hash[32];
+    uint8_t rsa_sign[256];
+    uint32_t rsa_modules;
+
+    uint8_t sm2_pubkey[64];
+    uint8_t sm2_sign[64];
+
+    uint8_t p256_pubkey[64];
+    uint8_t p256_sign[64];
+  };
+
+  rlLOGI(TAG, "size Context : %zd", sizeof(TestingContext));
+
+  int error = 0;
+  auto* Context = (TestingContext*)Context_;
+
+  if (Context_->argv_[1]) {
+    PKEY_LICENCE licence;
+    licence.SetGlobalDecrease(true).SetLimit(10);
+    for (int i = 1; i <= 4; ++i) {
+      rockey.DeleteFile(SECRET_STORAGE_TYPE::kP256, i);
+      rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM2, i);
+      rockey.DeleteFile(SECRET_STORAGE_TYPE::kRSA, i);
+    }
+
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, 1, licence) < 0)
+      ++error;
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kP256, 256, 2, licence) < 0)
+      ++error;
+    if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 3, licence) < 0)
+      ++error;
+    if (rockey.GenerateSM2(1, &Context->sm2_pubkey[0], &Context->sm2_pubkey[32]) < 0)
+      ++error;
+    if (rockey.GenerateP256(2, &Context->p256_pubkey[0], &Context->p256_pubkey[32]) < 0)
+      ++error;
+    if (rockey.GenerateRSA(3, &Context->rsa_modules, Context->rsa_sign) < 0)
+      ++error;
+  }
+
+  rockey.RandBytes(Context->z_hash, sizeof(Context->z_hash));
+  if (rockey.SM2Sign(1, Context->z_hash, &Context->sm2_sign[0], &Context->sm2_sign[32]) < 0)
+    ++error;
+  if (rockey.P256Sign(2, Context->z_hash, &Context->p256_sign[0], &Context->p256_sign[32]) < 0)
+    ++error;
+  size_t size = 32;
+  if (rockey.RSAPrivate(3, Context->z_hash, &size, true) < 0)
+    ++error;
+
+  return error;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   const int kSizeGuardBytes = 16;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -1376,7 +1426,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 #if defined(__EMULATOR__)
   const char* const kTestingDongleFile = ".foobar-dongle.bin";
   const char* const kTestingDongleSecret = "1234567812345678";
-  Emulator  rockey(Context->permission_);
+  Emulator rockey(Context->permission_);
 
   if (rockey.Open(kTestingDongleFile, kTestingDongleSecret) < 0)
     rockey.Create(kTestingDongleSecret);
@@ -1545,6 +1595,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(Sha512Test);
   DONGLE_RUN_TESTING(Curve25519Test);
   DONGLE_RUN_TESTING(Ed25519Test);
+  DONGLE_RUN_TESTING(PKeyCountDownTest);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
@@ -1555,16 +1606,18 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   auto start = rLANG_GetTickCount();
   int main_result = 0, result3 = rockey.ExecuteExeFile(&CopyContext, sizeof(CopyContext), &main_result);
   auto end = rLANG_GetTickCount();
-  rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X, in %lld ms", result3,
-          main_result, rockey.GetLastError(), static_cast<long long>(end - start));
+  rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X, in %lld ms",
+          result3, main_result, rockey.GetLastError(), static_cast<long long>(end - start));
   if (result3 < 0)
     ++result;
 #endif /* __RockeyARM__ */
 
+#if 1
   for (int i = 0; i < kSizeGuardBytes; ++i) {
     if (GuardBytes[i] != 0xCC)
       result += 100;
   }
+#endif
 
 #if defined(__EMULATOR__)
   rockey.Write(kTestingDongleFile);
