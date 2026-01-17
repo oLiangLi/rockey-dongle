@@ -114,6 +114,7 @@ struct DonglePublic {
 
 /**! */
 rLANG_ABIREQUIRE(DonglePublicHeader::kCategory_MAGIC == rLANG_DECLARE_MAGIC_Xs("pub@k"));
+rLANG_ABIREQUIRE(DonglePublic::kFileSM2ECIES == script::VM_t::kGlobalECIESKeyId);
 
 /**! */
 rLANG_ABIREQUIRE(DonglePublic::kOffsetPubkey_SM2ECDSA == offsetof(DonglePublic, dongle_sm2ecdsa_pubkey_));

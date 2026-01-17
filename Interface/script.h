@@ -90,6 +90,7 @@ struct VM_t {
   static constexpr int kSizeStack = 16;
   static constexpr int kCyclesLimit = 0x01000000;
   static constexpr int kUserFileID = 1000; /* .LT. kUserFileID for Admin */
+  static constexpr int kGlobalECIESKeyId = 4; /* KeyId == 4 的SM2密钥, 正常只能用于加解密, 只有管理员权限允许用于签名 */
 
   uint16_t text_[kSizeCode];
   int32_t stack_[kSizeStack];

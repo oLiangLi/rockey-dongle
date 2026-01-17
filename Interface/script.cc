@@ -683,10 +683,14 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      const uint8_t* hash = static_cast<uint8_t*>(OpCheckMM(argv[1], 32));
-      uint8_t* sign = static_cast<uint8_t*>(OpCheckMM(argv[2], 64));
-      if (hash && sign)
-        value = dongle_->SM2Sign(id, hash, &sign[0], &sign[32]);
+      if(id == kGlobalECIESKeyId && valid_permission_ != PERMISSION::kAdminstrator) {
+        zero_ = -EACCES;
+      } else {
+        auto* hash = static_cast<const uint8_t*>(OpCheckMM(argv[1], 32));
+        auto* sign = static_cast<uint8_t*>(OpCheckMM(argv[2], 64));
+        if (hash && sign)
+          value = dongle_->SM2Sign(id, hash, &sign[0], &sign[32]);
+      }
     }
   } else if (op == OpCode::kSM2Decrypt) {
     cycles_ -= kCyclesInternal;
@@ -700,7 +704,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
         value = -E2BIG;
       } else {
         Dongle::SecretBuffer<512> copy;
-        uint8_t* data = static_cast<uint8_t*>(OpCheckMM(argv[1], (int)size));
+        auto* data = static_cast<uint8_t*>(OpCheckMM(argv[1], (int)size));
         if (data) {
           value = dongle_->SM2Decrypt(id, data, size, copy, &size);
           if (value >= 0) {
