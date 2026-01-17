@@ -1496,7 +1496,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     rlLOGI(TAG, "rockey.SetUserID %d/%08x", result, rockey.GetLastError());
   }
 
-  result = rockey.LimitSeedCount(10);
+  result = rockey.LimitSeedCount(-1);
   rlLOGI(TAG, "rockey.LimitSeedCount %d/%08x", result, rockey.GetLastError());
 
   result = rockey.SetExpireTime(10000);
