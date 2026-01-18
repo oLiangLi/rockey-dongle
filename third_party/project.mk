@@ -27,7 +27,7 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	cd $(BUILD_TASSL_LIBRARY_BUILD_ROOT) && emconfigure $(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-no-asm -no-threads -no-pic -no-zlib -static -no-tests linux-generic32 --openssldir=/tmp/jsCrypto/ssl
 	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install -i
+	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install_sw -i
 	touch $@
 
 endif ## Wasm build Tassl ...
@@ -65,7 +65,7 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	cd $(BUILD_TASSL_LIBRARY_BUILD_ROOT) && $(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-static -no-tests linux-x86_64 --openssldir=/tmp/jsCrypto/ssl
 	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install -i
+	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install_sw -i
 	touch $@
 
 endif ## linux build Tassl && RockeyARM ...
@@ -86,6 +86,20 @@ ifeq ("$(X4C_ARCH)-$(X4C_BUILD)","amd64-windows")
 X4C_COMMON_CFLAGS   += -I$(wORLD_ROOT)/third_party/RockeyARM/amd64-windows/include
 X4C_COMMON_CXXFLAGS += -I$(wORLD_ROOT)/third_party/RockeyARM/amd64-windows/include
 X4C_COMMON_LDFLAGS  += $(wORLD_ROOT)/third_party/RockeyARM/amd64-windows/lib/Dongle_s.lib /NODEFAULTLIB:LIBCMT.LIB
+
+ifneq ("$(rLANG_CONFIG_WIN64_TASSL_ROOT)","")
+
+##
+## install Python && Strawberry ...
+## 1) perl ../Configure VC-WIN64A --prefix=X:\Machine\TASSL-1.1.1 -static
+## 2) nmake && nmake install_sw
+##
+
+X4C_COMMON_CFLAGS   += -I"$(rLANG_CONFIG_WIN64_TASSL_ROOT)/include"
+X4C_COMMON_CXXFLAGS += -I"$(rLANG_CONFIG_WIN64_TASSL_ROOT)/include"
+X4C_COMMON_LDFLAGS  += "$(rLANG_CONFIG_WIN64_TASSL_ROOT)/lib/libssl.lib" "$(rLANG_CONFIG_WIN64_TASSL_ROOT)/lib/libcrypto.lib"
+
+else ## rLANG_CONFIG_WIN64_TASSL_ROOT ...
 
 ##
 ##
@@ -114,9 +128,10 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	cd $(BUILD_TASSL_LIBRARY_BUILD_ROOT) && $(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-no-tests mingw64 --cross-compile-prefix=x86_64-w64-mingw32- --openssldir=/tmp/jsCrypto/ssl
 	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) install -i
+	$(MAKE) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) install_sw -i
 	install -m $(SO_INSTALL_MODE) $(THIRD_PARTY_INSTALL_PREFIX)/bin/libcrypto-1_1-x64.dll "$(THIRD_PARTY_INSTALL_BINARY)"
 	install -m $(SO_INSTALL_MODE) $(THIRD_PARTY_INSTALL_PREFIX)/bin/libssl-1_1-x64.dll "$(THIRD_PARTY_INSTALL_BINARY)"
 	touch $@
 
+endif ## rLANG_CONFIG_WIN64_TASSL_ROOT ...
 endif ## windows build Tassl && RockeyARM ...
