@@ -3,7 +3,7 @@ const crypto = require("crypto");
 const rLANG_MATRIX_TEXT_OFFSET = 0;
 const rlTXT_SIZEMAX = 65520;
 const rlFillHeader = true;
-const rlPaddingFile = process.argv[4] === "--padding-file";
+const rlPaddingFile = true; /// process.argv[4] === "--padding-file";
 
 function err(m) {
   throw new Error(m);

@@ -31,6 +31,7 @@
 @
 	.thumb_func
         .global _start
+		.weak _start
 _start:
 	bl main
 	@ fallthrough to exit()	
