@@ -204,6 +204,10 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
     /// 2) 应该彻底的忘记管理员PIN码以避免uKey内容被无意识的修改或者读取    ...
     ///
     rlLOGE(TAG, "TODO: LiangLI, implements Lock dongle ....");
+  } else if (0 == strncmp(type, "uid=", 4)) {
+    uint32_t uid = strtoul(type + 4, nullptr, 16);
+    result = dongle->SetUserID(uid);
+    rlLOGW(TAG, "dongle->SetUserID %08X => %d", (int)uid, result);
   } else {
     rlLOGE(TAG, "##ENOENT: Utilities.%s NOT IMPLEMENTS YET!!", type);
   }
