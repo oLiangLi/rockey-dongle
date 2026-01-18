@@ -683,7 +683,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if(id == kGlobalECIESKeyId && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id == kKeyIdGlobalSM2ECIES && valid_permission_ != PERMISSION::kAdminstrator) {
         zero_ = -EACCES;
       } else {
         auto* hash = static_cast<const uint8_t*>(OpCheckMM(argv[1], 32));

@@ -35,6 +35,12 @@
 
 rLANG_DECLARE_MACHINE
 
+/**
+ *! v1.1
+ */
+#define rLANG_DONGLE_VERSION_MAJOR 1
+#define rLANG_DONGLE_VERSION_MINOR 1
+
 namespace dongle {
 namespace script {
 
@@ -47,6 +53,10 @@ namespace script {
 ///
 struct VM_t {
   VM_t(Dongle* dongle, void* data, void* buffer);
+
+  VM_t(const VM_t&) = delete;
+  VM_t& operator=(const VM_t&) = delete;
+
   int Initialize(const void* text, int szText, int szOut);
   int Execute();
 
@@ -90,7 +100,18 @@ struct VM_t {
   static constexpr int kSizeStack = 16;
   static constexpr int kCyclesLimit = 0x01000000;
   static constexpr int kUserFileID = 1000; /* .LT. kUserFileID for Admin */
-  static constexpr int kGlobalECIESKeyId = 4; /* KeyId == 4 的SM2密钥, 正常只能用于加解密, 只有管理员权限允许用于签名 */
+
+  /**
+   *! KeyId == 1, 2, 3 的密钥正常用于签名, 从未导出私钥, 由于无法备份私钥, 不应该用于数据加密 ...
+   */
+  static constexpr int kKeyIdGlobalSM2ECDSA = 1;  /* SM2/PKI-Login/Local-Encrypt */
+  static constexpr int kKeyIdGlobalP256ECDSA = 2; /* P256/PKI-Local-Admin */
+  static constexpr int kKeyIdGlobalRSA2048 = 3;   /* RSA/PKI-Cloud-Login  */
+
+  /**
+   *! KeyId == 4 的SM2密钥, 正常只能用于加解密, 只有管理员权限允许用于签名 ...
+   */
+  static constexpr int kKeyIdGlobalSM2ECIES = 4; /* SM2/PKI-Encrypt/Text-Verify */
 
   uint16_t text_[kSizeCode];
   int32_t stack_[kSizeStack];
@@ -105,6 +126,127 @@ struct VM_t {
   uint8_t nstk_ = 0;
   uint8_t pc_ = 0;
 };
+
+/**
+ *! 第一次运行脚本, 由于 RSA2048-MASTER-KEY (id=3) 未建立, ScriptText只能以明文进行调用 ...
+ */
+struct WorldCreateHeader {
+  uint32_t zero_;
+  uint32_t world_magic_;
+  uint32_t create_magic_;
+  uint32_t target_magic_;
+
+  static constexpr uint32_t kMagicCreate = 0x0D214153;  // rLANG_DECLARE_MAGIC_Xs("CREAT");
+  static constexpr uint32_t kMagicWorld = 0x5CF48C13;   // rLANG_DECLARE_MAGIC_Xs("WORLD");
+};
+
+rLANG_ABIREQUIRE(WorldCreateHeader::kMagicCreate == rLANG_DECLARE_MAGIC_Xs("CREAT"));
+rLANG_ABIREQUIRE(WorldCreateHeader::kMagicWorld == rLANG_DECLARE_MAGIC_Xs("WORLD"));
+
+/**
+ *! 在主密钥生成以后, ScriptText 必须加密到 RSA2048-MASTER-KEY ...
+ */
+struct ScriptText {
+  uint32_t file_magic_;  // if (file_magic_ == kAdminFileMagic) PERMISSION::kAdminstrator require ...
+  uint8_t ver_major_;
+  uint8_t ver_minor_;
+  uint16_t size_public_;
+  uint16_t script_[script::VM_t::kSizeCode];
+  uint8_t nonce_[16];
+  uint8_t check_[16];                                      // ChaCha20Poly.Open(data + check) ...
+  static constexpr uint32_t kAdminFileMagic = 0x0443493B;  // rLANG_DECLARE_MAGIC_Xs("ADMIN");
+};
+rLANG_ABIREQUIRE(ScriptText::kAdminFileMagic == rLANG_DECLARE_MAGIC_Xs("ADMIN"));
+rLANG_ABIREQUIRE(sizeof(WorldCreateHeader) == 16 && sizeof(ScriptText) == 240);
+
+/**
+ *! 全局的密钥信息保存在数据文件偏移 7KB 的位置, 大小为 1024 ...
+ */
+struct WorldPublic {
+  struct Header {
+    /*     0 */ uint32_t world_magic_;     // rLANG_WORLD_MAGIC
+    /*     4 */ uint32_t category_magic_;  // rLANG_DECLARE_MAGIC_Xs("pub@k") || rLANG_DECLARE_MAGIC_Xs("adm@k")
+    /*     8 */ uint32_t reserved_0_;      // Reserved, must == 0 ...
+    /*    12 */ uint32_t reserved_1_;      // Reserved, must == 0 ...
+    /*    16 */ uint8_t ver_major_;        // rLANG_DONGLE_VERSION_MAJOR ...
+    /*    17 */ uint8_t ver_minor_;        // rLANG_DONGLE_VERSION_MINOR ...
+    /*    18 */ uint16_t siz_public_;      // sizeof(WorldPublic) == 1024 ...
+  };
+
+  /*     0 */ Header header_;
+  /*    20 */ uint8_t dongle_sm2ecdsa_pubkey_[64];
+  /*    84 */ uint8_t dongle_secp256r1_pubkey_[64];
+  /*   148 */ uint8_t dongle_rsa2048_pubkey_[260];
+  /*   408 */ uint8_t dongle_sm2ecies_pubkey_[64];
+
+  /*   472 */ uint8_t dongle_nonce_1_[32];  // Dongle choice 32B RandBytes ...
+  /*   504 */ DONGLE_INFO dongle_info_;     // verify dongle device ...
+  /*   544 */ uint8_t dongle_nonce_2_[32];  // Admin choice 32B RandBytes ...
+
+  /*   576 */ uint8_t dongle_sm2ecies_sign_[64];   // sm2(4).sign(SM3(0...offsetof($$))) ...
+  /*   640 */ uint8_t dongle_rsa2048_sign_[256];   // rsa(3).sign(SHA256(0...offsetof($$))) ...
+  /*   896 */ uint8_t dongle_secp256r1_sign_[64];  // p256(2).sign(SHA256(0...offsetof($$))) ...
+  /*   960 */ uint8_t dongle_sm2ecdsa_sign_[64];   // sm2(1).sign(SM3(0...offsetof($$))) ...
+
+  /**
+   *!
+   */
+  static constexpr uint32_t kCategoryHeaderMagicPublic = 0xC35880AF; // public domain ...
+  static constexpr uint32_t kCategoryHeaderMagicAdmin = 0x864B40AF; // admin domain ...
+
+  /**
+   *! ... Dongle 全局状态(1024字节)保存在 &kData[kOffsetDataFile] ...
+   */
+  static constexpr size_t kOffsetDataFile = 7 * 1024;
+
+  static constexpr int kFileSM2ECDSA = 1;
+  static constexpr int kFileSECP256r1 = 2;
+  static constexpr int kFileRSA2048 = 3;
+  static constexpr int kFileSM2ECIES = 4;
+
+  static constexpr size_t kOffsetPubkey_SM2ECDSA = 20;
+  static constexpr size_t kOffsetPubkey_Secp256r1 = 84;
+  static constexpr size_t kOffsetPubkey_RSA2048 = 148;
+  static constexpr size_t kOffsetPubkey_SM2ECIES = 408;
+
+  static constexpr size_t kOffsetDongleNonce1 = 472;
+  static constexpr size_t kOffsetDongleInfo = 504;
+  static constexpr size_t kOffsetDongleNonce2 = 544;
+
+  static constexpr size_t kOffsetSign_SM2ECIES = 576;
+  static constexpr size_t kOffsetSign_RSA2048 = 640;
+  static constexpr size_t kOffsetSign_Secp256r1 = 896;
+  static constexpr size_t kOffsetSign_SM2ECDSA = 960;
+  static constexpr size_t kSizePublic = 1024;
+};
+
+rLANG_ABIREQUIRE(WorldPublic::kCategoryHeaderMagicPublic == rLANG_DECLARE_MAGIC_Xs("pub@k"));
+rLANG_ABIREQUIRE(WorldPublic::kCategoryHeaderMagicAdmin == rLANG_DECLARE_MAGIC_Xs("adm@k"));
+
+rLANG_ABIREQUIRE(WorldPublic::kFileSM2ECDSA == VM_t::kKeyIdGlobalSM2ECDSA);
+rLANG_ABIREQUIRE(WorldPublic::kFileSECP256r1 == VM_t::kKeyIdGlobalP256ECDSA);
+rLANG_ABIREQUIRE(WorldPublic::kFileRSA2048 == VM_t::kKeyIdGlobalRSA2048);
+rLANG_ABIREQUIRE(WorldPublic::kFileSM2ECIES == VM_t::kKeyIdGlobalSM2ECIES);
+
+rLANG_ABIREQUIRE(WorldPublic::kOffsetPubkey_SM2ECDSA == offsetof(WorldPublic, dongle_sm2ecdsa_pubkey_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetPubkey_Secp256r1 == offsetof(WorldPublic, dongle_secp256r1_pubkey_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetPubkey_RSA2048 == offsetof(WorldPublic, dongle_rsa2048_pubkey_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetPubkey_SM2ECIES == offsetof(WorldPublic, dongle_sm2ecies_pubkey_));
+
+rLANG_ABIREQUIRE(WorldPublic::kOffsetDongleNonce1 == offsetof(WorldPublic, dongle_nonce_1_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetDongleInfo == offsetof(WorldPublic, dongle_info_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetDongleNonce2 == offsetof(WorldPublic, dongle_nonce_2_));
+
+rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_SM2ECIES == offsetof(WorldPublic, dongle_sm2ecies_sign_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_RSA2048 == offsetof(WorldPublic, dongle_rsa2048_sign_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_Secp256r1 == offsetof(WorldPublic, dongle_secp256r1_sign_));
+rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_SM2ECDSA == offsetof(WorldPublic, dongle_sm2ecdsa_sign_));
+rLANG_ABIREQUIRE(WorldPublic::kSizePublic == sizeof(WorldPublic) && 1024 == sizeof(WorldPublic));
+
+/**
+ *!
+ */
+rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf);
 
 enum class OpCode : uint16_t {
   /**
