@@ -466,7 +466,7 @@ int Dongle::P256Sign(const uint8_t prikey[32], const uint8_t hash[32], uint8_t R
       BN_bn2binpad(ECDSA_SIG_get0_r(s), R, 32);
       BN_bn2binpad(ECDSA_SIG_get0_s(s), S, 32);
       ECDSA_SIG_free(s);
-      ret = 0;    
+      ret = 0;
     }
     EVP_PKEY_CTX_free(pkeyCtx);
     EVP_PKEY_free(pkey);
@@ -718,7 +718,7 @@ int Dongle::SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
   return DONGLE_CHECK(
       Dongle_SM4(handle_, id, encrypt ? FLAG_ENCODE : FLAG_DECODE, buffer, buffer, static_cast<int>(size)));
 }
-int Dongle::SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt) {  
+int Dongle::SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool encrypt) {
   SM4_KEY sm4key;
   DONGLE_VERIFY(size % 16 == 0 && SM4_set_key(key, &sm4key));
   if (encrypt) {
@@ -731,7 +731,6 @@ int Dongle::SM4ECB(const uint8_t key[16], uint8_t* buffer, size_t size, bool enc
 
   return 0;
 }
-
 
 void Dongle::Abort() {
   abort();
@@ -760,7 +759,6 @@ int RockeyARM::Enum(DONGLE_INFO info[64]) {
   return count;
 }
 
-
 int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
   int dummy;
   int flags = FLAG_USERPIN;
@@ -772,8 +770,7 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
     flags = FLAG_ADMINPIN;
     if (!pin)
       pin = CONST_ADMINPIN;
-  }
-  else if (perm == PERMISSION::kNormal) {
+  } else if (perm == PERMISSION::kNormal) {
     flags = FLAG_USERPIN;
     if (!pin)
       pin = CONST_USERPIN;
@@ -790,7 +787,7 @@ int RockeyARM::ResetState() {
   return DONGLE_CHECK(Dongle_ResetState(handle_));
 }
 
-int RockeyARM::UpdateExeFile(const void* file, size_t size) {
+int RockeyARM::UpdateExeFile(const void* file, size_t size, PERMISSION permission) {
   EXE_FILE_INFO info;
   if (size >= 0xFFF8)
     return last_error_ = -E2BIG;
@@ -799,7 +796,7 @@ int RockeyARM::UpdateExeFile(const void* file, size_t size) {
 
   info.m_dwSize = static_cast<WORD>(size);
   info.m_wFileID = 1;
-  info.m_Priv = 0;
+  info.m_Priv = static_cast<int>(permission);
   info.m_pData = const_cast<uint8_t*>(static_cast<const uint8_t*>(file));
   return DONGLE_CHECK(Dongle_DownloadExeFile(handle_, &info, 1));
 }
@@ -839,14 +836,26 @@ int RockeyARM::ChangePIN(PERMISSION perm, const char* old, const char* pin, int 
 int RockeyARM::ResetUserPIN(const char* admin) {
   return DONGLE_CHECK(Dongle_ResetUserPIN(handle_, const_cast<char*>(admin)));
 }
+const char* RockeyARM::GetDefaultPIN(PERMISSION permission) {
+  if (permission == PERMISSION::kAdminstrator)
+    return CONST_ADMINPIN;
+  else if (permission == PERMISSION::kNormal)
+    return CONST_USERPIN;
+  else
+    return nullptr;
+}
 int RockeyARM::GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]) {
   return DONGLE_CHECK(
       Dongle_GenUniqueKey(handle_, static_cast<int>(len), static_cast<uint8_t*>(const_cast<void*>(seed)), pid, admin));
 }
 int RockeyARM::FactoryReset() {
   int result = DONGLE_CHECK(Dongle_RFS(handle_));
-  if (result >= 0)
-    Close();
+  if (result >= 0) {
+    handle_ = nullptr;
+    /* Close raise SIGSEGV */
+    // Close();
+  }
+
   return result;
 }
 
@@ -873,7 +882,7 @@ int RockeyARM::Open(int index) {
   return 0;
 }
 
-int RockeyARM::Close(){
+int RockeyARM::Close() {
   if (!handle_)
     return 0;
 
@@ -882,6 +891,6 @@ int RockeyARM::Close(){
   return DONGLE_CHECK(Dongle_Close(handle));
 }
 
-} // namespace dongle
+}  // namespace dongle
 
 rLANG_DECLARE_END

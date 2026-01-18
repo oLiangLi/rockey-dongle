@@ -447,7 +447,7 @@ class RockeyARM : public Dongle {
   virtual int VerifyPIN(PERMISSION perm, const char* pin, int* remain);
   virtual int ResetState();
 
-  virtual int UpdateExeFile(const void* file, size_t size);
+  virtual int UpdateExeFile(const void* file, size_t size, PERMISSION permission = PERMISSION::kAnonymous);
   virtual int ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret);
 
   virtual int LimitSeedCount(int count);
@@ -458,6 +458,7 @@ class RockeyARM : public Dongle {
   virtual int ResetUserPIN(const char* admin);
 
  public:
+  virtual const char* GetDefaultPIN(PERMISSION permission = PERMISSION::kAdminstrator);
   virtual int GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]);
   virtual int FactoryReset();
 };

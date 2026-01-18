@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <base/base.h>
 #include <tuple>
@@ -21,7 +21,7 @@ namespace dongle {
 
 static constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SHELL");
 
-template <class _Ty>
+template <class _Ty = RockeyARM>
 int Main(void* InOutBuf, void* ExtendBuf, _Ty* dongle) {
   int result = 0;
 
@@ -50,6 +50,169 @@ int Main(void* InOutBuf, void* ExtendBuf, _Ty* dongle) {
   return result;
 }
 
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
+char* StringFromHID(char* hid, const uint8_t v[12]) {
+  rl_HEX_Write(hid, v, 12);
+  memmove(&hid[9], &hid[8], 17);
+  hid[8] = '-'; /* 012345678-091234... */
+  for (char* p = hid; *p; ++p) {
+    *p = tolower(*p);
+  }
+  return hid;
+}
+
+int OpenRockeyById(const uint8_t use_hid[12], RockeyARM& rockey) {
+  DONGLE_INFO info[64];
+  int rockey_count = rockey.Enum(info);
+  int rockey_select = -1;
+  for (int i = 0; i < rockey_count; ++i) {
+    if (0 == memcmp(info[i].hid_, use_hid, 12)) {
+      rockey_select = i;
+      break;
+    }
+  }
+
+  char s_hid_1[50], s_hid_2[50];
+  if (rockey_select < 0 || 0 != rockey.Open(rockey_select)) {
+    rlLOGE(TAG, "Can't open dongle: %s", StringFromHID(s_hid_1, use_hid));
+    return -ENOENT;
+  }
+
+  if (0 != rockey.GetDongleInfo(&info[0]) || 0 != memcmp(use_hid, info[0].hid_, 12)) {
+    rlLOGE(TAG, "Open dongle hid mismatch %s %s", StringFromHID(s_hid_1, use_hid),
+           StringFromHID(s_hid_2, info[0].hid_));
+    return -EFAULT;
+  }
+
+  return 0;
+}
+
+int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
+  int result = 0;
+
+  DONGLE_INFO dongle_info_;
+  result = dongle->GetDongleInfo(&dongle_info_);
+  if (0 != result)
+    return result;
+
+  enum class EncodeFormat : int { kHex, kBase64 };
+  auto ReadLine = [](uint8_t* line, int size, EncodeFormat encode, const char* prompt) {
+    int bytes = 0;
+    constexpr int kInputLimit = 128 * 1024;
+    rlLOGW(TAG, "Input %s, size: %d:", prompt, size);
+    Dongle::SecretBuffer<kInputLimit, char> sline_;
+    Dongle::SecretBuffer<kInputLimit> buffer_;
+
+    memset(&buffer_[0], 0, kInputLimit);
+
+    for (;;) {
+      memset(&sline_[0], 0, kInputLimit);
+      if (!fgets(&sline_[0], kInputLimit - 1, stdin))
+        return -EIO;
+      if (sline_[0] && sline_[0] != '\r' && sline_[0] != '\n')
+        break;
+    }
+
+    if (encode == EncodeFormat::kBase64)
+      bytes = rl_BASE64_Read(&buffer_[0], &sline_[0], -1);
+    else
+      bytes = rl_HEX_Read(&buffer_[0], &sline_[0], -1);
+
+    if (bytes == size) {
+      memcpy(line, &buffer_[0], size);
+      return 0;
+    }
+
+    rlLOGE(TAG, "ReadLine %s size: %d, read: %d", prompt, size, bytes);
+    return -EIO;
+  };
+
+  rlLOGI(TAG, ">>>> Enter Utilities.%s ....", type);
+  if (0 == strcmp(type, "factory")) {
+    constexpr int kSizeSeed = 64;
+    constexpr int kSizeFile = 65520;
+
+    ///
+    /// 工厂设置需要输入以下内容:
+    /// 1) 64字节的种子码, 使用HEX编码, 请牢记种子码对应PIN码 ...
+    /// 2) 65520字节的RockeyTrust.bin, 使用base64编码 ...
+    /// 3) SHA256(种子码+程序), 32字节, 使用HEX编码 ...
+    ///
+    Dongle::SecretBuffer<kSizeSeed + kSizeFile + 32> init_;
+    result = ReadLine(&init_[0], kSizeSeed + kSizeFile + 32, EncodeFormat::kBase64, "Input Seed/ExeFile/Verify:");
+
+    if (0 == result) {
+      uint8_t verify[32];
+      Sha256Ctx().Init().Update(&init_[0], kSizeSeed + kSizeFile).Final(verify);
+      if (0 != memcmp(&init_[kSizeSeed + kSizeFile], verify, 32)) {
+        rlLOGE(TAG, "SHA256.Verify Failed!");
+        result = -EBADMSG;
+      } else {
+        rlLOGXI(TAG, verify, sizeof(verify), "Verify INPUT.SHA256 OK:");
+      }
+    }
+
+    if (0 == result)
+      result = dongle->FactoryReset();
+
+    RockeyARM factory_;
+    if (0 == result) {
+      rlLOGI(TAG, "dongle->FactoryReset OK!");
+      for(int loop = 0; loop < 10; ++loop) {
+#if defined(_WIN32)
+        ::Sleep(1000);
+#else  /* */
+        ::usleep(1'000'000);
+#endif /* */
+        result = OpenRockeyById(dongle_info_.hid_, factory_);
+        rlLOGI(TAG, "Open dongle loop %d => %d", loop, result);
+        if(0 == result)
+          break;
+      }
+
+      if (0 == result)
+        dongle = &factory_;
+    }
+
+    const char* const default_admin_pin_ = dongle->GetDefaultPIN(PERMISSION::kAdminstrator);
+    if (0 == result)
+      result = dongle->VerifyPIN(PERMISSION::kAdminstrator, default_admin_pin_, nullptr);
+
+    if (0 == result) {
+      char admin[32], pid[10], stag_[10];
+      result = dongle->GenUniqueKey(&init_[0], kSizeSeed, pid, admin);
+      rlLOGW(TAG, "dongle->GenUniqueKey: pid %s/%s, admin: %s => %d", pid,
+             rLANG_DECLARE_MAGIC_Vs(strtoul(pid, nullptr, 16), stag_), admin, result);
+      if (0 == result) {
+        result = dongle->ChangePIN(PERMISSION::kAdminstrator, admin, default_admin_pin_, 255);
+        rlLOGW(TAG, "dongle->ChangePIN.default => %d", result);
+        if(0 == result) {
+          result = dongle->VerifyPIN(PERMISSION::kAdminstrator, default_admin_pin_, nullptr);
+          rlLOGW(TAG, "dongle->VerifyPIN.default => %d", result);
+        }
+      }
+    }
+
+    if(0 == result) {
+      result = dongle->UpdateExeFile(&init_[kSizeSeed], kSizeFile);
+      rlLOGW(TAG, "dongle->UpdateExeFile => %d", result);
+    }
+  } else if (0 == strcmp(type, "lock")) {
+    ///
+    /// 当 KeyID : 1,2,3,4 已经被正确的创建, 系统初始化完成
+    /// 1) 我们可以使用SM2ECIES签名的代码作为管理员运行, 不应该再有管理员了 ...
+    /// 2) 应该彻底的忘记管理员PIN码以避免uKey内容被无意识的修改或者读取    ...
+    ///
+    rlLOGE(TAG, "TODO: LiangLI, implements Lock dongle ....");
+  } else {
+    rlLOGE(TAG, "##ENOENT: Utilities.%s NOT IMPLEMENTS YET!!", type);
+  }
+  rlLOGI(TAG, ">>>> Leave Utilities.%s => %d", type, result);
+  return result;
+}
+
+#endif /* !defined(__RockeyARM__) && !defined(__EMULATOR__) */
+
 #if defined(__RockeyARM__) && !defined(__EMULATOR__)
 int Start(void* InOutBuf, void* ExtendBuf) {
   Dongle rockey;
@@ -69,6 +232,7 @@ int main(int argc, char* argv[]) {
   uint64_t InOutBuf[(3 << 10) / 8] = {0};
   uint64_t ExtendBuf[(1 << 10) / 8] = {0};
 
+  int result = 0;
   int stdout_ = dup(fileno(stdout));
 
   /**
@@ -114,22 +278,9 @@ int main(int argc, char* argv[]) {
     rockey.Create(dongleSecret);
 #elif !defined(__RockeyARM__)
   RockeyARM rockey;
-  DONGLE_INFO info[64];
-  int rockey_count = rockey.Enum(info);
-  int rockey_select = -1;
-
-  auto StringFromHID = [](char* hid, const uint8_t v[12]) {
-    rl_HEX_Write(hid, v, 12);
-    memmove(&hid[9], &hid[8], 17);
-    hid[8] = '-'; /* 012345678-091234... */
-    for (char* p = hid; *p; ++p) {
-      *p = tolower(*p);
-    }
-    return hid;
-  };
-
   if (argc < 3) {
-    const int count = rockey_count;
+    DONGLE_INFO info[64];
+    const int count = rockey.Enum(info);
     rlLOGE(TAG, "usage: RockeyARM <input> <hid> [admin]");
 
     for (int i = 0; i < count; ++i) {
@@ -165,26 +316,11 @@ int main(int argc, char* argv[]) {
   }
   rl_HEX_Read(use_hid, hexHid, 24);
 
-  for (int i = 0; i < rockey_count; ++i) {
-    if (0 == memcmp(info[i].hid_, use_hid, 12)) {
-      rockey_select = i;
-      break;
-    }
-  }
-
+  DONGLE_INFO dongle_info_;
   char s_hid_1[50], s_hid_2[50];
-  if (rockey_select < 0 || 0 != rockey.Open(rockey_select)) {
-    rlLOGE(TAG, "Can't open dongle: %s", StringFromHID(s_hid_1, use_hid));
-    exit(EXIT_FAILURE);
-  }
 
-  if (0 != rockey.GetDongleInfo(&info[0]) || 0 != memcmp(use_hid, info[0].hid_, 12)) {
-    rlLOGE(TAG, "Open dongle hid mismatch %s %s", StringFromHID(s_hid_1, use_hid),
-           StringFromHID(s_hid_2, info[0].hid_));
-    exit(EXIT_FAILURE);
-  }
-
-  if (0 != rockey.ResetState()) {
+  result = OpenRockeyById(use_hid, rockey);
+  if (0 != result || 0 != rockey.ResetState()) {
     rlLOGE(TAG, "rockey.ResetState Failed!");
     exit(EXIT_FAILURE);
   }
@@ -198,13 +334,16 @@ int main(int argc, char* argv[]) {
     }
   } else {
     if (rockey.ReadDataFile(Dongle::kFactoryDataFileId, WorldPublic::kOffsetDataFile + WorldPublic::kOffsetDongleInfo,
-                            &info[0], sizeof(DONGLE_INFO)) < 0 ||
-        0 != memcmp(use_hid, info[0].hid_, 12)) {
+                            &dongle_info_, sizeof(DONGLE_INFO)) < 0 ||
+        0 != memcmp(use_hid, dongle_info_.hid_, 12)) {
       rlLOGE(TAG, "Open dongle hid mismatch %s %s!!", StringFromHID(s_hid_1, use_hid),
-             StringFromHID(s_hid_2, info[0].hid_));
+             StringFromHID(s_hid_2, dongle_info_.hid_));
       exit(EXIT_FAILURE);
     }
   }
+
+  if (argv[1][0] == '-' && argv[1][1] == '-')
+    return Utilities(stdout_, argv[1] + 2, &rockey);
 #endif /* __EMULATOR__ || !__RockeyARM__ */
 
   char line[4 * 1024] = {0};
@@ -234,7 +373,7 @@ int main(int argc, char* argv[]) {
   memcpy(InOutBuf, binary, 1024);
 
   long long ts = rLANG_GetTickCount();
-  int result = Main(InOutBuf, ExtendBuf, &rockey);
+  result = Main(InOutBuf, ExtendBuf, &rockey);
   ts = rLANG_GetTickCount() - ts;
 
   if (0 == result) {
