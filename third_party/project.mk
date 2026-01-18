@@ -91,7 +91,7 @@ ifneq ("$(rLANG_CONFIG_WIN64_TASSL_ROOT)","")
 
 ##
 ## install Python && Strawberry ...
-## 1) perl ../Configure VC-WIN64A --prefix=X:\Machine\TASSL-1.1.1 -static
+## 1) perl ../Configure VC-WIN64A --prefix=X:\Machine\TASSL-1.1.1 -static -no-tests
 ## 2) nmake && nmake install_sw
 ##
 

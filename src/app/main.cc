@@ -7,7 +7,6 @@
 #include <corecrt_io.h>
 #elif !defined(__RockeyARM__)
 #include <errno.h>
-#include <execinfo.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>

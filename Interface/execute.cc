@@ -25,12 +25,10 @@ static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szDat
   rlCryptoChaChaPolyStarts(&ctx, sm3, 0);
   rlCryptoChaChaPolyUpdate(&ctx, vmdata, vmdata, szData);
   rlCryptoChaChaPolyFinish(&ctx, mac);
-#if 0
   if (0 != memcmp(mac, text->check_, 16)) {
     rlLOGE(TAG, "CryptoChaChaPoly.mac error, size %zd!", szData);
     return -EINVAL;
   }
-#endif
   return 0;
 }
 
