@@ -113,6 +113,13 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
         break;
     }
 
+    for (int i = 0; i < kInputLimit; ++i) {
+      if (sline_[i] == '\r' || sline_[i] == '\n')
+        sline_[i] = 0;
+      if (sline_[i] == 0)
+        break;
+    }
+
     if (encode == EncodeFormat::kBase64)
       bytes = rl_BASE64_Read(&buffer_[0], &sline_[0], -1);
     else
@@ -129,22 +136,21 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
 
   rlLOGI(TAG, ">>>> Enter Utilities.%s ....", type);
   if (0 == strcmp(type, "factory")) {
+    constexpr int kSizeUid = 4;
     constexpr int kSizeSeed = 64;
     constexpr int kSizeFile = 65520;
+    constexpr int kSizeTotal = kSizeUid + kSizeSeed + kSizeFile;
 
     ///
-    /// 工厂设置需要输入以下内容:
-    /// 1) 64字节的种子码, 使用HEX编码, 请牢记种子码对应PIN码 ...
-    /// 2) 65520字节的RockeyTrust.bin, 使用base64编码 ...
-    /// 3) SHA256(种子码+程序), 32字节, 使用HEX编码 ...
+    /// 工厂设置需要输入以下内容(请牢记种子码对应PIN码): || UID[4] | SEED[64] | TRUST[65520] | SHA256[32] ||
     ///
-    Dongle::SecretBuffer<kSizeSeed + kSizeFile + 32> init_;
-    result = ReadLine(&init_[0], kSizeSeed + kSizeFile + 32, EncodeFormat::kBase64, "Input Seed/ExeFile/Verify:");
+    Dongle::SecretBuffer<kSizeTotal + 32> init_;
+    result = ReadLine(&init_[0], kSizeTotal + 32, EncodeFormat::kBase64, "Input UID/Seed/ExeFile/Verify:");
 
     if (0 == result) {
       uint8_t verify[32];
-      Sha256Ctx().Init().Update(&init_[0], kSizeSeed + kSizeFile).Final(verify);
-      if (0 != memcmp(&init_[kSizeSeed + kSizeFile], verify, 32)) {
+      Sha256Ctx().Init().Update(&init_[0], kSizeTotal).Final(verify);
+      if (0 != memcmp(&init_[kSizeTotal], verify, 32)) {
         rlLOGE(TAG, "SHA256.Verify Failed!");
         result = -EBADMSG;
       } else {
@@ -158,7 +164,7 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
     RockeyARM factory_;
     if (0 == result) {
       rlLOGI(TAG, "dongle->FactoryReset OK!");
-      for(int loop = 0; loop < 10; ++loop) {
+      for (int loop = 0; loop < 10; ++loop) {
 #if defined(_WIN32)
         ::Sleep(1000);
 #else  /* */
@@ -166,7 +172,7 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
 #endif /* */
         result = OpenRockeyById(dongle_info_.hid_, factory_);
         rlLOGI(TAG, "Open dongle loop %d => %d", loop, result);
-        if(0 == result)
+        if (0 == result)
           break;
       }
 
@@ -179,22 +185,30 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
       result = dongle->VerifyPIN(PERMISSION::kAdminstrator, default_admin_pin_, nullptr);
 
     if (0 == result) {
+      uint32_t uid = 0;
+      for (int i = 0; i < kSizeUid; ++i)
+        uid = (uid << 8) | init_[i];
+
       char admin[32], pid[10], stag_[10];
-      result = dongle->GenUniqueKey(&init_[0], kSizeSeed, pid, admin);
+      result = dongle->GenUniqueKey(&init_[kSizeUid], kSizeSeed, pid, admin);
       rlLOGW(TAG, "dongle->GenUniqueKey: pid %s/%s, admin: %s => %d", pid,
              rLANG_DECLARE_MAGIC_Vs(strtoul(pid, nullptr, 16), stag_), admin, result);
       if (0 == result) {
         result = dongle->ChangePIN(PERMISSION::kAdminstrator, admin, default_admin_pin_, 255);
         rlLOGW(TAG, "dongle->ChangePIN.default => %d", result);
-        if(0 == result) {
+        if (0 == result) {
           result = dongle->VerifyPIN(PERMISSION::kAdminstrator, default_admin_pin_, nullptr);
           rlLOGW(TAG, "dongle->VerifyPIN.default => %d", result);
+        }
+        if (0 == result) {
+          result = dongle->SetUserID(uid);
+          rlLOGW(TAG, "dongle->SetUserID %08X => %d", (int)uid, result);
         }
       }
     }
 
-    if(0 == result) {
-      result = dongle->UpdateExeFile(&init_[kSizeSeed], kSizeFile);
+    if (0 == result) {
+      result = dongle->UpdateExeFile(&init_[kSizeUid + kSizeSeed], kSizeFile);
       rlLOGW(TAG, "dongle->UpdateExeFile => %d", result);
     }
   } else if (0 == strcmp(type, "lock")) {
@@ -204,15 +218,14 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
     /// 2) 应该彻底的忘记管理员PIN码以避免uKey内容被无意识的修改或者读取    ...
     ///
     rlLOGE(TAG, "TODO: LiangLI, implements Lock dongle ....");
-  } else if (0 == strncmp(type, "uid=", 4)) {
-    uint32_t uid = strtoul(type + 4, nullptr, 16);
-    result = dongle->SetUserID(uid);
-    rlLOGW(TAG, "dongle->SetUserID %08X => %d", (int)uid, result);
   } else {
     rlLOGE(TAG, "##ENOENT: Utilities.%s NOT IMPLEMENTS YET!!", type);
   }
   rlLOGI(TAG, ">>>> Leave Utilities.%s => %d", type, result);
-  return result;
+
+  if (0 == result && 4 != write(stdout_, "OK\n\n", 4))
+    result = -EIO;
+  return result == 0 ? 0 : EXIT_FAILURE;
 }
 
 #endif /* !defined(__RockeyARM__) && !defined(__EMULATOR__) */
@@ -282,6 +295,34 @@ int main(int argc, char* argv[]) {
     rockey.Create(dongleSecret);
 #elif !defined(__RockeyARM__)
   RockeyARM rockey;
+  if (argc >= 2 && 0 == strcmp(argv[1], "--list")) {
+    char line[2048] = "";
+    DONGLE_INFO info[64];
+    uint8_t output[64 * 12 + 32];
+    int count = rockey.Enum(info);
+
+    if (count < 0 || count > 64)
+      count = 0;
+
+    const int kSizeTotal = count * 12;
+    for (int i = 0; i < count; ++i) {
+      char hid[50];
+      const DONGLE_INFO& v = info[i];
+      memcpy(&output[i * 12], v.hid_, 12);
+      rlLOGI(TAG, /* birthday : 1248BCD */
+             "[%d/%d], Ver: %08x Type: %08x, PID: %08x, UID: %08x, birthday: 20%02x-%02x-%02x %02x:%02x:%02x, HID: %s",
+             i, count, v.ver_, v.type_, v.pid_, v.uid_, v.birthday_[0], v.birthday_[1], v.birthday_[2], v.birthday_[3],
+             v.birthday_[4], v.birthday_[5], StringFromHID(hid, v.hid_));
+    }
+
+    Sha256Ctx().Init().Update(output, kSizeTotal).Final(&output[kSizeTotal]).Init();
+    int len = rl_BASE64_Write(line, &output[0], kSizeTotal + 32);
+    len += sprintf(&line[len], "\nOK\n\n");
+    if (len != write(stdout_, line, len))
+      return -EIO;
+    return 0;
+  }
+
   if (argc < 3) {
     DONGLE_INFO info[64];
     const int count = rockey.Enum(info);
@@ -357,7 +398,8 @@ int main(int argc, char* argv[]) {
   if (0 == strcmp(input, "-")) {
     while (0 == line[0] || '\r' == line[0] || '\n' == line[0]) {
       rlLOGW(TAG, "Input Message:");
-      fgets(line, sizeof(line) - 1, stdin);
+      if (!fgets(line, sizeof(line) - 1, stdin))
+        break;
     }
     input = line;
   }
@@ -370,7 +412,7 @@ int main(int argc, char* argv[]) {
 
   int size_binary = rl_BASE64_Read(binary, input, input_size);
   if (1024 != size_binary) {
-    rlLOGE(TAG, "EINVAL: Input message.size != 1024", size_binary);
+    rlLOGE(TAG, "EINVAL: Input message.size %d != 1024", size_binary);
     exit(EXIT_FAILURE);
   }
 
@@ -402,3 +444,45 @@ int main(int argc, char* argv[]) {
   return result == 0 ? 0 : EXIT_FAILURE;
 }
 #endif /* main */
+
+#ifdef __linux__
+
+/**
+ *! warning: Using 'xxx' in statically linked applications requires at runtime the shared libraries from the glibc
+ *version used for linking
+ */
+rLANGEXPORT void* dlopen(const char* filename, int flags) {
+  errno = ENOSYS;
+  return nullptr;
+}
+rLANGEXPORT int dlclose(void* handle) {
+  errno = ENOSYS;
+  return -1;
+}
+rLANGEXPORT int getaddrinfo(const char* node,
+                            const char* service,
+                            const struct addrinfo* hints,
+                            struct addrinfo** res) {
+  errno = ENOSYS;
+  return -1;
+}
+rLANGEXPORT void freeaddrinfo(struct addrinfo* res) {}
+rLANGEXPORT struct hostent* gethostbyname(const char* name) {
+  errno = ENOSYS;
+  return nullptr;
+}
+
+/**
+ *!
+ */
+struct DSO_METHOD {
+  const char* impl;
+  void* NullMethod[16];
+};
+static struct DSO_METHOD dso_meth_null = {"NULL shared library method"};
+
+rLANGEXPORT struct DSO_METHOD* DSO_METHOD_openssl(void) {
+  return &dso_meth_null;
+}
+
+#endif /* __linux__ */

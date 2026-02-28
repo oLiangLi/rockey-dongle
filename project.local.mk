@@ -72,7 +72,7 @@ linux_add_cxxflags  = $(eval LOCAL_CXXFLAGS += $1)
 linux_add_ldflags   = $(eval LOCAL_LDFLAGS  += $1)
 X4C_COMMON_CXXFLAGS+= -std=c++17
 COMMON_CFLAGS	     += -I$(wORLD_ROOT)/third_party/build/$(X4C_ARCH)/linux -pthread
-X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/$(X4C_ARCH)/linux -pthread -ldl
+X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/$(X4C_ARCH)/linux -pthread -ldl -static
 endif
 
 ##
