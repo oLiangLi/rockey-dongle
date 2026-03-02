@@ -13,8 +13,7 @@
     "skipLibCheck": false,
     "moduleResolution": "node",
     "types": [
-      "@types/node",
-      "@types/ws"
+      "@types/node"
     ],
     "esModuleInterop": true,
     "verbatimModuleSyntax" : false,

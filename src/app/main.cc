@@ -296,27 +296,30 @@ int main(int argc, char* argv[]) {
 #elif !defined(__RockeyARM__)
   RockeyARM rockey;
   if (argc >= 2 && 0 == strcmp(argv[1], "--list")) {
+    constexpr int kCountDongle = 80;
     char line[2048] = "";
-    DONGLE_INFO info[64];
-    uint8_t output[64 * 12 + 32];
-    int count = rockey.Enum(info);
+    union {
+      DONGLE_INFO info[kCountDongle];
+      uint8_t data[kCountDongle * sizeof(DONGLE_INFO)];
+    };
 
+    int count = rockey.Enum(info);
     if (count < 0 || count > 64)
       count = 0;
 
-    const int kSizeTotal = count * 12;
     for (int i = 0; i < count; ++i) {
       char hid[50];
       const DONGLE_INFO& v = info[i];
-      memcpy(&output[i * 12], v.hid_, 12);
       rlLOGI(TAG, /* birthday : 1248BCD */
              "[%d/%d], Ver: %08x Type: %08x, PID: %08x, UID: %08x, birthday: 20%02x-%02x-%02x %02x:%02x:%02x, HID: %s",
              i, count, v.ver_, v.type_, v.pid_, v.uid_, v.birthday_[0], v.birthday_[1], v.birthday_[2], v.birthday_[3],
              v.birthday_[4], v.birthday_[5], StringFromHID(hid, v.hid_));
     }
 
-    Sha256Ctx().Init().Update(output, kSizeTotal).Final(&output[kSizeTotal]).Init();
-    int len = rl_BASE64_Write(line, &output[0], kSizeTotal + 32);
+    const int kSizeTotal = count * sizeof(DONGLE_INFO);
+    Sha256Ctx().Init().Update(data, kSizeTotal).Final(&data[kSizeTotal]).Init();
+
+    int len = rl_BASE64_Write(line, &data[0], kSizeTotal + 32);
     len += sprintf(&line[len], "\nOK\n\n");
     if (len != write(stdout_, line, len))
       return -EIO;
@@ -425,11 +428,11 @@ int main(int argc, char* argv[]) {
   if (0 == result) {
     rlLOGI(TAG, "Rockey.Execute OK in %lld ms", ts);
     int output_size = rl_BASE64_Write(line, (uint8_t*)InOutBuf, 1024);
-    line[output_size++] = '\n'; /* */
-    line[output_size++] = '\n'; /* */
+    output_size += sprintf(&line[output_size], "\nOK\n\n");
     int write_size = write(stdout_, line, output_size);
     if (output_size != write_size) {
       rlLOGW(TAG, "[*IO*]Write output file error %d => %d", output_size, write_size);
+      result = -EIO;
     }
   } else {
     rlLOGE(TAG, "Rockey.Execute Error %d in %lld ms", result, ts);
