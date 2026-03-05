@@ -1,0 +1,46 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8" />
+    <script src="js/jsWorld.js"></script>
+    <title>Demo</title>
+    <script>
+      window.onload = async function () {
+        const jsCipher = await jsWorld.CipherLoader();
+        globalThis.jsCipher = jsCipher;
+        globalThis.Buffer = jsCipher.Buffer_();
+
+        document.getElementById("execv").onclick = async function () {
+          const path = "http://localhost:3000/";
+          const body = (function () {
+            if (Math.random() > 0.5) {
+              let longlongs = jsCipher.RandBytes(256).toString("hex");
+              for (let i = 0; i < 12; ++i) longlongs += longlongs;
+              return JSON.stringify({ cmd: "execv", args: [longlongs] });
+            } else {
+              return JSON.stringify({ cmd: "list" });
+            }
+          })();
+
+          const res = await fetch(path, {
+            method: "POST",
+            body,
+            headers: {
+              "Content-Type": "application/json",
+            },
+          });
+
+          if (res.status !== 200) return console.error("Error: " + res.status);
+          const reply = await res.json();
+          console.log(reply);
+        };
+      };
+    </script>
+  </head>
+  <body>
+    <button id="list">list</button>
+    <button id="factory">factory</button>
+    <button id="lock">lock</button>
+    <button id="execv">execv</button>
+  </body>
+</html>
