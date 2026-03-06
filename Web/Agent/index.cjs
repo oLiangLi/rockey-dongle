@@ -1,7 +1,14 @@
+const crypto = require("crypto");
 const http = require("http");
-const url = require("url");
 const PORT = process.env.PORT || "3000";
+const PSK = crypto
+  .createHash("sha256")
+  .update(Buffer.from(process.env.PSK || "1234567812345678", "base64"))
+  .digest();
+const kTick0 = Math.floor(Date.UTC(2020, 0, 1) / 1000);
+
 const kSizeLimit = 1024 * 1024;
+const kPowMask = (1 << 20) - 1;
 
 const vPORT = parseInt(PORT);
 if (isNaN(vPORT) || vPORT < 1 || vPORT > 65535) {
@@ -9,18 +16,148 @@ if (isNaN(vPORT) || vPORT < 1 || vPORT > 65535) {
   process.exit(1);
 }
 
-const HandleRequest = async (req, body) => {
-  return new Promise((resolve, reject) => {
-    resolve(
-      JSON.stringify({
-        status: "ok",
-        body: body.toString(),
-      }),
-    );
-  });
-};
+function Open(cipher, payload) {
+  if (payload.length < 20)
+    throw Error(`Invalid payload.size: ${payload.length}`);
+
+  const decipher = crypto.createDecipheriv(
+    "chacha20-poly1305",
+    cipher.subarray(0, 32),
+    cipher.subarray(32, 44),
+  );
+  decipher.setAAD(cipher.subarray(44));
+  decipher.setAuthTag(payload.subarray(payload.length - 16));
+
+  const text = decipher.update(payload.subarray(0, payload.length - 16));
+  decipher.final();
+
+  return text;
+}
+
+function Seal(cipher, payload) {
+  const aead = crypto.createCipheriv(
+    "chacha20-poly1305",
+    cipher.subarray(0, 32),
+    cipher.subarray(32, 44),
+  );
+  aead.setAAD(cipher.subarray(44));
+  return Buffer.concat([aead.update(payload), aead.final(), aead.getAuthTag()]);
+}
+
+let service_counter = 0;
+let error_counter = 0;
+let prev_service_counter = 0;
+let prev_error_counter = 0;
+
+/**
+ * 缓存4分钟内的请求Token以防止重放攻击 ...
+ */
+const token_recorder = new Map();
+setInterval(() => {
+  let timeout = 0;
+  const tick = Math.floor(Date.now() / 1000) - kTick0;
+
+  const sc = service_counter - prev_service_counter;
+  const ec = error_counter - prev_error_counter;
+  prev_service_counter = service_counter;
+  prev_error_counter = error_counter;
+
+  for (const [token, ts] of token_recorder) {
+    if (Math.abs(tick - ts) > 240) {
+      token_recorder.delete(token);
+      ++timeout;
+    }
+  }
+
+  const alive = token_recorder.size;
+  console.info(
+    `[${new Date().toISOString()}] ${timeout} timeout, ${alive} alive, ${sc}/${service_counter} ok, ${ec}/${error_counter} error`,
+  );
+}, 60 * 1000);
+
+async function List(req, body, reply) {}
+async function Factory(req, body, reply) {}
+async function Lock(req, body, reply) {}
+
+async function Dashboard(req, body, reply) {}
+
+async function Execv(req, body, reply) {}
+
+async function HandleRequest(req, body) {
+  const json = JSON.parse(body.toString("utf-8"));
+  if (
+    typeof json !== "object" ||
+    typeof json.token !== "string" ||
+    typeof json.payload !== "string"
+  )
+    throw Error(`Invalid request body!`);
+
+  const token = Buffer.from(json.token, "base64");
+  if (token.length !== 48)
+    throw Error(`Invalid token.size (.EQ. 48): ${token.length}`);
+  const tick = token.readUint32LE(0);
+  const ts = Math.floor(Date.now() / 1000 - (tick + kTick0));
+
+  /**
+   ** 要求客户端和服务器端的时间同步精度在2分钟之内 ...
+   **/
+  if (Math.abs(ts) > 2 * 60) throw Error(`Invalid token.ts: ${ts}`);
+  const s_token = token.toString("base64");
+  if (token_recorder.has(s_token))
+    throw Error(`reduplicative token ${s_token}`);
+  token_recorder.set(s_token, tick);
+
+  const check = crypto
+    .createHash("sha256")
+    .update(token)
+    .update(PSK)
+    .digest()
+    .readUint32LE(0);
+  if (0 !== (check & kPowMask))
+    throw Error(`Invalid POW ${check.toString(16)}`);
+
+  const cipher = crypto.createHash("sha512").update(token).update(PSK).digest();
+  const payload = Open(cipher, Buffer.from(json.payload, "base64"));
+  const hash = crypto.createHash("sha256").update(payload).digest();
+  if (Buffer.compare(hash, token.subarray(16)))
+    throw Error(`Invalid token.hash ${hash.toString("hex")}`);
+
+  const request = JSON.parse(payload.toString("utf-8"));
+  const command = request?.cmd;
+  let reply = {
+    cmd: command,
+    nonce: crypto.randomBytes(12).toString("base64"),
+  };
+
+  switch (command) {
+    case "list":
+      List(req, request, reply);
+      break;
+    case "factory":
+      Factory(req, request, reply);
+      break;
+    case "lock":
+      Lock(req, request, reply);
+      break;
+    case "dashboard":
+      Dashboard(req, request, reply);
+      break;
+    case "execv":
+      Execv(req, request, reply);
+      break;
+    default:
+      throw Error(`Invalid request.cmd!`);
+  }
+
+  return [cipher, reply];
+}
 
 const server = http.createServer((req, res) => {
+  const tick_start = Date.now();
+  const client_ip =
+    req.headers["x-real-ip"] ||
+    req.headers["x-forwarded-for"] ||
+    req.socket.remoteAddress;
   function HeaderDefault() {
     if (
       req.headers["sec-fetch-mode"] === "cors" &&
@@ -83,19 +220,39 @@ const server = http.createServer((req, res) => {
     if (size > kSizeLimit) return onError(413, "Request entity too large");
 
     try {
-      let result = await HandleRequest(req, Buffer.concat(body));
-      if (false === result instanceof Buffer) result = Buffer.from(result);
+      const [cipher, reply] = await HandleRequest(req, Buffer.concat(body));
+      const result = Buffer.from(
+        JSON.stringify({
+          payload: Seal(cipher, Buffer.from(JSON.stringify(reply))).toString(
+            "base64",
+          ),
+        }),
+      );
+
       const hdr = HeaderDefault();
       hdr["Content-Length"] = result.length;
       hdr["Content-Type"] = "application/json";
       res.writeHead(200, hdr);
       res.end(result);
+      ++service_counter;
+      const tick_end = Date.now();
+
+      console.info(
+        `[ I ]${service_counter} client ${client_ip}, cmd ${reply.cmd}, id ${reply.id || "N/A"}, in ${tick_end - tick_start} ms`,
+      );
     } catch (err) {
+      ++error_counter;
+      const tick_end = Date.now();
+      console.error(
+        `[ E ]${error_counter} client ${client_ip}, in ${tick_end - tick_start} ms, ${err?.stack}`,
+      );
       return onError(500, "Server error");
     }
   });
 });
 
 server.listen(vPORT, "localhost", () => {
-  console.log("Server listening on port " + PORT);
+  console.log(
+    `Server listening on port ${PORT}=>${vPORT}, PSK: ${PSK.subarray(0, 4).toString("hex")}}`,
+  );
 });

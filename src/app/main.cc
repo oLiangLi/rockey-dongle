@@ -135,7 +135,19 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
   };
 
   rlLOGI(TAG, ">>>> Enter Utilities.%s ....", type);
-  if (0 == strcmp(type, "factory")) {
+  if (0 == strcmp(type, "dashboard")) {
+    constexpr int kSizePublic = 8 * 1024;
+    uint8_t kFactoryData[kSizePublic + 32];
+    char line[kSizePublic + kSizePublic / 2] = "";
+    result = dongle->ReadDataFile(dongle->kFactoryDataFileId, 0, &kFactoryData[0], kSizePublic);
+    if (0 == result) {
+      Sha256Ctx().Init().Update(&kFactoryData[0], kSizePublic).Final(&kFactoryData[kSizePublic]).Init();
+      int len = rl_BASE64_Write(line, kFactoryData, sizeof(kFactoryData));
+      line[len++] = '\n';
+      if (len != write(stdout_, line, len))
+        result = -EIO;
+    }
+  } else if (0 == strcmp(type, "factory")) {
     constexpr int kSizeUid = 4;
     constexpr int kSizeSeed = 64;
     constexpr int kSizeFile = 65520;
@@ -221,10 +233,9 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
   } else {
     rlLOGE(TAG, "##ENOENT: Utilities.%s NOT IMPLEMENTS YET!!", type);
   }
-  rlLOGI(TAG, ">>>> Leave Utilities.%s => %d", type, result);
-
   if (0 == result && 4 != write(stdout_, "OK\n\n", 4))
     result = -EIO;
+  rlLOGI(TAG, ">>>> Leave Utilities.%s => %d", type, result);
   return result == 0 ? 0 : EXIT_FAILURE;
 }
 
@@ -427,7 +438,9 @@ int main(int argc, char* argv[]) {
 
   if (0 == result) {
     rlLOGI(TAG, "Rockey.Execute OK in %lld ms", ts);
-    int output_size = rl_BASE64_Write(line, (uint8_t*)InOutBuf, 1024);
+    memcpy(binary, InOutBuf, 1024);
+    Sha256Ctx().Init().Update(&binary[0], 1024).Final(&binary[1024]).Init();
+    int output_size = rl_BASE64_Write(line, binary, 1024 + 32);
     output_size += sprintf(&line[output_size], "\nOK\n\n");
     int write_size = write(stdout_, line, output_size);
     if (output_size != write_size) {
@@ -437,6 +450,11 @@ int main(int argc, char* argv[]) {
   } else {
     rlLOGE(TAG, "Rockey.Execute Error %d in %lld ms", result, ts);
   }
+
+  memset(InOutBuf, 0, sizeof(InOutBuf));
+  memset(ExtendBuf, 0, sizeof(ExtendBuf));
+  memset(binary, 0, sizeof(binary));
+  memset(line, 0, sizeof(line));
 
 #if defined(__EMULATOR__)
   rockey.Write(dongleFile);

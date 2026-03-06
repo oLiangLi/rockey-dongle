@@ -1,46 +1,194 @@
 <!doctype html>
-<html>
+<html lang="en">
   <head>
     <meta charset="utf-8" />
     <script src="js/jsWorld.js"></script>
-    <title>Demo</title>
+    <title>RockeyARM Tests</title>
     <script>
       window.onload = async function () {
+        /**
+         * @type {CipherSuiteV0}
+         */
         const jsCipher = await jsWorld.CipherLoader();
-        globalThis.jsCipher = jsCipher;
-        globalThis.Buffer = jsCipher.Buffer_();
+        /**
+         * @type {BufferConstructor}
+         */
+        const Buffer = jsCipher.Buffer_();
+        const kPowMask = (1 << 20) - 1; /// 网页速度太慢了, 就平均做2**20次SHA256运算吧, 或者用几个WebWorker一起跑 ...
 
-        document.getElementById("execv").onclick = async function () {
-          const path = "http://localhost:3000/";
-          const body = (function () {
-            if (Math.random() > 0.5) {
-              let longlongs = jsCipher.RandBytes(256).toString("hex");
-              for (let i = 0; i < 12; ++i) longlongs += longlongs;
-              return JSON.stringify({ cmd: "execv", args: [longlongs] });
-            } else {
-              return JSON.stringify({ cmd: "list" });
+        let pow = false;
+        const tick0 = Date.UTC(2020, 0, 1);
+
+        async function Sleep(ms) {
+          return new Promise((resolve) => setTimeout(resolve, ms));
+        }
+
+        async function POW(md) {
+          if (pow) throw jsCipher.Annihilus_("EALREADY");
+          console.assert(md instanceof Buffer && md.length === 32);
+          const PSK = Buffer.from(
+            document.getElementById("PSK").value,
+            "base64",
+          );
+          const start = Date.now();
+
+          pow = true;
+          const message = Buffer.alloc(80); /// || TICK[4], NONCE[12], MD[32], SHA256(PSK) ||
+
+          message.writeInt32LE(((start - tick0) / 1000) | 0, 0);
+          jsCipher.RandBytes(message.subarray(4, 16));
+          message[15] &= 0x3f;
+          md.copy(message, 16);
+          const sha256 = jsCipher.Digest("SHA256");
+          sha256.Init().Update(PSK).Final().copy(message, 48);
+
+          for (let loop = 1; ; ++loop) {
+            const check = sha256.Init().Update(message).Final().readUInt32LE(0);
+            if (0 === (check & kPowMask)) {
+              pow = false;
+              console.log(
+                `POW ${loop} ${message.subarray(48, 52).toString("hex")} ${md.subarray(0, 4).toString("hex")} ${("00000000" + check.toString(16)).slice(-8)} in ${Date.now() - start} ms`,
+              );
+              return [
+                message.subarray(0, 48),
+                jsCipher.Digest("SHA512").Init().Update(message).Final(),
+              ];
             }
-          })();
+            if (loop % (64 * 1024) === 0) await Sleep(2);
+            for (let i = 4; i < 16; ++i) {
+              ++message[i];
+              if (0 !== message[i]) break;
+            }
+          }
+        }
 
-          const res = await fetch(path, {
+        function Seal(pow, cipher, payload) {
+          console.assert(pow instanceof Buffer && pow.length === 48);
+          console.assert(cipher instanceof Buffer && cipher.length === 64);
+          console.assert(
+            payload instanceof Buffer &&
+              payload.length > 0 &&
+              payload.length < 512 * 1024,
+          );
+
+          const value = jsCipher
+            .ChaChaPoly(cipher.subarray(0, 32))
+            .Seal(
+              payload,
+              cipher.subarray(32, 32 + 12),
+              cipher.subarray(32 + 12),
+            );
+          return {
+            token: pow.toString("base64"),
+            payload: value.toString("base64"),
+          };
+        }
+
+        function Open(cipher, payload) {
+          console.assert(cipher instanceof Buffer && cipher.length === 64);
+          console.assert(
+            payload instanceof Buffer &&
+              payload.length > 0 &&
+              payload.length < 512 * 1024,
+          );
+          return jsCipher
+            .ChaChaPoly(cipher.subarray(0, 32))
+            .Open(
+              payload,
+              cipher.subarray(32, 32 + 12),
+              cipher.subarray(32 + 12),
+            );
+        }
+
+        async function Ajax(json, cipher) {
+          const api = document.getElementById("url").value.trim();
+          const res = await fetch(api, {
             method: "POST",
-            body,
+            body: JSON.stringify(json),
             headers: {
               "Content-Type": "application/json",
             },
           });
 
-          if (res.status !== 200) return console.error("Error: " + res.status);
+          if (res.status !== 200)
+            throw jsCipher.Annihilus_(`Error: ${res.status}`);
           const reply = await res.json();
-          console.log(reply);
-        };
+          if (typeof reply !== "object" || typeof reply.payload !== "string")
+            throw jsCipher.Annihilus_(`Error: invalid reply!`);
+          return JSON.parse(
+            Open(cipher, Buffer.from(reply.payload, "base64")).toString(),
+          );
+        }
+
+        async function List() {
+          const start = Date.now();
+          console.log(`#### List() ####`);
+          const payload = Buffer.from(
+            JSON.stringify({
+              cmd: "list",
+              nonce: jsCipher.RandBytes(12).toString("base64"),
+            }),
+          );
+          const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+          const [pow, cipher] = await POW(md);
+
+          const json = Seal(pow, cipher, payload);
+          console.log(
+            `#### List::Ajax::REQ(${Date.now() - start} ms) ${JSON.stringify(json, null, 2)}`,
+          );
+          const reply = await Ajax(json, cipher);
+          console.log(
+            `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+          );
+        }
+        async function Factory() {}
+        async function Lock() {}
+        async function Dashboard() {}
+        async function Execv() {}
+
+        document.getElementById("list").onclick = List;
+        document.getElementById("factory").onclick = Factory;
+        document.getElementById("lock").onclick = Lock;
+        document.getElementById("dashboard").onclick = Dashboard;
+        document.getElementById("execv").onclick = Execv;
       };
     </script>
   </head>
   <body>
-    <button id="list">list</button>
-    <button id="factory">factory</button>
-    <button id="lock">lock</button>
-    <button id="execv">execv</button>
+    <label for="url">API:</label
+    ><input
+      type="text"
+      id="url"
+      value="http://localhost:3000/"
+      maxlength="200"
+      style="width: 500px"
+    />
+    <label for="PSK">BASE64(PSK):</label
+    ><input type="password" id="PSK" maxlength="128" value="1234567812345678" />
+    <br />
+    <label for="keys">RockeyARM:</label
+    ><select id="keys" style="width: 700px"></select>
+
+    <p>列出所有的RockeyARM设备:<button id="list">list</button></p>
+
+    <p>
+      初始化RockeyARM设备:
+      <label for="uid">UID:</label
+      ><input type="text" id="uid" maxlength="20" value="0x10086" />
+      <label for="secret">SECRET:</label><input type="file" id="secret" />
+      <label for="main">MAIN:</label><input type="file" id="main" />
+      <button id="factory">factory</button>
+    </p>
+
+    <p>
+      将选定的RockeyARM设备的管理员PIN码修改为随机值,
+      这将禁止任何人获取管理员权限(包括你自己): <button id="lock">lock</button>
+    </p>
+
+    <p>
+      <label for="admin">Admin:</label><input type="checkbox" id="admin" />
+      <label for="program">PROGRAM:</label><input type="file" id="program" />
+      <button id="dashboard">dashboard</button><button id="execv">execv</button>
+    </p>
   </body>
 </html>
