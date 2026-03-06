@@ -1,11 +1,14 @@
 const crypto = require("crypto");
 const http = require("http");
+const fs = require("fs");
 const PORT = process.env.PORT || "3000";
+const path = require("path");
 const PSK = crypto
   .createHash("sha256")
   .update(Buffer.from(process.env.PSK || "1234567812345678", "base64"))
   .digest();
 const kTick0 = Math.floor(Date.UTC(2020, 0, 1) / 1000);
+const EXECV_PATH = process.argv[2] || path.join(__dirname, "RockeyTrust.exe");
 
 const kSizeLimit = 1024 * 1024;
 const kPowMask = (1 << 20) - 1;
@@ -53,27 +56,6 @@ let prev_error_counter = 0;
  * 缓存4分钟内的请求Token以防止重放攻击 ...
  */
 const token_recorder = new Map();
-setInterval(() => {
-  let timeout = 0;
-  const tick = Math.floor(Date.now() / 1000) - kTick0;
-
-  const sc = service_counter - prev_service_counter;
-  const ec = error_counter - prev_error_counter;
-  prev_service_counter = service_counter;
-  prev_error_counter = error_counter;
-
-  for (const [token, ts] of token_recorder) {
-    if (Math.abs(tick - ts) > 240) {
-      token_recorder.delete(token);
-      ++timeout;
-    }
-  }
-
-  const alive = token_recorder.size;
-  console.info(
-    `[${new Date().toISOString()}] ${timeout} timeout, ${alive} alive, ${sc}/${service_counter} ok, ${ec}/${error_counter} error`,
-  );
-}, 60 * 1000);
 
 async function List(req, body, reply) {}
 async function Factory(req, body, reply) {}
@@ -131,19 +113,19 @@ async function HandleRequest(req, body) {
 
   switch (command) {
     case "list":
-      List(req, request, reply);
+      await List(req, request, reply);
       break;
     case "factory":
-      Factory(req, request, reply);
+      await Factory(req, request, reply);
       break;
     case "lock":
-      Lock(req, request, reply);
+      await Lock(req, request, reply);
       break;
     case "dashboard":
-      Dashboard(req, request, reply);
+      await Dashboard(req, request, reply);
       break;
     case "execv":
-      Execv(req, request, reply);
+      await Execv(req, request, reply);
       break;
     default:
       throw Error(`Invalid request.cmd!`);
@@ -152,107 +134,172 @@ async function HandleRequest(req, body) {
   return [cipher, reply];
 }
 
-const server = http.createServer((req, res) => {
-  const tick_start = Date.now();
-  const client_ip =
-    req.headers["x-real-ip"] ||
-    req.headers["x-forwarded-for"] ||
-    req.socket.remoteAddress;
-  function HeaderDefault() {
-    if (
-      req.headers["sec-fetch-mode"] === "cors" &&
-      req.headers["sec-fetch-site"] !== "same-origin"
-    ) {
-      return {
-        "Access-Control-Allow-Origin": "*",
-        "Access-Control-Allow-Methods": "*",
-        "Access-Control-Allow-Headers": "Content-Type",
-        "Access-Control-Max-Age": 7200,
-      };
-    } else {
-      return {};
-    }
-  }
-
-  function onError(code, message) {
-    if (!res.headersSent) {
-      const reply = Buffer.from(
-        JSON.stringify({
-          status: "error",
-          code: code,
-          message: message,
-        }),
+async function CheckRuntimeEnv() {
+  ///
+  /// TODO: LiangLI, 增加对 RockeyTrust.exe 程序的完整性验证 ...
+  ///
+  try {
+    const stat = fs.statSync(EXECV_PATH);
+    if (!stat.isFile())
+      return Promise.reject(
+        Error(`RockeyTrust.exe !stat.isFile() ${EXECV_PATH}`),
       );
-
-      const hdr = HeaderDefault();
-      hdr["Content-Type"] = "application/json";
-      hdr["Content-Length"] = reply.length;
-      res.writeHead(code, hdr);
-      res.end(reply);
-    }
-    req.destroy();
+    console.log(`RockeyTrust.exe [${EXECV_PATH}] size: ${stat.size}`);
+  } catch (err) {
+    return Promise.reject(err);
   }
+}
 
-  if (req.method === "OPTIONS") {
-    const hdr = HeaderDefault();
-    hdr["Content-Length"] = 0;
-    res.writeHead(200, hdr);
-    res.end();
-    return;
-  }
-
-  if (req.method !== "POST") {
-    return onError(405, "Method not allowed");
-  }
-
-  let size = 0;
-  const body = [];
-  req.on("data", (chunk) => {
-    size += chunk.length;
-    if (size < kSizeLimit) body.push(chunk);
-  });
-
-  req.on("error", () => {
-    return onError(500, "Server error");
-  });
-
-  req.on("end", async () => {
-    if (size > kSizeLimit) return onError(413, "Request entity too large");
-
+async function StartServer() {
+  return new Promise(async (resolve, reject) => {
     try {
-      const [cipher, reply] = await HandleRequest(req, Buffer.concat(body));
-      const result = Buffer.from(
-        JSON.stringify({
-          payload: Seal(cipher, Buffer.from(JSON.stringify(reply))).toString(
-            "base64",
-          ),
-        }),
-      );
+      const server = http.createServer((req, res) => {
+        const tick_start = Date.now();
+        const client_ip =
+          req.headers["x-real-ip"] ||
+          req.headers["x-forwarded-for"] ||
+          req.socket.remoteAddress;
+        function HeaderDefault() {
+          if (
+            req.headers["sec-fetch-mode"] === "cors" &&
+            req.headers["sec-fetch-site"] !== "same-origin"
+          ) {
+            return {
+              "Access-Control-Allow-Origin": "*",
+              "Access-Control-Allow-Methods": "*",
+              "Access-Control-Allow-Headers": "Content-Type",
+              "Access-Control-Max-Age": 7200,
+            };
+          } else {
+            return {};
+          }
+        }
 
-      const hdr = HeaderDefault();
-      hdr["Content-Length"] = result.length;
-      hdr["Content-Type"] = "application/json";
-      res.writeHead(200, hdr);
-      res.end(result);
-      ++service_counter;
-      const tick_end = Date.now();
+        function onError(code, message) {
+          if (!res.headersSent) {
+            const reply = Buffer.from(
+              JSON.stringify({
+                status: "error",
+                code: code,
+                message: message,
+              }),
+            );
 
-      console.info(
-        `[ I ]${service_counter} client ${client_ip}, cmd ${reply.cmd}, id ${reply.id || "N/A"}, in ${tick_end - tick_start} ms`,
-      );
+            const hdr = HeaderDefault();
+            hdr["Content-Type"] = "application/json";
+            hdr["Content-Length"] = reply.length;
+            res.writeHead(code, hdr);
+            res.end(reply);
+          }
+          req.destroy();
+        }
+
+        if (req.method === "OPTIONS") {
+          const hdr = HeaderDefault();
+          hdr["Content-Length"] = 0;
+          res.writeHead(200, hdr);
+          res.end();
+          return;
+        }
+
+        if (req.method !== "POST") {
+          return onError(405, "Method not allowed");
+        }
+
+        let size = 0;
+        const body = [];
+        req.on("data", (chunk) => {
+          size += chunk.length;
+          if (size < kSizeLimit) body.push(chunk);
+        });
+
+        req.on("error", () => {
+          return onError(500, "Server error");
+        });
+
+        req.on("end", async () => {
+          if (size > kSizeLimit)
+            return onError(413, "Request entity too large");
+
+          try {
+            const [cipher, reply] = await HandleRequest(
+              req,
+              Buffer.concat(body),
+            );
+            const result = Buffer.from(
+              JSON.stringify({
+                payload: Seal(
+                  cipher,
+                  Buffer.from(JSON.stringify(reply)),
+                ).toString("base64"),
+              }),
+            );
+
+            const hdr = HeaderDefault();
+            hdr["Content-Length"] = result.length;
+            hdr["Content-Type"] = "application/json";
+            res.writeHead(200, hdr);
+            res.end(result);
+            ++service_counter;
+            const tick_end = Date.now();
+
+            console.info(
+              `[ I ]${service_counter} client ${client_ip}, cmd ${reply.cmd}, id ${reply.id || "N/A"}, in ${tick_end - tick_start} ms`,
+            );
+          } catch (err) {
+            ++error_counter;
+            const tick_end = Date.now();
+            console.error(
+              `[ E ]${error_counter} client ${client_ip}, in ${tick_end - tick_start} ms, ${err?.stack}`,
+            );
+            return onError(500, "Server error");
+          }
+        });
+      });
+
+      server.listen(vPORT, "localhost", () => {
+        console.log(
+          `Server listening on port ${PORT}=>${vPORT}, PSK: ${PSK.subarray(0, 4).toString("hex")}}, EXECV: ${EXECV_PATH}`,
+        );
+        return resolve(server);
+      });
     } catch (err) {
-      ++error_counter;
-      const tick_end = Date.now();
-      console.error(
-        `[ E ]${error_counter} client ${client_ip}, in ${tick_end - tick_start} ms, ${err?.stack}`,
-      );
-      return onError(500, "Server error");
+      return reject(err);
     }
   });
-});
+}
 
-server.listen(vPORT, "localhost", () => {
-  console.log(
-    `Server listening on port ${PORT}=>${vPORT}, PSK: ${PSK.subarray(0, 4).toString("hex")}}`,
-  );
-});
+CheckRuntimeEnv()
+  .then(() => StartServer())
+  .then((server) => {
+    function TaskStatistics() {
+      server.getConnections((err, connections) => {
+        let timeout = 0;
+        const tick = Math.floor(Date.now() / 1000) - kTick0;
+
+        const sc = service_counter - prev_service_counter;
+        const ec = error_counter - prev_error_counter;
+        prev_service_counter = service_counter;
+        prev_error_counter = error_counter;
+
+        for (const [token, ts] of token_recorder) {
+          if (Math.abs(tick - ts) > 240) {
+            token_recorder.delete(token);
+            ++timeout;
+          }
+        }
+
+        const alive = token_recorder.size;
+        console.info(
+          `[${new Date().toISOString()}] ${connections} connections, ${timeout} timeout, ${alive} alive, ${sc}/${service_counter} ok, ${ec}/${error_counter} error`,
+        );
+      });
+    }
+
+    setInterval(TaskStatistics, 60 * 1000);
+    TaskStatistics();
+  })
+  .catch((err) => {
+    console.error(err.stack);
+    process.exit(1);
+  });
