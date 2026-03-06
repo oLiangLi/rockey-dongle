@@ -410,10 +410,18 @@ int main(int argc, char* argv[]) {
   const char* input = argv[1];
 
   if (0 == strcmp(input, "-")) {
-    while (0 == line[0] || '\r' == line[0] || '\n' == line[0]) {
+    for(;;) {
       rlLOGW(TAG, "Input Message:");
+      memset(line, 0, sizeof(line));
       if (!fgets(line, sizeof(line) - 1, stdin))
         break;
+      for(auto& cc : line) {
+        if(cc == 0 || cc == 13 || cc == 10) {
+          cc = 0;
+          break;
+        }
+      }
+      if(line[0]) break;
     }
     input = line;
   }

@@ -3,6 +3,7 @@ const http = require("http");
 const fs = require("fs");
 const PORT = process.env.PORT || "3000";
 const path = require("path");
+const child_process = require("child_process");
 const PSK = crypto
   .createHash("sha256")
   .update(Buffer.from(process.env.PSK || "1234567812345678", "base64"))
@@ -55,13 +56,30 @@ let prev_error_counter = 0;
 /**
  * 缓存4分钟内的请求Token以防止重放攻击 ...
  */
+const reId = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{16}$/;
 const token_recorder = new Map();
+const locked_dongle_list = new Set();
+
+async function DongleExecv(args) {
+
+}
 
 async function List(req, body, reply) {}
 async function Factory(req, body, reply) {}
 async function Lock(req, body, reply) {}
 
-async function Dashboard(req, body, reply) {}
+async function Dashboard(req, body, reply) {
+  const id = body.id;
+
+  if(typeof id !== 'string' || !id.match(reId))
+    throw Error(`Invalid id: ${id}`);
+
+  if(locked_dongle_list.has(id))
+    throw Error(`Dongle.locked ${id}`);
+  locked_dongle_list.add(id);
+
+
+}
 
 async function Execv(req, body, reply) {}
 
