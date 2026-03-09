@@ -12,7 +12,7 @@ const kTick0 = Math.floor(Date.UTC(2020, 0, 1) / 1000);
 const EXECV_PATH = process.argv[2] || path.join(__dirname, "RockeyTrust.exe");
 
 const kSizeLimit = 1024 * 1024;
-const kPowMask = (1 << 20) - 1;
+const kPowMask = (1 << 18) - 1;
 
 const vPORT = parseInt(PORT);
 if (isNaN(vPORT) || vPORT < 1 || vPORT > 65535) {

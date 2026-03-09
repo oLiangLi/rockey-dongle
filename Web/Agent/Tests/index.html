@@ -14,7 +14,7 @@
          * @type {BufferConstructor}
          */
         const Buffer = jsCipher.Buffer_();
-        const kPowMask = (1 << 20) - 1; /// 网页速度太慢了, 就平均做2**20次SHA256运算吧, 或者用几个WebWorker一起跑 ...
+        const kPowMask = (1 << 18) - 1; /// 网页速度太慢了, 就平均做2**18次SHA256运算吧, 或者用几个WebWorker一起跑 ...
 
         let pow = false;
         const tick0 = Date.UTC(2020, 0, 1);
@@ -120,6 +120,77 @@
           );
         }
 
+        function UpdateDeviceList(buffer) {
+          const keys = document.getElementById("keys");
+          const prev_value = keys.value;
+          function addOption(text, value) {
+            const option = document.createElement("option");
+            option.value = value;
+            option.text = text;
+            if (value === prev_value) option.selected = true;
+            keys.add(option);
+          }
+
+          /// @param {Buffer} key - DONGLE_INFO ...
+          function addKey(key) {
+            function V2(v) {
+              return ("00" + v.toString(16)).slice(-2);
+            }
+            function V8(v) {
+              return "0x" + ("00000000" + v.toString(16)).slice(-8);
+            }
+            const version = V8(key.readUInt32LE(0));
+            const type = V8(key.readUInt32LE(4));
+            const birthday = `20${V2(key[8])}-${V2(key[9])}-${V2(key[10])} ${V2(key[11])}:${V2(key[12])}:${V2(key[13])}`;
+            const agent = V8(key.readUInt32LE(16));
+            const pid = V8(key.readUInt32LE(20));
+            const uid = V8(key.readUInt32LE(24));
+            const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
+            addOption(
+              JSON.stringify({ version, type, birthday, agent, pid, uid, id }),
+              id,
+            );
+          }
+
+          function CheckBuffer() {
+            if (
+              !buffer ||
+              buffer.length < 72 ||
+              (buffer.length - 32) % 40 !== 0
+            )
+              return 0;
+            const sha256_check = buffer.subarray(buffer.length - 32);
+            const sha256_verify = jsCipher
+              .Digest("SHA256")
+              .Init()
+              .Update(buffer.subarray(0, buffer.length - 32))
+              .Final();
+
+            if (Buffer.compare(sha256_check, sha256_verify) !== 0)
+              throw Error(`SHA256.Check Error!`);
+            return (buffer.length - 32) / 40;
+          }
+
+          while (keys.length > 0) {
+            keys.remove(0);
+          }
+          addOption("{}", "");
+
+          const count = CheckBuffer();
+          for (let i = 0; i < count; ++i) {
+            addKey(buffer.subarray(i * 40));
+          }
+        }
+
+        function StdoutLine0(stdout) {
+          const size = stdout.length;
+          for (let i = 0; i < size; ++i) {
+            const code = stdout.charCodeAt(i);
+            if (code === 13 || code === 10) return stdout.slice(0, i);
+          }
+          return stdout;
+        }
+
         async function List() {
           const start = Date.now();
           console.log(`#### List() ####`);
@@ -134,16 +205,74 @@
 
           const json = Seal(pow, cipher, payload);
           console.log(
-            `#### List::Ajax::REQ(${Date.now() - start} ms) ${JSON.stringify(json, null, 2)}`,
+            `#### List::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
           );
           const reply = await Ajax(json, cipher);
           console.log(
             `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
           );
+
+          UpdateDeviceList(Buffer.from(StdoutLine0(reply.stdout), "base64"));
         }
+        async function Dashboard() {
+          const id = document.getElementById("keys").value;
+          if (!id) throw Error(`Select RockeyARM device!`);
+
+          console.log(`#### Dashboard() ####`);
+          const start = Date.now();
+          const payload = Buffer.from(
+            JSON.stringify({
+              cmd: "dashboard",
+              nonce: jsCipher.RandBytes(12).toString("base64"),
+              admin: document.getElementById("admin").checked,
+              id,
+            }),
+          );
+
+          const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+          const [pow, cipher] = await POW(md);
+
+          const json = Seal(pow, cipher, payload);
+          console.log(
+            `#### Dashboard::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+          );
+
+          const reply = await Ajax(json, cipher);
+          const stdout = StdoutLine0(reply.stdout);
+          delete reply.stdout;
+
+          console.log(
+            `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+          );
+
+          const buffer = Buffer.from(stdout, "base64");
+          if (buffer.length !== 8192 + 32)
+            throw Error(`Invalid dashboard value!`);
+
+          const verify = jsCipher
+            .Digest("SHA256")
+            .Init()
+            .Update(buffer.subarray(0, 8192))
+            .Final();
+          if (Buffer.compare(verify, buffer.subarray(8192)) !== 0)
+            throw Error(`Invalid SHA256(dashboard) value!`);
+
+          const blob = new Blob([buffer], { type: "application/octet-stream" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const name = `dashboard-${id}.bin`;
+          a.href = url;
+          a.download = name;
+          a.innerText = `${name}`;
+
+          const li = document.createElement("li");
+          li.appendChild(a);
+
+          document.getElementById("m").appendChild(li);
+        }
+
         async function Factory() {}
         async function Lock() {}
-        async function Dashboard() {}
         async function Execv() {}
 
         document.getElementById("list").onclick = List;
@@ -151,6 +280,7 @@
         document.getElementById("lock").onclick = Lock;
         document.getElementById("dashboard").onclick = Dashboard;
         document.getElementById("execv").onclick = Execv;
+        UpdateDeviceList(null);
       };
     </script>
   </head>
@@ -190,5 +320,12 @@
       <label for="program">PROGRAM:</label><input type="file" id="program" />
       <button id="dashboard">dashboard</button><button id="execv">execv</button>
     </p>
+
+    <p>
+      <button onclick="document.getElementById('m').innerHTML = ''">
+        Clear
+      </button>
+    </p>
+    <ol id="m" type="1"></ol>
   </body>
 </html>
