@@ -5,6 +5,8 @@
     <script src="js/jsWorld.js"></script>
     <title>RockeyARM Tests</title>
     <script>
+      const prev_dashboard_value = new Map();
+
       window.onload = async function () {
         /**
          * @type {CipherSuiteV0}
@@ -216,7 +218,7 @@
         }
         async function Dashboard() {
           const id = document.getElementById("keys").value;
-          if (!id) throw Error(`Select RockeyARM device!`);
+          if (!id) throw Error(`Dashboard: Select RockeyARM device!`);
 
           console.log(`#### Dashboard() ####`);
           const start = Date.now();
@@ -257,6 +259,8 @@
           if (Buffer.compare(verify, buffer.subarray(8192)) !== 0)
             throw Error(`Invalid SHA256(dashboard) value!`);
 
+          prev_dashboard_value.set(id, buffer);
+
           const blob = new Blob([buffer], { type: "application/octet-stream" });
           const url = URL.createObjectURL(blob);
           const a = document.createElement("a");
@@ -271,8 +275,118 @@
           document.getElementById("m").appendChild(li);
         }
 
-        async function Factory() {}
-        async function Lock() {}
+        async function ReadFileContent(id, size) {
+          return new Promise((resolve, reject) => {
+            const inputElement = document.getElementById(id);
+            const file = inputElement.files?.[0];
+
+            if (!file)
+              return reject(Error(`Select File id ${id} size ${size}`));
+
+            if (file.size !== size)
+              return reject(Error(`Invalid file size ${file.size} != ${size}`));
+
+            const reader = new FileReader();
+            reader.onloadend = function () {
+              console.assert(reader.result instanceof ArrayBuffer);
+              const result = Buffer.from(reader.result);
+              if (result.length !== size)
+                return reject(
+                  Error(`Invalid file size ${result.length} != ${size}`),
+                );
+              resolve(result);
+            };
+            reader.readAsArrayBuffer(file);
+          });
+        }
+
+        async function Factory() {
+          const id = document.getElementById("keys").value;
+          if (!id) throw Error(`Factory: Select RockeyARM device!`);
+
+          const start = Date.now();
+          console.log(`#### Factory() ####`);
+          ///
+          /// stdin: || UID[4] | SEED[64] | TRUST[65520] | SHA256[32] ||
+          ///
+          const uid = (function () {
+            const s_uid = document.getElementById("uid").value;
+            if (!s_uid.match(/^0x[0-9a-f]{1,8}$/i))
+              throw Error(`Invalid uid Value /^0x[0-9a-f]{1,8}$/i`);
+            return parseInt(s_uid.slice(2), 16);
+          })();
+
+          const payload_value = {
+            cmd: "factory",
+            nonce: jsCipher.RandBytes(12).toString("base64"),
+            id,
+            uid,
+          };
+          const payload_minimal = JSON.stringify(payload_value);
+
+          const [secret, main] = await Promise.all([
+            ReadFileContent("secret", 64),
+            ReadFileContent("main", 65520),
+          ]);
+
+          const kOff = 4 + 64 + 65520;
+          const stdin = Buffer.alloc(kOff + 32);
+          stdin.writeInt32BE(uid | 0, 0);
+          secret.copy(stdin, 4);
+          main.copy(stdin, 4 + 64);
+          jsCipher
+            .Digest("SHA256")
+            .Init()
+            .Update(stdin.subarray(0, kOff))
+            .Final()
+            .copy(stdin, kOff);
+
+          delete payload_value.uid;
+          payload_value.stdin = stdin.toString("base64");
+          const payload = Buffer.from(JSON.stringify(payload_value));
+
+          const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+          const [pow, cipher] = await POW(md);
+
+          const json = Seal(pow, cipher, payload);
+          console.log(
+            `#### Factory::Ajax::REQ(${Date.now() - start} ms) ${payload_minimal}`,
+          );
+
+          const reply = await Ajax(json, cipher);
+
+          console.log(
+            `#### Factory::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+          );
+        }
+
+        async function Lock() {
+          const id = document.getElementById("keys").value;
+          if (!id) throw Error(`Lock: Select RockeyARM device!`);
+          console.log(`#### Lock() ####`);
+
+          const start = Date.now();
+          const payload = Buffer.from(
+            JSON.stringify({
+              cmd: "lock",
+              nonce: jsCipher.RandBytes(12).toString("base64"),
+              id,
+            }),
+          );
+
+          const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+          const [pow, cipher] = await POW(md);
+
+          const json = Seal(pow, cipher, payload);
+          console.log(
+            `#### Lock::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+          );
+
+          const reply = await Ajax(json, cipher);
+          console.log(
+            `#### Lock::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+          );
+        }
         async function Execv() {}
 
         document.getElementById("list").onclick = List;

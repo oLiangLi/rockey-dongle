@@ -79,9 +79,17 @@ async function DongleExecv(args, stdin, req) {
   return new Promise((resolve) => {
     const start_time = new Date();
 
-    const child = child_process.spawn(EXECV_PATH, args, {
-      stdio: ["pipe", "pipe", "pipe"],
-    });
+    function spawn() {
+      try {
+        return child_process.spawn(EXECV_PATH, args, {
+          stdio: ["pipe", "pipe", "pipe"],
+        });
+      } catch (err) {
+        resolve([err]);
+      }
+    }
+
+    const child = spawn();
     let timer = setTimeout(() => {
       child.kill("SIGTERM");
       timer = setTimeout(() => {
@@ -117,7 +125,8 @@ async function DongleExecv(args, stdin, req) {
         `========== START: ${start_time.toISOString()}, client: ${clientId}:`,
       );
       console.info(
-        `## args: ${JSON.stringify(args)}, code: ${code}, stderr:\n${stderr_value.trim()}`,
+        `## args: ${JSON.stringify(args)}, code: ${code}, stderr:\n%s`,
+        stderr_value,
       );
       console.info(`========== END: ${end_time.toISOString()} ==========`);
 
@@ -163,9 +172,11 @@ async function Factory(req, body, reply) {
   locked_dongle_list.add(id);
   const [err, stdout] = await DongleExecv(["--factory", id, "-"], stdin, req);
   locked_dongle_list.delete(id);
+  prev_dashboard_value.delete(id);
 
   if (err) throw err;
   reply.stdout = stdout;
+  reply.id = id;
 }
 
 async function Lock(req, body, reply) {
@@ -181,6 +192,7 @@ async function Lock(req, body, reply) {
 
   if (err) throw err;
   reply.stdout = stdout;
+  reply.id = id;
 }
 
 async function Dashboard(req, body, reply) {
@@ -199,6 +211,7 @@ async function Dashboard(req, body, reply) {
   if (err) throw err;
 
   reply.stdout = stdout;
+  reply.id = id;
 }
 
 async function Execv(req, body, reply) {
@@ -216,6 +229,7 @@ async function Execv(req, body, reply) {
 
   if (err) throw err;
   reply.stdout = stdout;
+  reply.id = id;
 }
 
 async function HandleRequest(req, body) {
