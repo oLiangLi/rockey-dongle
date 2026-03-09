@@ -20,6 +20,17 @@ if (isNaN(vPORT) || vPORT < 1 || vPORT > 65535) {
   process.exit(1);
 }
 
+function GetClientId(req) {
+  ///
+  /// TODO: LiangLI, 实现一个简单的客户端登录程序, 获取一个友好的用户名等信息 ...
+  ///
+  return (
+    req.headers["x-real-ip"] ||
+    req.headers["x-forwarded-for"] ||
+    req.socket.remoteAddress
+  );
+}
+
 function Open(cipher, payload) {
   if (payload.length < 20)
     throw Error(`Invalid payload.size: ${payload.length}`);
@@ -60,30 +71,156 @@ const reId = /^[0-9a-fA-F]{8}-[0-9a-fA-F]{16}$/;
 const token_recorder = new Map();
 const locked_dongle_list = new Set();
 
-async function DongleExecv(args) {
-
+async function Sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function List(req, body, reply) {}
-async function Factory(req, body, reply) {}
-async function Lock(req, body, reply) {}
+async function DongleExecv(args, stdin, req) {
+  return new Promise((resolve) => {
+    const start_time = new Date();
+
+    const child = child_process.spawn(EXECV_PATH, args, {
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let timer = setTimeout(() => {
+      child.kill("SIGTERM");
+      timer = setTimeout(() => {
+        child.kill("SIGKILL");
+      }, 10000);
+    }, 120000);
+
+    const stdout = [];
+    const stderr = [];
+
+    child.stdout.on("data", (chunk) => {
+      stdout.push(chunk.toString());
+    });
+    child.stderr.on("data", (chunk) => {
+      stderr.push(chunk.toString());
+    });
+
+    child.on("error", (err) => {
+      clearTimeout(timer);
+      if (!(err instanceof Error)) err = Error(err);
+      console.error(err.stack);
+      resolve([err]);
+    });
+
+    child.on("exit", (code) => {
+      clearTimeout(timer);
+      const stdout_value = stdout.join();
+      const stderr_value = stderr.join();
+      const end_time = new Date();
+
+      const clientId = GetClientId(req);
+      console.info(
+        `========== START: ${start_time.toISOString()}, client: ${clientId}:`,
+      );
+      console.info(
+        `## args: ${JSON.stringify(args)}, code: ${code}, stderr:\n${stderr_value.trim()}`,
+      );
+      console.info(`========== END: ${end_time.toISOString()} ==========`);
+
+      resolve([
+        code === 0 ? null : Error(`Exit with code: ${code}`),
+        stdout_value,
+      ]);
+    });
+
+    if (stdin) {
+      child.stdin.end(`${stdin.toString("base64")}\n\n`);
+    } else {
+      child.stdin.end();
+    }
+  });
+}
+
+async function List(req, body, reply) {
+  const [err, stdout] = await DongleExecv(["--list"], null, req);
+  if (err) throw err;
+  reply.stdout = stdout;
+}
+
+const kFactorySize = 4 + 64 + 65520 + 32; /// || UID[4] | SEED[64] | TRUST[65520] | SHA256[32] ||
+const kExecvSize = 1024;
+
+function CheckStdinSize(body, size) {
+  const stdin = body.stdin;
+  if (typeof stdin !== "string") throw Error("Invalid input type!");
+  const buffer = Buffer.from(stdin, "base64");
+  if (buffer.length !== size)
+    throw Error(`Invalid input size ${buffer.length} != ${size}`);
+  return buffer;
+}
+
+async function Factory(req, body, reply) {
+  const id = body.id;
+  if (typeof id !== "string" || !id.match(reId))
+    throw Error(`Invalid id: ${id}`);
+  const stdin = CheckStdinSize(body, kFactorySize);
+
+  if (locked_dongle_list.has(id)) throw Error(`Dongle.locked ${id}`);
+  locked_dongle_list.add(id);
+  const [err, stdout] = await DongleExecv(["--factory", id, "-"], stdin, req);
+  locked_dongle_list.delete(id);
+
+  if (err) throw err;
+  reply.stdout = stdout;
+}
+
+async function Lock(req, body, reply) {
+  const id = body.id;
+
+  if (typeof id !== "string" || !id.match(reId))
+    throw Error(`Invalid id: ${id}`);
+
+  if (locked_dongle_list.has(id)) throw Error(`Dongle.locked ${id}`);
+  locked_dongle_list.add(id);
+  const [err, stdout] = await DongleExecv(["--lock", id, "-"], null, req);
+  locked_dongle_list.delete(id);
+
+  if (err) throw err;
+  reply.stdout = stdout;
+}
 
 async function Dashboard(req, body, reply) {
   const id = body.id;
 
-  if(typeof id !== 'string' || !id.match(reId))
+  if (typeof id !== "string" || !id.match(reId))
     throw Error(`Invalid id: ${id}`);
 
-  if(locked_dongle_list.has(id))
-    throw Error(`Dongle.locked ${id}`);
+  const args = ["--dashboard", id];
+  if (body.admin === true) args.push("-");
+
+  if (locked_dongle_list.has(id)) throw Error(`Dongle.locked ${id}`);
   locked_dongle_list.add(id);
+  const [err, stdout] = await DongleExecv(args, null, req);
+  locked_dongle_list.delete(id);
+  if (err) throw err;
 
-
+  reply.stdout = stdout;
 }
 
-async function Execv(req, body, reply) {}
+async function Execv(req, body, reply) {
+  const id = body.id;
+  if (typeof id !== "string" || !id.match(reId))
+    throw Error(`Invalid id: ${id}`);
+  const stdin = CheckStdinSize(body, kExecvSize);
+  const args = ["-", id];
+  if (body.admin === true) args.push("-");
+
+  if (locked_dongle_list.has(id)) throw Error(`Dongle.locked ${id}`);
+  locked_dongle_list.add(id);
+  const [err, stdout] = await DongleExecv(args, stdin, req);
+  locked_dongle_list.delete(id);
+
+  if (err) throw err;
+  reply.stdout = stdout;
+}
 
 async function HandleRequest(req, body) {
+  await Sleep(500 + crypto.randomBytes(2).readUInt16LE(0) / 32); /// 一些算法实现上可能存在侧信道信息泄露, 随机等待 0.5s - 2.5s 缓解一下 ...
+
   const json = JSON.parse(body.toString("utf-8"));
   if (
     typeof json !== "object" ||
@@ -173,10 +310,7 @@ async function StartServer() {
     try {
       const server = http.createServer((req, res) => {
         const tick_start = Date.now();
-        const client_ip =
-          req.headers["x-real-ip"] ||
-          req.headers["x-forwarded-for"] ||
-          req.socket.remoteAddress;
+        const clientId = GetClientId(req);
         function HeaderDefault() {
           if (
             req.headers["sec-fetch-mode"] === "cors" &&
@@ -262,13 +396,13 @@ async function StartServer() {
             const tick_end = Date.now();
 
             console.info(
-              `[ I ]${service_counter} client ${client_ip}, cmd ${reply.cmd}, id ${reply.id || "N/A"}, in ${tick_end - tick_start} ms`,
+              `[ I ]${service_counter} client ${clientId}, cmd ${reply.cmd}, id ${reply.id || "N/A"}, in ${tick_end - tick_start} ms`,
             );
           } catch (err) {
             ++error_counter;
             const tick_end = Date.now();
             console.error(
-              `[ E ]${error_counter} client ${client_ip}, in ${tick_end - tick_start} ms, ${err?.stack}`,
+              `[ E ]${error_counter} client ${clientId}, in ${tick_end - tick_start} ms, ${err?.stack}`,
             );
             return onError(500, "Server error");
           }
