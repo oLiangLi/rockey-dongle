@@ -10,6 +10,9 @@ node_modules
 ## 编译生成的二进制 WebAssembly 文件 ...
 /Web/Assembly
 
+## webpack 打包出该文件 (Emulator, SSL, X509) ...
+/Web/Agent/Tests/js/jsCrypto.js
+
 ## 日志和备份
 *.log
 *.bak

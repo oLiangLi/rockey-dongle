@@ -233,7 +233,7 @@ async function Execv(req, body, reply) {
 }
 
 async function HandleRequest(req, body) {
-  await Sleep(500 + crypto.randomBytes(2).readUInt16LE(0) / 32); /// 一些算法实现上可能存在侧信道信息泄露, 随机等待 0.5s - 2.5s 缓解一下 ...
+  await Sleep(100 + crypto.randomBytes(2).readUInt16LE(0) / 128); /// 一些算法实现上可能存在侧信道信息泄露, 随机等待 0.1s - 0.6s 缓解一下 ...
 
   const json = JSON.parse(body.toString("utf-8"));
   if (

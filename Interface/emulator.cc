@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
 #include <vector>
@@ -40,7 +40,14 @@ rLANGIMPORT int rLANGAPI WriteDongleFile(const char* file, const uint8_t content
     __attribute__((__import_module__("rLANG"), __import_name__("WriteDongleFile")));
 rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state)
     __attribute__((__import_module__("rLANG"), __import_name__("SetDongleLEDState")));
+rLANGIMPORT void rLANGAPI rLANG_RAND_Bytes(void* buf, int num)
+    __attribute__((__import_module__("rLANG"), __import_name__("RAND_Bytes")));
+
 #else /* __EMSCRIPTEN__ && rLANG_WORLD_STANDALONE */
+
+void rLANGAPI rLANG_RAND_Bytes(void* buf, int num) {
+  RAND_bytes((uint8_t*)buf, num);
+}
 
 int LoadDongleFile(const char* file, uint8_t content[]) {
   FILE* fp = fopen(file, "rb");
@@ -116,7 +123,7 @@ public:
     ExtendMasterSecret(secret, loop);
 
     /* Init.0 */
-    RAND_bytes(sb.public_.world_nonce_, sizeof(sb.public_.world_nonce_));
+    rLANG_RAND_Bytes(sb.public_.world_nonce_, sizeof(sb.public_.world_nonce_));
     Sha512Ctx().Init().Update(secret, 64).Final(secret).Clear();
     memcpy(&sb.public_.dongle_info_.pid_, &secret[42], 4);
     Sha512Ctx().Init().Update(sb.public_.world_nonce_, 12).Update(secret, 64).Final(secret).Clear();
@@ -144,11 +151,11 @@ public:
     sb.public_.dongle_info_.uid_ = uid;
 
     /* MASK */
-    RAND_bytes((uint8_t*)&self->state_mask_[0], 64);
+    rLANG_RAND_Bytes((uint8_t*)&self->state_mask_[0], 64);
     rlCryptoChaCha20Block(self->state_mask_, MASTER_PKMASK);
 
     /* PKEY */
-    RAND_bytes(sb.master_prikey_encrypt_, 64);
+    rLANG_RAND_Bytes(sb.master_prikey_encrypt_, 64);
     memcpy(MASTER_PRIKEY, sb.master_prikey_encrypt_, 64);
 
     /* SECRET */
@@ -202,7 +209,7 @@ public:
     Dongle::SecretBuffer<16, uint32_t> state_mask_;
     Dongle::SecretBuffer<64> MASTER_PKMASK, MASTER_PRIKEY;    
 
-    RAND_bytes((uint8_t*)&state_mask_[0], 64);
+    rLANG_RAND_Bytes((uint8_t*)&state_mask_[0], 64);
     rlCryptoChaCha20Block(state_mask_, MASTER_PKMASK);
 
     /* Loop.1 */
@@ -435,7 +442,7 @@ public:
       Dongle::SecretBuffer<32> key;
       Dongle::SecretBuffer<1, rlCryptoChaCha20Ctx> ctx;
 
-      RAND_bytes(key, 32);
+      rLANG_RAND_Bytes(key, 32);
       rlCryptoX25519Pubkey(&buffer[size], key);
       rlCryptoX25519(key, key, sb_.public_.master_xx25519_);
 
@@ -622,7 +629,7 @@ rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t
 }
 
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
-  RAND_bytes(buffer, (int)size);
+  rLANG_RAND_Bytes(buffer, (int)size);
   return 0;
 }
 
