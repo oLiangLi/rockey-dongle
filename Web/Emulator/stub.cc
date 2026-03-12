@@ -1,6 +1,10 @@
 ﻿
 #include <base/base.h>
 
+#include <sys/types.h>
+#include <sys/stat.h>
+#include <unistd.h>
+
 rLANG_DECLARE_MACHINE
 
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("k@sys");
@@ -9,39 +13,54 @@ constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("k@sys");
  *! TODO: LiangLI, FileSystem ...
  */
 rLANGEXPORT int __syscall_ioctl(int fd, int op, ...) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_fcntl64(int fd, int cmd, ...) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_fstat64(int fd, intptr_t buf) {
+  if(fd == 10086) {
+    auto* st = (struct stat*)buf;
+    memset(st, 0, sizeof(*st));
+    st->st_mode = S_IFCHR;
+    return 0;
+  }
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_stat64(intptr_t path, intptr_t buf) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_dup(int fd) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_mkdirat(int dirfd, intptr_t path, int mode) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_newfstatat(int dirfd, intptr_t path, intptr_t buf, int flags) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_lstat64(intptr_t path, intptr_t buf) {
+  rlLOGE(TAG, "[NOT IMPL]%s", __FUNCTION__);
   return -ENOSYS;
 }
 
 rLANGEXPORT int __syscall_openat(int dirfd, intptr_t path, int flags, ...) {
-  if (0 == strcmp((const char*)path, "/dev/random"))
+  rlLOGI(TAG, "Enter __syscall_openat %s, flags: %d", (const char*)path, flags);
+
+  if (0 == strcmp((const char*)path, "/dev/random") || 0 == strcmp((const char*)path, "/dev/urandom"))
     return 10086;
   if (0 == strcmp((const char*)path, "/dev/null"))
     return 8848;

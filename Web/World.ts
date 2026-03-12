@@ -63,15 +63,19 @@ export interface CipherSuiteV0 extends RandomNumberGenerator {
 
   ChaCha20(
     state: Buffer /* 64 */,
-    callback: (stream: Buffer /* 64 */, index: integer) => boolean
+    callback: (stream: Buffer /* 64 */, index: integer) => boolean,
   ): void;
 
   XChaChaPoly(
     pubkey: CipherX25519 | Buffer,
-    cipher?: CipherX25519
+    cipher?: CipherX25519,
   ): [aead: CipherAEAD, pubkey: Buffer];
   ChaChaPoly(cipher: Buffer): CipherAEAD;
   Digest(name: string): CipherDigest;
   Ed25519(): CipherEd25519;
   X25519(): CipherX25519;
+}
+
+declare global {
+  var jsWorld: any;
 }

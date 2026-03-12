@@ -137,15 +137,19 @@ public:
     struct rlTM_t tm;
     rLANG_GetTimeFromDate(&tm, rLANG_GetCurrentDate());
 
+    auto V2BCD = [](int v) {
+      return (v / 10) * 16 + (v % 10);
+    };
+
     sb.public_.dongle_info_.ver_ = 0x0101;
     sb.public_.dongle_info_.type_ = rLANG_DECLARE_MAGIC_Xs("EMULA");
-    sb.public_.dongle_info_.birthday_[0] = tm.tm_year / 100;
-    sb.public_.dongle_info_.birthday_[1] = tm.tm_year % 100;
-    sb.public_.dongle_info_.birthday_[2] = tm.tm_month;
-    sb.public_.dongle_info_.birthday_[3] = tm.tm_mday;
-    sb.public_.dongle_info_.birthday_[4] = tm.tm_hour;
-    sb.public_.dongle_info_.birthday_[5] = tm.tm_minute;
-    sb.public_.dongle_info_.birthday_[6] = tm.tm_second;
+    sb.public_.dongle_info_.birthday_[0] = V2BCD(tm.tm_year % 100);
+    sb.public_.dongle_info_.birthday_[1] = V2BCD(tm.tm_month);
+    sb.public_.dongle_info_.birthday_[2] = V2BCD(tm.tm_mday);
+    sb.public_.dongle_info_.birthday_[3] = V2BCD(tm.tm_hour);
+    sb.public_.dongle_info_.birthday_[4] = V2BCD(tm.tm_minute);
+    sb.public_.dongle_info_.birthday_[5] = V2BCD(tm.tm_second);
+    sb.public_.dongle_info_.birthday_[6] = 0;
     sb.public_.dongle_info_.birthday_[7] = 0;
     sb.public_.dongle_info_.agentId_ = 0xFFFFFFFF;
     sb.public_.dongle_info_.uid_ = uid;

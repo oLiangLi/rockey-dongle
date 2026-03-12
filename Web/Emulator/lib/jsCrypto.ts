@@ -2,6 +2,13 @@ import { integer, Addr, CipherSuiteV0 } from "../../World.js";
 import * as jsCryptoText from "../../Assembly/Emulator_wasm.js";
 import * as jsScript from "../../Script/index.js";
 
+Object.defineProperty(globalThis.jsWorld, "CryptoLoader", {
+  value: CryptoLoader,
+  writable: false,
+  enumerable: false,
+  configurable: false,
+});
+
 export const enum PERMISSION {
   kAnonymous,
   kNormal,
@@ -399,13 +406,6 @@ export type CreateEmulatorOption = {
 };
 
 export async function CryptoLoader(jsCipher: CipherSuiteV0) {
-  Object.defineProperty(globalThis, "Buffer", {
-    value: jsCipher.Buffer_(),
-    writable: false,
-    enumerable: false,
-    configurable: false,
-  });
-
   const wasmModule_ = await WebAssembly.compile(jsCryptoText.Assets());
   async function ParseScript(script: string) {
     return await jsScript.Parse(script);
@@ -525,7 +525,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
         const buffer = Buffer.concat(data);
         (fd === 1 ? console.log : console.warn)(
-          `jsCrypto> ${buffer.toString()}`,
+          `fd_write> ${buffer.toString()}`,
         );
         HEAP32[pnum >>> 2] = buffer.length;
         return 0;
@@ -537,6 +537,8 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
     }
 
     function fd_read(fd: number, iov: Addr, iovcnt: number, pnum: number) {
+      console.log(`fd_read> ${fd}`);
+
       let result = 0;
       if (fd === kFileID_null || fd === 0) {
         // null && stdin ...
@@ -572,6 +574,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
     }
 
     function fd_seek(fd: number, offset: bigint, whence: number, seek: number) {
+      if (fd === kFileID_Random) return 0;
       console.log(`TODO: fd_seek ... ${fd} ${offset} ${whence} ${seek}`);
       return -kErrno_ESPIPE;
     }

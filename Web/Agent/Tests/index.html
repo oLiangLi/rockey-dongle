@@ -3,15 +3,40 @@
   <head>
     <meta charset="utf-8" />
     <script src="js/jsWorld.js"></script>
+    <script src="js/jsCrypto.js"></script>
     <title>RockeyARM Tests</title>
     <script>
       const prev_dashboard_value = new Map();
 
+      /**
+       * @type {RockeyEmulator}
+       */
+      var jsEmulator;
+
+      /**
+       * @type {CipherSuiteV0}
+       */
+      var jsCipher;
+
+      /**
+       * @type {(string)=>Promise<[size_public : integer, code : Buffer]>}
+       */
+      var jsScriptParser;
+
       window.onload = async function () {
-        /**
-         * @type {CipherSuiteV0}
-         */
-        const jsCipher = await jsWorld.CipherLoader();
+        jsCipher = await jsWorld.CipherLoader();
+
+        const jsCryptoFactory = (globalThis.jsCryptoFactory =
+          await jsWorld.CryptoLoader(jsCipher));
+
+        jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
+        jsEmulator.Create('1234567812345678', 100, 256);
+
+        jsScriptParser = async (script)=>{
+          const { size_public, code } = await jsCryptoFactory.ParseScript(script);
+          return [ size_public, Buffer.from(code, 'base64') ];
+        };
+
         /**
          * @type {BufferConstructor}
          */
@@ -176,7 +201,7 @@
           while (keys.length > 0) {
             keys.remove(0);
           }
-          addOption("{}", "");
+          addKey(jsEmulator.GetDongleInfo());
 
           const count = CheckBuffer();
           for (let i = 0; i < count; ++i) {

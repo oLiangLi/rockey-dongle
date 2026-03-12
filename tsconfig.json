@@ -25,6 +25,6 @@
     ]
   },
   "include": [ "./Web/**/*" ],
-  "exclude": [ "node_modules", "./Web/Html" ]
+  "exclude": [ "node_modules", "./Web/Html", "./Web/Agent/Tests" ]
 }
 
