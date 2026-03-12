@@ -58,18 +58,10 @@ rLANGEXPORT int __syscall_lstat64(intptr_t path, intptr_t buf) {
 }
 
 rLANGEXPORT int __syscall_openat(int dirfd, intptr_t path, int flags, ...) {
-  rlLOGI(TAG, "Enter __syscall_openat %s, flags: %d", (const char*)path, flags);
-
-  if (0 == strcmp((const char*)path, "/dev/random") || 0 == strcmp((const char*)path, "/dev/urandom"))
+  if (0 == strcmp((const char*)path, "/dev/random") || 0 == strcmp((const char*)path, "/dev/urandom")) {
+    rlLOGI(TAG, "OpenAT: TRNG!");
     return 10086;
-  if (0 == strcmp((const char*)path, "/dev/null"))
-    return 8848;
-  if (0 == strcmp((const char*)path, "/dev/stdin"))
-    return 0;
-  if (0 == strcmp((const char*)path, "/dev/stdout"))
-    return 1;
-  if (0 == strcmp((const char*)path, "/dev/stderr"))
-    return 2;
+  }
   rlLOGE(TAG, "[NOT IMPL]__syscall_openat %s", (const char*)path);
   return -EPERM;
 }

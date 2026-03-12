@@ -19,9 +19,14 @@
       var jsCipher;
 
       /**
-       * @type {(string)=>Promise<[size_public : integer, code : Buffer]>}
+       * @type {(script : string)=>Promise<[size_public : integer, code : Buffer]>}
        */
       var jsScriptParser;
+
+      /**
+       * @type {(id : string , file : Buffer, admin ?: boolean)=>Promise<Buffer>}
+       */
+      var jsDongleExecv;
 
       window.onload = async function () {
         jsCipher = await jsWorld.CipherLoader();
@@ -30,11 +35,16 @@
           await jsWorld.CryptoLoader(jsCipher));
 
         jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
-        jsEmulator.Create('1234567812345678', 100, 256);
+        jsEmulator.Create("1234567812345678", 0x100, 256);
 
-        jsScriptParser = async (script)=>{
-          const { size_public, code } = await jsCryptoFactory.ParseScript(script);
-          return [ size_public, Buffer.from(code, 'base64') ];
+        jsScriptParser = async (script) => {
+          const { size_public, code } =
+            await jsCryptoFactory.ParseScript(script);
+          return [size_public, Buffer.from(code, "base64")];
+        };
+
+        jsDongleExecv = async (id, file, admin) => {
+          return Promise.reject(Error("NOT IMPLEMENTED"));
         };
 
         /**
@@ -147,6 +157,23 @@
           );
         }
 
+        function DongleDisplayValue(key) {
+          function V2(v) {
+            return ("00" + v.toString(16)).slice(-2);
+          }
+          function V8(v) {
+            return "0x" + ("00000000" + v.toString(16)).slice(-8);
+          }
+          const version = V8(key.readUInt32LE(0));
+          const type = V8(key.readUInt32LE(4));
+          const birthday = `20${V2(key[8])}-${V2(key[9])}-${V2(key[10])} ${V2(key[11])}:${V2(key[12])}:${V2(key[13])}`;
+          const agent = V8(key.readUInt32LE(16));
+          const pid = V8(key.readUInt32LE(20));
+          const uid = V8(key.readUInt32LE(24));
+          const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
+          return { version, id, pid, uid, type, birthday, agent };
+        }
+
         function UpdateDeviceList(buffer) {
           const keys = document.getElementById("keys");
           const prev_value = keys.value;
@@ -160,23 +187,8 @@
 
           /// @param {Buffer} key - DONGLE_INFO ...
           function addKey(key) {
-            function V2(v) {
-              return ("00" + v.toString(16)).slice(-2);
-            }
-            function V8(v) {
-              return "0x" + ("00000000" + v.toString(16)).slice(-8);
-            }
-            const version = V8(key.readUInt32LE(0));
-            const type = V8(key.readUInt32LE(4));
-            const birthday = `20${V2(key[8])}-${V2(key[9])}-${V2(key[10])} ${V2(key[11])}:${V2(key[12])}:${V2(key[13])}`;
-            const agent = V8(key.readUInt32LE(16));
-            const pid = V8(key.readUInt32LE(20));
-            const uid = V8(key.readUInt32LE(24));
-            const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
-            addOption(
-              JSON.stringify({ version, type, birthday, agent, pid, uid, id }),
-              id,
-            );
+            const value = DongleDisplayValue(key);
+            addOption(JSON.stringify(value), value.id);
           }
 
           function CheckBuffer() {
@@ -245,46 +257,53 @@
           const id = document.getElementById("keys").value;
           if (!id) throw Error(`Dashboard: Select RockeyARM device!`);
 
+          let buffer;
           console.log(`#### Dashboard() ####`);
-          const start = Date.now();
-          const payload = Buffer.from(
-            JSON.stringify({
-              cmd: "dashboard",
-              nonce: jsCipher.RandBytes(12).toString("base64"),
-              admin: document.getElementById("admin").checked,
-              id,
-            }),
-          );
+          if (id.slice(0, 2) === "ff") {
+            const v = jsEmulator.ReadDataFile(0xffff, 0, 8192);
+            const verify = jsCipher.Digest("SHA256").Init().Update(v).Final();
+            buffer = Buffer.concat([v, verify]);
+          } else {
+            const start = Date.now();
+            const payload = Buffer.from(
+              JSON.stringify({
+                cmd: "dashboard",
+                nonce: jsCipher.RandBytes(12).toString("base64"),
+                admin: document.getElementById("admin").checked,
+                id,
+              }),
+            );
 
-          const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
-          const [pow, cipher] = await POW(md);
+            const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+            const [pow, cipher] = await POW(md);
 
-          const json = Seal(pow, cipher, payload);
-          console.log(
-            `#### Dashboard::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
-          );
+            const json = Seal(pow, cipher, payload);
+            console.log(
+              `#### Dashboard::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+            );
 
-          const reply = await Ajax(json, cipher);
-          const stdout = StdoutLine0(reply.stdout);
-          delete reply.stdout;
+            const reply = await Ajax(json, cipher);
+            const stdout = StdoutLine0(reply.stdout);
+            delete reply.stdout;
 
-          console.log(
-            `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
-          );
+            console.log(
+              `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+            );
 
-          const buffer = Buffer.from(stdout, "base64");
-          if (buffer.length !== 8192 + 32)
-            throw Error(`Invalid dashboard value!`);
+            buffer = Buffer.from(stdout, "base64");
+            if (buffer.length !== 8192 + 32)
+              throw Error(`Invalid dashboard value!`);
 
-          const verify = jsCipher
-            .Digest("SHA256")
-            .Init()
-            .Update(buffer.subarray(0, 8192))
-            .Final();
-          if (Buffer.compare(verify, buffer.subarray(8192)) !== 0)
-            throw Error(`Invalid SHA256(dashboard) value!`);
+            const verify = jsCipher
+              .Digest("SHA256")
+              .Init()
+              .Update(buffer.subarray(0, 8192))
+              .Final();
+            if (Buffer.compare(verify, buffer.subarray(8192)) !== 0)
+              throw Error(`Invalid SHA256(dashboard) value!`);
+          }
 
-          prev_dashboard_value.set(id, buffer);
+          if (id.slice(0, 2) !== "ff") prev_dashboard_value.set(id, buffer);
 
           const blob = new Blob([buffer], { type: "application/octet-stream" });
           const url = URL.createObjectURL(blob);
@@ -300,24 +319,29 @@
           document.getElementById("m").appendChild(li);
         }
 
-        async function ReadFileContent(id, size) {
+        async function ReadFileContent(id, min, max) {
           return new Promise((resolve, reject) => {
             const inputElement = document.getElementById(id);
             const file = inputElement.files?.[0];
 
-            if (!file)
-              return reject(Error(`Select File id ${id} size ${size}`));
+            max |= 0;
+            if (max < min) max = min;
 
-            if (file.size !== size)
-              return reject(Error(`Invalid file size ${file.size} != ${size}`));
+            if (!file)
+              return reject(Error(`Select File id ${id} size ${min}/${max}`));
+
+            if (file.size < min || file.size > max)
+              return reject(
+                Error(`Invalid file size ${file.size} ${min}/${max}`),
+              );
 
             const reader = new FileReader();
             reader.onloadend = function () {
               console.assert(reader.result instanceof ArrayBuffer);
               const result = Buffer.from(reader.result);
-              if (result.length !== size)
+              if (result.length < min || result.length > max)
                 return reject(
-                  Error(`Invalid file size ${result.length} != ${size}`),
+                  Error(`Invalid file size ${result.length} ${min}/${max}`),
                 );
               resolve(result);
             };
@@ -328,6 +352,9 @@
         async function Factory() {
           const id = document.getElementById("keys").value;
           if (!id) throw Error(`Factory: Select RockeyARM device!`);
+
+          if (id.slice(0, 2) === "ff")
+            throw new Error("Lock: 好像选中的是模拟设备!");
 
           const start = Date.now();
           console.log(`#### Factory() ####`);
@@ -388,6 +415,10 @@
         async function Lock() {
           const id = document.getElementById("keys").value;
           if (!id) throw Error(`Lock: Select RockeyARM device!`);
+
+          if (id.slice(0, 2) === "ff")
+            throw new Error("Lock: 好像选中的是模拟设备!");
+
           console.log(`#### Lock() ####`);
 
           const start = Date.now();
@@ -414,11 +445,92 @@
         }
         async function Execv() {}
 
+        function UpdateEmulatorInfo() {
+          /**
+           * @type {HTMLSelectElement}
+           */
+          const select = document.getElementById("keys");
+          const value = select.value;
+
+          const key = jsEmulator.GetDongleInfo();
+          const json = DongleDisplayValue(key);
+
+          for (const option of select.options) {
+            if (option.value.slice(0, 2) === "ff") {
+              option.text = JSON.stringify(json);
+              option.value = json.id;
+              if (value.slice(0, 2) === "ff") select.value = json.id;
+              break;
+            }
+          }
+        }
+
+        async function CreateEmulator() {
+          console.log(`#### CreateEmulator ####`);
+          const secret = document.getElementById("EmuSecret").value;
+          const loop = document.getElementById("EmuLoop").value | 0;
+          const uid = (function () {
+            const s_uid = document.getElementById("uid").value;
+            if (!s_uid.match(/^0x[0-9a-f]{1,8}$/i))
+              throw Error(`Invalid uid Value /^0x[0-9a-f]{1,8}$/i`);
+            return parseInt(s_uid.slice(2), 16);
+          })();
+
+          if (secret.length < 16)
+            throw jsCipher.Annihilus_(`Weak SECRET.Size ${secret.length}`);
+
+          if (loop < 256 || loop > 65536)
+            throw jsCipher.Annihilus_(`Invalid Loop ${loop}`);
+
+          jsEmulator = null;
+          jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
+          jsEmulator.Create(secret, uid, loop);
+          UpdateEmulatorInfo();
+        }
+
+        async function ExportEmulator() {
+          console.log(`#### ExportEmulator ####`);
+          const id = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+          const buffer = jsEmulator.Export();
+
+          const blob = new Blob([buffer], { type: "application/octet-stream" });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const name = `jsEmulator-${id}.dongle`;
+          a.href = url;
+          a.download = name;
+          a.innerText = `${name}`;
+
+          const li = document.createElement("li");
+          li.appendChild(a);
+
+          document.getElementById("m").appendChild(li);
+        }
+
+        async function ImportEmulator() {
+          console.log(`#### ImportEmulator ####`);
+          const secret = document.getElementById("EmuSecret").value;
+          const loop = document.getElementById("EmuLoop").value | 0;
+          const admin = document.getElementById("admin").checked;
+
+          if (loop < 256 || loop > 65536)
+            throw jsCipher.Annihilus_(`Invalid Loop ${loop}`);
+
+          const storage = await ReadFileContent("emuFile", 8192, 65536);
+          jsEmulator = null;
+          jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
+          jsEmulator.Open(admin ? 2 : 0, storage, secret, loop);
+          UpdateEmulatorInfo();
+        }
+
         document.getElementById("list").onclick = List;
         document.getElementById("factory").onclick = Factory;
         document.getElementById("lock").onclick = Lock;
         document.getElementById("dashboard").onclick = Dashboard;
         document.getElementById("execv").onclick = Execv;
+        document.getElementById("EmuCreate").onclick = CreateEmulator;
+        document.getElementById("EmuExport").onclick = ExportEmulator;
+        document.getElementById("EmuImport").onclick = ImportEmulator;
         UpdateDeviceList(null);
       };
     </script>
@@ -439,6 +551,26 @@
     ><select id="keys" style="width: 700px"></select>
 
     <p>列出所有的RockeyARM设备:<button id="list">list</button></p>
+    <p>
+      RockeyARM 模拟器操作:
+      <label>
+        SECRET:
+        <input
+          id="EmuSecret"
+          type="password"
+          maxlength="64"
+          value="1234567812345678"
+        />
+      </label>
+      <label
+        >LOOP:
+        <input id="EmuLoop" type="number" value="256" maxlength="6" /> </label
+      ><br />
+      <button id="EmuCreate">EmuCreate</button>
+      <button id="EmuExport">EmuExport</button>
+      <input type="file" id="emuFile" />
+      <button id="EmuImport">EmuImport</button>
+    </p>
 
     <p>
       初始化RockeyARM设备:

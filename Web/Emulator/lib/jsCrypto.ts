@@ -551,6 +551,8 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           const ptr = HEAP32[iov >>> 2];
           const siz = HEAP32[(iov + 4) >>> 2];
 
+          console.log(`  TRNG> 0x${ptr.toString(16)} ${siz}`);
+
           result += siz;
           jsCipher.RandBytes(HEAP.subarray(ptr, ptr + siz));
         }
