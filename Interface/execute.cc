@@ -49,16 +49,16 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
   if (vm.data_ != InOutBuf || vm.buffer_ != ExtendBuf)
     return -EBADF;
 
-  if (vm.valid_permission_ != PERMISSION::kAdminstrator) {
+  if (vm.valid_permission_ != PERMISSION::kAdministrator) {
     PERMISSION permission_login = PERMISSION::kAnonymous;
     result = vm.dongle_->GetPINState(&permission_login);
     if (0 != result)
       return result;
-    if (permission_login == PERMISSION::kAdminstrator)
-      vm.valid_permission_ = PERMISSION::kAdminstrator;
+    if (permission_login == PERMISSION::kAdministrator)
+      vm.valid_permission_ = PERMISSION::kAdministrator;
   }
 
-  if (vm.valid_permission_ != PERMISSION::kAdminstrator) {
+  if (vm.valid_permission_ != PERMISSION::kAdministrator) {
     DONGLE_INFO thiz_dongle_;
     DONGLE_INFO check_dongle_;
 
@@ -80,7 +80,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
   result = vm.dongle_->RSAPrivate(vm.kKeyIdGlobalRSA2048, v.data_, &size, false);
 
   if (result < 0) {
-    if (vm.valid_permission_ != PERMISSION::kAdminstrator) {
+    if (vm.valid_permission_ != PERMISSION::kAdministrator) {
       rlLOGE(TAG, "EACCES: Adminstrator requirement, plain text script call!");
       return -EACCES;
     }
@@ -119,7 +119,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
     /**
      *!
      */
-    if (vm.valid_permission_ != PERMISSION::kAdminstrator) {
+    if (vm.valid_permission_ != PERMISSION::kAdministrator) {
       if (vm.dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
                                    WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECIES, &ecies_pubkey,
                                    64) < 0)
@@ -137,7 +137,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
       if (vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]) < 0)
         return -EBADF;
 
-      vm.valid_permission_ = PERMISSION::kAdminstrator; /* Granting privileges administrator */
+      vm.valid_permission_ = PERMISSION::kAdministrator; /* Granting privileges administrator */
     }
   } else {
     result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
@@ -153,7 +153,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
     return -EBADMSG;
   }
 
-  if (vm.valid_permission_ != PERMISSION::kAdminstrator) {
+  if (vm.valid_permission_ != PERMISSION::kAdministrator) {
     WorldPublic::Header public_header_; /*!! Administrator mode check */
     result = vm.dongle_->ReadDataFile(Dongle::kFactoryDataFileId, WorldPublic::kOffsetDataFile, &public_header_,
                                       sizeof(public_header_));

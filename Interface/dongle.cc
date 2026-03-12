@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <base/base.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
@@ -766,7 +766,7 @@ int RockeyARM::VerifyPIN(PERMISSION perm, const char* pin, int* remain) {
   if (!remain)
     remain = &dummy;
 
-  if (perm == PERMISSION::kAdminstrator) {
+  if (perm == PERMISSION::kAdministrator) {
     flags = FLAG_ADMINPIN;
     if (!pin)
       pin = CONST_ADMINPIN;
@@ -828,7 +828,7 @@ int RockeyARM::SetUserID(uint32_t id) {
 
 int RockeyARM::ChangePIN(PERMISSION perm, const char* old, const char* pin, int count) {
   return DONGLE_CHECK(Dongle_ChangePIN(handle_,
-                                       perm == PERMISSION::kAdminstrator ? FLAG_ADMINPIN
+                                       perm == PERMISSION::kAdministrator ? FLAG_ADMINPIN
                                        : perm == PERMISSION::kNormal     ? FLAG_USERPIN
                                                                          : -1,
                                        const_cast<char*>(old), const_cast<char*>(pin), count));
@@ -837,7 +837,7 @@ int RockeyARM::ResetUserPIN(const char* admin) {
   return DONGLE_CHECK(Dongle_ResetUserPIN(handle_, const_cast<char*>(admin)));
 }
 const char* RockeyARM::GetDefaultPIN(PERMISSION permission) {
-  if (permission == PERMISSION::kAdminstrator)
+  if (permission == PERMISSION::kAdministrator)
     return CONST_ADMINPIN;
   else if (permission == PERMISSION::kNormal)
     return CONST_USERPIN;

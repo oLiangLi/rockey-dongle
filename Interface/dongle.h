@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #ifndef __WTINC_DONGLE_PUBLIC__
 #define __WTINC_DONGLE_PUBLIC__
@@ -38,7 +38,7 @@ rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
-enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdminstrator };
+enum class PERMISSION : uint8_t { kAnonymous, kNormal, kAdministrator };
 
 enum class LED_STATE : uint8_t { kOff, kOn, kBlink };
 enum class SECRET_STORAGE_TYPE : uint8_t { kData, kRSA, kP256, kSM2, kSM4, kTDES };
@@ -458,7 +458,7 @@ class RockeyARM : public Dongle {
   virtual int ResetUserPIN(const char* admin);
 
  public:
-  virtual const char* GetDefaultPIN(PERMISSION permission = PERMISSION::kAdminstrator);
+  virtual const char* GetDefaultPIN(PERMISSION permission = PERMISSION::kAdministrator);
   virtual int GenUniqueKey(const void* seed, size_t len, char pid[10], char admin[20]);
   virtual int FactoryReset();
 };

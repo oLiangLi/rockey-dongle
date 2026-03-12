@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 extern "C" {
 #include <MCU/RockeyARM/include/FTRX.h>
 }
@@ -35,7 +35,7 @@ int Dongle::GetPINState(PERMISSION* state) {
   DWORD pin = 0;
   if (0 != DONGLE_CHECK(get_pinstate(&pin)))
     return -1;
-  *state = pin == PIN_ADMIN  ? PERMISSION::kAdminstrator
+  *state = pin == PIN_ADMIN  ? PERMISSION::kAdministrator
            : pin == PIN_USER ? PERMISSION::kNormal
                              : PERMISSION::kAnonymous;
   return 0;

@@ -4,29 +4,37 @@
 #include <Interface/script.h>
 
 #include <openssl/ssl.h>
-
+#include <new>
 rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
-rLANGWASMEXPORT Emulator* EmuNew(PERMISSION permission) {
-  return new Emulator(permission);
+rLANGWASMEXPORT size_t EmuSize() {
+  return sizeof(Emulator);
+}
+
+rLANGWASMEXPORT Emulator* EmuNew(void* memory, PERMISSION permission) {
+  return new (memory) Emulator(permission);
+}
+
+rLANGWASMEXPORT void EmuClear(Emulator* emu) {
+  emu->~Emulator();
 }
 
 rLANGWASMEXPORT int EmuCreate(Emulator* emu, const uint8_t master_secret[64], uint32_t uid, int loop) {
   return emu->Create(master_secret, uid, loop);
 }
 
-rLANGWASMEXPORT int EmuOpen(Emulator* emu, const char* file, const uint8_t master_secret[64], int loop) {
-  return emu->Open(file, master_secret, loop);
+rLANGWASMEXPORT int EmuOpen(Emulator* emu, const uint8_t master_secret[64], int loop) {
+  return emu->Open("V", master_secret, loop);
 }
 
-rLANGWASMEXPORT void EmuClose(Emulator* emu) {
-  delete emu;
+rLANGWASMEXPORT int EmuClose(Emulator* emu) {
+  return emu->Close();
 }
 
-rLANGWASMEXPORT int EmuWrite(Emulator* dongle, const char* file) {
-  return dongle->Write(file);
+rLANGWASMEXPORT int EmuWrite(Emulator* dongle) {
+  return dongle->Write("V");
 }
 
 /**
@@ -78,8 +86,8 @@ rLANGWASMEXPORT int EmuDeleteFile(Dongle* dongle, SECRET_STORAGE_TYPE type, int 
   return dongle->DeleteFile(type, id);
 }
 
-rLANGWASMEXPORT int EmuCreateDataFile(Dongle* dongle, int id, size_t size, PERMISSION read, PERMISSION write) {
-  return dongle->CreateDataFile(id, size, read, write);
+rLANGWASMEXPORT int EmuCreateDataFile(Dongle* dongle, int id, size_t size) {
+  return dongle->CreateDataFile(id, size, PERMISSION::kAnonymous, PERMISSION::kAnonymous);
 }
 
 rLANGWASMEXPORT int EmuWriteDataFile(Dongle* dongle, int id, size_t offset, const void* buffer, size_t size) {
@@ -123,8 +131,8 @@ rLANGWASMEXPORT int EmuImportSM2(Dongle* dongle, int id, const uint8_t K[32]) {
   return dongle->ImportSM2(id, K);
 }
 
-rLANGWASMEXPORT int EmuCreateKeyFile(Dongle* dongle, int id, PERMISSION permission, SECRET_STORAGE_TYPE type) {
-  return dongle->CreateKeyFile(id, permission, type);
+rLANGWASMEXPORT int EmuCreateKeyFile(Dongle* dongle, int id, SECRET_STORAGE_TYPE type) {
+  return dongle->CreateKeyFile(id, PERMISSION::kAnonymous, type);
 }
 
 rLANGWASMEXPORT int EmuWriteKeyFile(Dongle* dongle, int id, const void* buffer, size_t size, SECRET_STORAGE_TYPE type) {
@@ -339,7 +347,3 @@ rLANGWASMEXPORT int EmuVerifySignSecp256k1(Dongle* dongle,
 }  // namespace dongle
 
 rLANG_DECLARE_END
-
-int main() {
-  return 0;
-}

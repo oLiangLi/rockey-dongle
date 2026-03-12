@@ -28,23 +28,19 @@ rLANGWASMEXPORT int Initialize() {
 
   SSL_library_init();
   SSL_load_error_strings();
+
+  uint8_t buffer[128];
+  FILE* fp = fopen("/dev/random", "rb");
+  if (fp) {
+    fread(buffer, 1, sizeof(buffer), fp);
+    fclose(fp);
+  }
+  RAND_seed(buffer, sizeof(buffer));
   return 0;
 }
 
-/**
- *! MM
- */
-rLANGWASMEXPORT void* MemoryManager(void* p, size_t sz) {
-  if (!sz) {
-    if (p)
-      free(p);
-    return nullptr;
-  }
-
-  if (!p)
-    return malloc(sz);
-
-  return realloc(p, sz);
+rLANGWASMEXPORT void RANDSeedBytes(const void* buff, size_t size) {
+  RAND_seed(buff, size);
 }
 
 rLANG_DECLARE_END

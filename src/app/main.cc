@@ -192,9 +192,9 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
         dongle = &factory_;
     }
 
-    const char* const default_admin_pin_ = dongle->GetDefaultPIN(PERMISSION::kAdminstrator);
+    const char* const default_admin_pin_ = dongle->GetDefaultPIN(PERMISSION::kAdministrator);
     if (0 == result)
-      result = dongle->VerifyPIN(PERMISSION::kAdminstrator, default_admin_pin_, nullptr);
+      result = dongle->VerifyPIN(PERMISSION::kAdministrator, default_admin_pin_, nullptr);
 
     if (0 == result) {
       uint32_t uid = 0;
@@ -206,10 +206,10 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
       rlLOGW(TAG, "dongle->GenUniqueKey: pid %s/%s, admin: %s => %d", pid,
              rLANG_DECLARE_MAGIC_Vs(strtoul(pid, nullptr, 16), stag_), admin, result);
       if (0 == result) {
-        result = dongle->ChangePIN(PERMISSION::kAdminstrator, admin, default_admin_pin_, 255);
+        result = dongle->ChangePIN(PERMISSION::kAdministrator, admin, default_admin_pin_, 255);
         rlLOGW(TAG, "dongle->ChangePIN.default => %d", result);
         if (0 == result) {
-          result = dongle->VerifyPIN(PERMISSION::kAdminstrator, default_admin_pin_, nullptr);
+          result = dongle->VerifyPIN(PERMISSION::kAdministrator, default_admin_pin_, nullptr);
           rlLOGW(TAG, "dongle->VerifyPIN.default => %d", result);
         }
         if (0 == result) {
@@ -303,7 +303,7 @@ int main(int argc, char* argv[]) {
   if (argc > 4)
     adminPasswd = argv[4];
 
-  Emulator rockey(adminPasswd[0] != 'X' ? PERMISSION::kAdminstrator : PERMISSION::kAnonymous);
+  Emulator rockey(adminPasswd[0] != 'X' ? PERMISSION::kAdministrator : PERMISSION::kAnonymous);
   if (rockey.Open(dongleFile, dongleSecret) < 0)
     rockey.Create(dongleSecret);
 #elif !defined(__RockeyARM__)
@@ -389,7 +389,7 @@ int main(int argc, char* argv[]) {
   if (adminPasswd) {
     int remain = -1;
     const char* const passwd = 0 == strcmp(adminPasswd, "-") ? nullptr : adminPasswd;
-    if (0 != rockey.VerifyPIN(PERMISSION::kAdminstrator, passwd, &remain)) {
+    if (0 != rockey.VerifyPIN(PERMISSION::kAdministrator, passwd, &remain)) {
       rlLOGE(TAG, "VerifyPIN Error, remain %d", remain);
       exit(EXIT_FAILURE);
     }

@@ -12,10 +12,18 @@ LOCAL_BUILD_OPTIMIZE_FLAGS := -Oz
 LOCAL_CXXFLAGS := -DrLANG_CONFIG_MINIMAL
 
 LOCAL_LDFLAGS :=    \
-	-s IMPORTED_MEMORY=1    \
 	-s GLOBAL_BASE=64KB     \
 	-s TOTAL_STACK=256KB    \
-	-s INITIAL_MEMORY=8MB
+	-s INITIAL_MEMORY=8MB	\
+\
+\
+	-s IMPORTED_MEMORY=1    \
+\
+\
+\
+	-s EXPORTED_FUNCTIONS='[ __emscripten_stack_alloc, __emscripten_stack_restore, _emscripten_stack_get_current ]'	\
+\
+\
 
 $(call call_add_optimize_module)
 $(call wasm_add_ldflags, --no-entry)

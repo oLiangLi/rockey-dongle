@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <base/base.h>
 
 #if !defined(__RockeyARM__) && !defined(__EMULATOR__)
@@ -234,7 +234,7 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
     if (WriteLog(fp, nullptr, 0, "GenUniqueKey prodId: %s, AdminPIN: %s", prodId, admin) < 0)
       exit(5);
 
-    result = rockey.ChangePIN(PERMISSION::kAdminstrator, admin, "FFFFFFFFFFFFFFFF", 255);
+    result = rockey.ChangePIN(PERMISSION::kAdministrator, admin, "FFFFFFFFFFFFFFFF", 255);
     if (result < 0)
       exit(7);
     uint32_t pid = (uint32_t)strtoul(prodId, nullptr, 16);
@@ -257,7 +257,7 @@ int AdminTesting_SelectProductId(RockeyARM& rockey, Context_t* Context, void* Ex
       exit(8);
 #endif
 
-    result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+    result = rockey.VerifyPIN(PERMISSION::kAdministrator, nullptr, nullptr);
     if (result < 0)
       exit(9);
   }
@@ -279,7 +279,7 @@ int Testing_CreateDataFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) 
     }
   }
 
-  if (0 != rockey.CreateDataFile(1, 256, PERMISSION::kAdminstrator, PERMISSION::kAdminstrator)) {
+  if (0 != rockey.CreateDataFile(1, 256, PERMISSION::kAdministrator, PERMISSION::kAdministrator)) {
     Context->error_[3] = rockey.GetLastError();
     ++error;
   }
@@ -397,7 +397,7 @@ int Testing_CreateRSAFile(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   }
 
   if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 100,
-                            PKEY_LICENCE{}.SetPermission(PERMISSION::kAdminstrator)) < 0) {
+                            PKEY_LICENCE{}.SetPermission(PERMISSION::kAdministrator)) < 0) {
     ++error;
     Context->error_[4] = rockey.GetLastError();
     rlLOGE(TAG, "rockey.CreatePKEYFile 100 Error");
@@ -915,10 +915,10 @@ int Testing_KeyExec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     if (rockey.DeleteFile(SECRET_STORAGE_TYPE::kSM4, 9) < 0)
       ++error;
 
-    if (rockey.CreateKeyFile(8, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kTDES) < 0)
+    if (rockey.CreateKeyFile(8, PERMISSION::kAdministrator, SECRET_STORAGE_TYPE::kTDES) < 0)
       ++error;
 
-    if (rockey.CreateKeyFile(9, PERMISSION::kAdminstrator, SECRET_STORAGE_TYPE::kSM4) < 0)
+    if (rockey.CreateKeyFile(9, PERMISSION::kAdministrator, SECRET_STORAGE_TYPE::kSM4) < 0)
       ++error;
 
     if (rockey.RandBytes(K, sizeof(K)) < 0)
@@ -1458,7 +1458,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
   }
 
-  if (Context->permission_ == PERMISSION::kAdminstrator) {
+  if (Context->permission_ == PERMISSION::kAdministrator) {
     if ((0xF0 & index) == 0xF0) {
       index &= 0x0F;
 
@@ -1483,13 +1483,13 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     result = rockey.GenUniqueKey("10086", 5, pid, admin);
     rlLOGI(TAG, "rockey.GenUniqueKey %d/%08x %s %s", result, rockey.GetLastError(), pid, admin);
 
-    result = rockey.ChangePIN(PERMISSION::kAdminstrator, admin, "FFFFFFFFFFFFFFFF", 255);
+    result = rockey.ChangePIN(PERMISSION::kAdministrator, admin, "FFFFFFFFFFFFFFFF", 255);
     rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
 
     result = rockey.Open(0);
     rlLOGI(TAG, "rockey.Open return %d/%08x", result, rockey.GetLastError());
 
-    result = rockey.VerifyPIN(PERMISSION::kAdminstrator, nullptr, nullptr);
+    result = rockey.VerifyPIN(PERMISSION::kAdministrator, nullptr, nullptr);
     rlLOGI(TAG, "rockey.VerifyPIN %d/%08X", result, rockey.GetLastError());
 
     result = rockey.SetUserID(rLANG_WORLD_MAGIC);
@@ -1505,7 +1505,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   result = rockey.ChangePIN(PERMISSION::kNormal, "12345678", "12345678", 10);
   rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
 
-  result = rockey.ChangePIN(PERMISSION::kAdminstrator, "FFFFFFFFFFFFFFFF", "FFFFFFFFFFFFFFFF", 255);
+  result = rockey.ChangePIN(PERMISSION::kAdministrator, "FFFFFFFFFFFFFFFF", "FFFFFFFFFFFFFFFF", 255);
   rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
 
   result = rockey.ResetUserPIN("FFFFFFFFFFFFFFFF");
@@ -1654,7 +1654,7 @@ int main(int argc, char* argv[]) {
   if (argc >= 2 && '-' == argv[1][0]) {
     switch (argv[1][1]) {
       case '2':
-        Context->permission_ = PERMISSION::kAdminstrator;
+        Context->permission_ = PERMISSION::kAdministrator;
         break;
       case '1':
         Context->permission_ = PERMISSION::kNormal;

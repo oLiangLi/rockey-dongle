@@ -1,4 +1,4 @@
-#include "script.h"
+﻿#include "script.h"
 
 rLANG_DECLARE_MACHINE
 
@@ -34,8 +34,8 @@ static inline constexpr bool operator>=(uint16_t op, OpCode code) {
   return static_cast<OpCode>(op) >= code;
 }
 static inline constexpr PERMISSION PermissionFrom(int code) {
-  if (code == static_cast<int>(PERMISSION::kAdminstrator))
-    return PERMISSION::kAdminstrator;
+  if (code == static_cast<int>(PERMISSION::kAdministrator))
+    return PERMISSION::kAdministrator;
   if (code == static_cast<int>(PERMISSION::kNormal))
     return PERMISSION::kNormal;
   return PERMISSION::kAnonymous;
@@ -159,7 +159,7 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kData, id);
@@ -174,7 +174,7 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       PERMISSION rPerm = argc >= 3 ? PermissionFrom(argv[2]) : PERMISSION::kAnonymous;
       PERMISSION wPerm = argc >= 4 ? PermissionFrom(argv[3]) : PERMISSION::kAnonymous;
 
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->CreateDataFile(id, size, rPerm, wPerm);
@@ -191,7 +191,7 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       if (p) {
         if (op == OpCode::kWriteDataFile) {
           if ((id < kUserFileID || id == Dongle::kFactoryDataFileId) &&
-              valid_permission_ != PERMISSION::kAdminstrator) {
+              valid_permission_ != PERMISSION::kAdministrator) {
             zero_ = -EACCES;
           } else {
             value = dongle_->WriteDataFile(id, offset, p, size);
@@ -226,7 +226,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kRSA, id);
@@ -238,7 +238,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         PKEY_LICENCE licence;
@@ -261,7 +261,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value =
@@ -288,7 +288,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       const void* pubkey = OpCheckMM(argv[1], sizeof(pubk));
       const void* prikey = OpCheckMM(argv[2], 256);
 
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else if (pubkey && prikey) {
         memcpy(buffer, prikey, 256);
@@ -439,7 +439,7 @@ int VM_t::OpFuncP256(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kP256, id);
@@ -452,7 +452,7 @@ int VM_t::OpFuncP256(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         PKEY_LICENCE licence;
@@ -478,7 +478,7 @@ int VM_t::OpFuncP256(uint16_t op, int argc, int32_t argv[]) {
       uint8_t* pubk = static_cast<uint8_t*>(OpCheckMM(argv[1], 64));
 
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else if (!pubk || (argc >= 3 && !(pkey = OpCheckMM(argv[2], 32)))) {
         zero_ = SIGSEGV;
@@ -493,7 +493,7 @@ int VM_t::OpFuncP256(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         uint8_t* pkey = static_cast<uint8_t*>(OpCheckMM(argv[1], 32));
@@ -613,7 +613,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kSM2, id);
@@ -626,7 +626,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         PKEY_LICENCE licence;
@@ -652,7 +652,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       uint8_t* pubk = static_cast<uint8_t*>(OpCheckMM(argv[1], 64));
 
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else if (!pubk || (argc >= 3 && !(pkey = OpCheckMM(argv[2], 32)))) {
         zero_ = SIGSEGV;
@@ -667,7 +667,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         uint8_t* pkey = static_cast<uint8_t*>(OpCheckMM(argv[1], 32));
@@ -683,7 +683,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id == kKeyIdGlobalSM2ECIES && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id == kKeyIdGlobalSM2ECIES && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         auto* hash = static_cast<const uint8_t*>(OpCheckMM(argv[1], 32));
@@ -861,7 +861,7 @@ int VM_t::OpFuncSM4(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kSM4, id);
@@ -872,7 +872,7 @@ int VM_t::OpFuncSM4(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->CreateKeyFile(id, argc > 1 ? PermissionFrom(argv[1]) : PERMISSION::kAnonymous,
@@ -884,7 +884,7 @@ int VM_t::OpFuncSM4(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         const uint8_t* key = static_cast<uint8_t*>(OpCheckMM(argv[1], 16));
@@ -933,7 +933,7 @@ int VM_t::OpFuncTDES(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kTDES, id);
@@ -944,7 +944,7 @@ int VM_t::OpFuncTDES(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->CreateKeyFile(id, argc > 1 ? PermissionFrom(argv[1]) : PERMISSION::kAnonymous,
@@ -956,7 +956,7 @@ int VM_t::OpFuncTDES(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdminstrator) {
+      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         const uint8_t* key = static_cast<uint8_t*>(OpCheckMM(argv[1], 16));
