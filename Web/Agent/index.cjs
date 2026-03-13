@@ -82,7 +82,7 @@ async function DongleExecv(args, stdin, req) {
     function spawn() {
       try {
         return child_process.spawn(EXECV_PATH, args, {
-          stdio: ["pipe", "pipe", "pipe"],
+          stdio: ["pipe", "pipe", "inherit"],
         });
       } catch (err) {
         resolve([err]);
@@ -90,6 +90,7 @@ async function DongleExecv(args, stdin, req) {
     }
 
     const child = spawn();
+    console.info(`####Execv ${JSON.stringify(args)}: pid: ${child.pid}`);
     let timer = setTimeout(() => {
       child.kill("SIGTERM");
       timer = setTimeout(() => {
@@ -98,13 +99,9 @@ async function DongleExecv(args, stdin, req) {
     }, 120000);
 
     const stdout = [];
-    const stderr = [];
 
     child.stdout.on("data", (chunk) => {
       stdout.push(chunk.toString());
-    });
-    child.stderr.on("data", (chunk) => {
-      stderr.push(chunk.toString());
     });
 
     child.on("error", (err) => {
@@ -117,16 +114,11 @@ async function DongleExecv(args, stdin, req) {
     child.on("exit", (code) => {
       clearTimeout(timer);
       const stdout_value = stdout.join();
-      const stderr_value = stderr.join();
       const end_time = new Date();
 
       const clientId = GetClientId(req);
       console.info(
         `========== START: ${start_time.toISOString()}, client: ${clientId}:`,
-      );
-      console.info(
-        `## args: ${JSON.stringify(args)}, code: ${code}, stderr:\n%s`,
-        stderr_value,
       );
       console.info(`========== END: ${end_time.toISOString()} ==========`);
 
@@ -383,6 +375,7 @@ async function StartServer() {
         });
 
         req.on("end", async () => {
+          console.info(`[ I ]${service_counter} receive client ${clientId} size: ${size}`);
           if (size > kSizeLimit)
             return onError(413, "Request entity too large");
 

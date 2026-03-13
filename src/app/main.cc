@@ -259,6 +259,11 @@ int main(int argc, char* argv[]) {
   using namespace machine;
   using namespace machine::dongle;
   using namespace machine::dongle::script;
+  rlLOGI(TAG, "ZION.Execv argc: %d", argc);
+  for(int i = 0; i < argc; ++i) {
+    rlLOGI(TAG, "  argv[%d/%d] : %s", i, argc, argv[i]);
+  }
+
   uint64_t InOutBuf[(3 << 10) / 8] = {0};
   uint64_t ExtendBuf[(1 << 10) / 8] = {0};
 
