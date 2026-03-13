@@ -172,7 +172,6 @@ async function Factory(req, body, reply) {
   locked_dongle_list.add(id);
   const [err, stdout] = await DongleExecv(["--factory", id, "-"], stdin, req);
   locked_dongle_list.delete(id);
-  prev_dashboard_value.delete(id);
 
   if (err) throw err;
   reply.stdout = stdout;

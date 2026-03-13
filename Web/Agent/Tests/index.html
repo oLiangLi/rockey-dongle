@@ -405,7 +405,7 @@
           if (!id) throw Error(`Factory: Select RockeyARM device!`);
 
           if (id.slice(0, 2) === "ff")
-            throw new Error("Lock: 好像选中的是模拟设备!");
+            throw new Error("Factory: 好像选中的是模拟设备!");
 
           const start = Date.now();
           console.log(`#### Factory() ####`);
