@@ -35,7 +35,8 @@ const kErrno_ENOENT = 44,
   kErrno_EROFS = 69;
 
 const kFileID_null = 8848,
-  kFileID_Random = 10086;
+    kFileID_Config = 10001,
+    kFileID_Random = 10086;
 
 /** ABI.Check */
 console.assert(
@@ -77,7 +78,7 @@ export interface RockeyEmulator {
   ReadShareMemory(): Buffer;
   WriteShareMemory(buffer: Buffer): void;
 
-  DeleteFile(type: SECRET_STORAGE_TYPE, id: integer): void;
+  DeleteFile(type: SECRET_STORAGE_TYPE, id: integer): boolean;
   CreateDataFile(id: integer, size: integer): void;
   WriteDataFile(id: integer, off: integer, buffer: Buffer): void;
   ReadDataFile(id: integer, off: integer, size: integer): Buffer;
@@ -403,6 +404,7 @@ interface Native0_ {
 export type CreateEmulatorOption = {
   UpdateLEDState?: (led: LED_STATE) => void;
   LogWriteMessage?: (level: integer, message: string) => void;
+  OpensslConfig ?: string;
 };
 
 export async function CryptoLoader(jsCipher: CipherSuiteV0) {
@@ -422,9 +424,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
     const supperUpdateLEDState = option?.UpdateLEDState;
     const supperLogWriteMessage = option?.LogWriteMessage;
+    const defaultOpensslConfig = Buffer.from(option?.OpensslConfig || "");
 
     let nextImportBuffer: null | Buffer = null;
     let nextExportBuffer: null | Buffer = null;
+    let offsetOpensslConfig = 0;
 
     const HEAP = Buffer.from(memory.buffer);
     const HEAP16 = new Int16Array(memory.buffer);
@@ -509,6 +513,9 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
     function fd_close(fd: integer) {
       console.log(`close(${fd})`);
+      if(fd === kFileID_Config) {
+        offsetOpensslConfig = 0;
+      }
       return 0;
     }
 
@@ -537,12 +544,39 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
     }
 
     function fd_read(fd: number, iov: Addr, iovcnt: number, pnum: number) {
-      console.log(`fd_read> ${fd}`);
-
       let result = 0;
+
+      console.log(`fd_read(${fd})`);
       if (fd === kFileID_null || fd === 0) {
-        // null && stdin ...
+        for (let i = 0; i < iovcnt; ++i, iov += 8) {
+          HEAP32[(iov + 4) >>> 2] = 0;
+        }
         HEAP32[pnum >>> 2] = 0;
+        return 0;
+      }
+
+      if(fd === kFileID_Config) {
+        let offset = offsetOpensslConfig;
+        let request = 0;
+        for (let i = 0; i < iovcnt; ++i, iov += 8) {
+          const ptr = HEAP32[iov >>> 2];
+          const siz = HEAP32[(iov + 4) >>> 2];
+          console.log(`  CONF> 0x${ptr.toString(16)} ${siz}`);
+
+          request += siz;
+          if(offset >= defaultOpensslConfig.length) {
+            HEAP32[(iov + 4) >>> 2] = 0;
+          } else {
+            const sz = Math.min(siz, defaultOpensslConfig.length - offset);
+            defaultOpensslConfig.copy(HEAP, ptr, offset, offset + sz);
+            HEAP32[(iov + 4) >>> 2] = sz;
+            offset += sz;
+            result += sz;
+          }
+        }
+        HEAP32[pnum >>> 2] = result;
+        console.log(`fd_read ${iovcnt}> ${fd} ${offsetOpensslConfig} / ${defaultOpensslConfig.length} / ${result} / ${request}`);
+        offsetOpensslConfig += result;
         return 0;
       }
 
@@ -557,6 +591,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           jsCipher.RandBytes(HEAP.subarray(ptr, ptr + siz));
         }
         HEAP32[pnum >>> 2] = result;
+        console.log(`fd_read ${iovcnt}> ${fd} ${result}`);
         return 0;
       }
 
@@ -801,11 +836,10 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(`dongle.WriteShareMemory Error ${result}`);
       }
 
-      DeleteFile(type: SECRET_STORAGE_TYPE, id: integer): void {
+      DeleteFile(type: SECRET_STORAGE_TYPE, id: integer): boolean {
         const thiz = CheckInstance();
         const result = native.EmuDeleteFile(thiz, type, id);
-        if (0 !== result)
-          throw jsCipher.Annihilus_(`dongle.DeleteFile ${id} Error ${result}`);
+        return 0 === result;
       }
 
       CreateDataFile(id: integer, size: integer): void {
@@ -1274,7 +1308,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         const frame = native._emscripten_stack_alloc(256);
         point.copy(HEAP, frame);
         hash.copy(HEAP, frame + 64);
-        hash.copy(HEAP, frame + 128);
+        sign.copy(HEAP, frame + 128);
         const result = native.EmuSM2Verify(
           thiz,
           frame,
@@ -1314,7 +1348,8 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         const addr_text = frame + 2048;
         const addr_size = frame + 2000;
         const size_verify = cipher.length - 96; /// 96: X[32], Y[32], H[32] ...
-        cipher.copy(HEAP, frame + 3072);
+        HEAPU32[addr_size >>> 2] = cipher.length;
+        cipher.copy(HEAP, addr_cipher);
 
         if (typeof key === "number") {
           result = native.EmuSM2Decrypt(

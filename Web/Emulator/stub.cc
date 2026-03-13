@@ -29,6 +29,8 @@ rLANGEXPORT int __syscall_fstat64(int fd, intptr_t buf) {
     st->st_mode = S_IFCHR;
     return 0;
   }
+
+  rlLOGE(TAG, "[NOT IMPL]fstat64(%d)", fd);
   return -ENOSYS;
 }
 
@@ -62,6 +64,11 @@ rLANGEXPORT int __syscall_openat(int dirfd, intptr_t path, int flags, ...) {
     rlLOGI(TAG, "OpenAT: TRNG!");
     return 10086;
   }
+  if (0 == strcmp((const char*)path, "/Machine/System/ssl/openssl.cnf")) {
+    rlLOGI(TAG, "OpenAT: openssl.cnf!");
+    return 10001;
+  }
+
   rlLOGE(TAG, "[NOT IMPL]__syscall_openat %s", (const char*)path);
   return -EPERM;
 }

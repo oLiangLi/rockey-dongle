@@ -28,13 +28,64 @@
        */
       var jsDongleExecv;
 
-      window.onload = async function () {
+      window.onload = async function() {
         jsCipher = await jsWorld.CipherLoader();
 
         const jsCryptoFactory = (globalThis.jsCryptoFactory =
           await jsWorld.CryptoLoader(jsCipher));
 
-        jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
+        const OpensslConfig = `
+#
+# OpenSSL example configuration file.
+# See doc/man5/config.pod for more info.
+#
+# This is mostly being used for generation of certificate requests,
+# but may be used for auto loading of providers
+#
+# Note that you can include other files from the main configuration
+# file using the .include directive.
+#.include filename
+#
+# This definition stops the following lines choking if HOME isn't
+# defined.
+#HOME                    = .
+#
+# Use this in order to automatically load providers.
+#openssl_conf = openssl_init
+#
+# Comment out the next line to ignore configuration errors
+#config_diagnostics = 1
+#
+# Extra OBJECT IDENTIFIER info:
+# oid_file       = $ENV::HOME/.oid
+#oid_section = new_oids
+#
+#
+# To use this configuration file with the "-extfile" option of the
+# "openssl x509" utility, name here the section containing the
+# X.509v3 extensions to use:
+# extensions            =
+# (Alternatively, use a configuration file that has only
+# X.509v3 extensions in its main [= default] section.)
+#
+#
+#
+# To use this configuration file with the "-extfile" option of the
+# "openssl x509" utility, name here the section containing the
+# X.509v3 extensions to use:
+# extensions            =
+# (Alternatively, use a configuration file that has only
+# X.509v3 extensions in its main [= default] section.)
+#
+          `;
+
+        console.info(`OpensslConfig size ${OpensslConfig.length}`);
+        jsEmulator = await jsCryptoFactory.CreateEmulator({
+          UpdateLEDState : (led)=>{
+            console.info(`TODO: UpdateLEDState(${led})`);
+          },
+          OpensslConfig
+        });
         jsEmulator.Create("1234567812345678", 0x100, 256);
 
         jsScriptParser = async (script) => {
@@ -523,6 +574,89 @@
           UpdateEmulatorInfo();
         }
 
+        const Test = async function (cb) {
+          try {
+            await cb();
+            return true;
+          } catch (err) {
+            console.error(err);
+            return false;
+          }
+        };
+
+        async function EmuTests() {
+          ///
+          /// TODO: LiangLI, More Tests, 当前只用于保护 RockeyARM::(kKeyIdGlobalSM2ECIES[加密密钥/管理员签名密钥] == 4), 暂时只测试 SM2 相关操作 ...
+          ///
+
+          jsEmulator.SetLEDState(2);
+
+          await Test(async ()=>{
+            jsEmulator.DeleteFile(3, 100);
+            jsEmulator.DeleteFile(3, 110);
+            jsEmulator.DeleteFile(3, 120);
+
+            jsEmulator.CreatePKEYFile(3, 256, 100);
+            jsEmulator.CreatePKEYFile(3, 256, 110);
+            jsEmulator.CreatePKEYFile(3, 256, 120);
+          });
+
+          await Test(async ()=>{
+            const pkey1 = jsEmulator.GenerateSM2(100, true);
+            const pkey2 = jsEmulator.GenerateSM2(110, true);
+            const pkey3 = jsEmulator.GenerateSM2(120, true);
+
+            const Y = jsEmulator.EmuDecompressPointSM2(pkey1.subarray(0, 32), pkey1[63] % 2 !== 0);
+            console.assert(Buffer.compare(Y, pkey1.subarray(32, 64)) === 0);
+
+            console.log(`pkey1: ${pkey1.toString('hex')}`);
+            console.log(`pkey2: ${pkey2.toString('hex')}`);
+            console.log(`pkey3: ${pkey3.toString('hex')}`);
+
+            const hash = jsCipher.RandBytes(32);
+            const sign = jsEmulator.SM2Sign(100, hash);
+            console.log(`hash: ${hash.toString('hex')} sign: ${sign.toString('hex')}`);
+
+            sign[10] ^= 0x20;
+            const V1 = jsEmulator.SM2Verify(pkey1.subarray(0, 64), hash, sign);
+            sign[10] ^= 0x20;
+            const V2 = jsEmulator.SM2Verify(pkey1.subarray(0, 64), hash, sign);
+            if(V1 !== false || V2 !== true) {
+              console.error(`SM2Sign/SM2Verify Test Failed ${V1} ${V2}!`);
+            } else {
+              console.log(`SM2Sign/SM2Verify Test OK  ${V1} ${V2}!`);
+            }
+
+            pkey1[10] ^= 0x10;
+            console.assert(jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === false);
+            pkey1[10] ^= 0x10;
+            console.assert(jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === true);
+
+            const text = jsCipher.RandBytes(32);
+            console.log(`text: ${text.toString('hex')}  sm3: ${jsEmulator.SM3(text).toString('hex')}`);
+
+            const cipher1 = jsEmulator.SM2Encrypt(pkey1.subarray(0, 64), text);
+            const cipher2 = jsEmulator.SM2Encrypt(pkey2.subarray(0, 64), text);
+            const cipher3 = jsEmulator.SM2Encrypt(pkey3.subarray(0, 64), text);
+
+            console.log(`cipher1: ${cipher1.toString('hex')}`);
+            console.log(`cipher2: ${cipher2.toString('hex')}`);
+            console.log(`cipher3: ${cipher3.toString('hex')}`);
+
+            const verify1 = jsEmulator.SM2Decrypt(pkey1, cipher1);
+            const verify2 = jsEmulator.SM2Decrypt(110, cipher2);
+            const verify3 = jsEmulator.SM2Decrypt(120, cipher3);
+
+            console.log(`verify1: ${verify1.toString('hex')}`);
+            console.log(`verify2: ${verify2.toString('hex')}`);
+            console.log(`verify3: ${verify3.toString('hex')}`);
+
+            console.assert(Buffer.compare(text, verify1) === 0);
+            console.assert(Buffer.compare(text, verify2) === 0);
+            console.assert(Buffer.compare(text, verify3) === 0);
+          });
+        }
+
         document.getElementById("list").onclick = List;
         document.getElementById("factory").onclick = Factory;
         document.getElementById("lock").onclick = Lock;
@@ -531,8 +665,10 @@
         document.getElementById("EmuCreate").onclick = CreateEmulator;
         document.getElementById("EmuExport").onclick = ExportEmulator;
         document.getElementById("EmuImport").onclick = ImportEmulator;
+        document.getElementById("EmuTests").onclick = EmuTests;
         UpdateDeviceList(null);
       };
+    
     </script>
   </head>
   <body>
@@ -570,6 +706,7 @@
       <button id="EmuExport">EmuExport</button>
       <input type="file" id="emuFile" />
       <button id="EmuImport">EmuImport</button>
+      <button id="EmuTests">EmuTests</button>
     </p>
 
     <p>
