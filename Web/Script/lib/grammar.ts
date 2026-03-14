@@ -19,43 +19,43 @@ const AllMemoryOp: TypeMemoryOp[] = [
   {
     name: "kLoadI8",
     argc: 1,
-    op: [OpCode.kLoadI8, OpCode.kLoadXI8]
+    op: [OpCode.kLoadI8, OpCode.kLoadXI8],
   },
   {
     name: "kLoadU8",
     argc: 1,
-    op: [OpCode.kLoadU8, OpCode.kLoadXU8]
+    op: [OpCode.kLoadU8, OpCode.kLoadXU8],
   },
   {
     name: "kLoadI16",
     argc: 1,
-    op: [OpCode.kLoadI16, OpCode.kLoadXI16]
+    op: [OpCode.kLoadI16, OpCode.kLoadXI16],
   },
   {
     name: "kLoadU16",
     argc: 1,
-    op: [OpCode.kLoadU16, OpCode.kLoadXU16]
+    op: [OpCode.kLoadU16, OpCode.kLoadXU16],
   },
   {
     name: "kLoadI32",
     argc: 1,
-    op: [OpCode.kLoadI32, OpCode.kLoadXI32]
+    op: [OpCode.kLoadI32, OpCode.kLoadXI32],
   },
   {
     name: "kStoreI8",
     argc: 2,
-    op: [OpCode.kStoreI8, OpCode.kStoreXI8]
+    op: [OpCode.kStoreI8, OpCode.kStoreXI8],
   },
   {
     name: "kStoreI16",
     argc: 2,
-    op: [OpCode.kStoreI16, OpCode.kStoreXI16]
+    op: [OpCode.kStoreI16, OpCode.kStoreXI16],
   },
   {
     name: "kStoreI32",
     argc: 2,
-    op: [OpCode.kStoreI32, OpCode.kStoreXI32]
-  }
+    op: [OpCode.kStoreI32, OpCode.kStoreXI32],
+  },
 ];
 
 type TypeFuncCall = {
@@ -70,506 +70,506 @@ const AllFunc: TypeFuncCall[] = [
     name: "kExit",
     min: 0,
     max: 1,
-    op: OpCode.kExit
+    op: OpCode.kExit,
   },
   {
     name: "kMemset",
     min: 3,
     max: 3,
-    op: OpCode.kMemset
+    op: OpCode.kMemset,
   },
   {
     name: "kMemcpy",
     min: 3,
     max: 3,
-    op: OpCode.kMemcpy
+    op: OpCode.kMemcpy,
   },
   {
     name: "kMemcmp",
     min: 3,
     max: 3,
-    op: OpCode.kMemcmp
+    op: OpCode.kMemcmp,
   },
   {
     name: "kValidPINState",
     min: 0,
     max: 0,
-    op: OpCode.kValidPINState
+    op: OpCode.kValidPINState,
   },
   {
     name: "kRandBytes",
     min: 2,
     max: 2,
-    op: OpCode.kRandBytes
+    op: OpCode.kRandBytes,
   },
   {
     name: "kSecretBytes",
     min: 1,
     max: 1,
-    op: OpCode.kSecretBytes
+    op: OpCode.kSecretBytes,
   },
   {
     name: "kReadDongleInfo",
     min: 1,
     max: 1,
-    op: OpCode.kReadDongleInfo
+    op: OpCode.kReadDongleInfo,
   },
   {
     name: "kLEDControl",
     min: 1,
     max: 1,
-    op: OpCode.kLEDControl
+    op: OpCode.kLEDControl,
   },
   {
     name: "kReadSharedMemory",
     min: 1,
     max: 1,
-    op: OpCode.kReadSharedMemory
+    op: OpCode.kReadSharedMemory,
   },
   {
     name: "kWriteSharedMemory",
     min: 1,
     max: 1,
-    op: OpCode.kWriteSharedMemory
+    op: OpCode.kWriteSharedMemory,
   },
   {
     name: "kDeleteDataFile",
     min: 1,
     max: 1,
-    op: OpCode.kDeleteDataFile
+    op: OpCode.kDeleteDataFile,
   },
   {
     name: "kCreateDataFile",
     min: 2,
     max: 4,
-    op: OpCode.kCreateDataFile
+    op: OpCode.kCreateDataFile,
   },
   {
     name: "kWriteDataFile",
     min: 4,
     max: 4,
-    op: OpCode.kWriteDataFile
+    op: OpCode.kWriteDataFile,
   },
   {
     name: "kReadDataFile",
     min: 4,
     max: 4,
-    op: OpCode.kReadDataFile
+    op: OpCode.kReadDataFile,
   },
   {
     name: "kDeleteRSAFile",
     min: 1,
     max: 1,
-    op: OpCode.kDeleteRSAFile
+    op: OpCode.kDeleteRSAFile,
   },
   {
     name: "kCreateRSAFile",
     min: 1,
     max: 5,
-    op: OpCode.kCreateRSAFile
+    op: OpCode.kCreateRSAFile,
   },
   {
     name: "kGenerateRSA",
     min: 2,
     max: 3,
-    op: OpCode.kGenerateRSA
+    op: OpCode.kGenerateRSA,
   },
   {
     name: "kImportRSA",
     min: 3,
     max: 3,
-    op: OpCode.kImportRSA
+    op: OpCode.kImportRSA,
   },
   {
     name: "kRSAPrivateDecrypt",
     min: 2,
     max: 2,
-    op: OpCode.kRSAPrivateDecrypt
+    op: OpCode.kRSAPrivateDecrypt,
   },
   {
     name: "kRSAPrivateEncrypt",
     min: 3,
     max: 3,
-    op: OpCode.kRSAPrivateEncrypt
+    op: OpCode.kRSAPrivateEncrypt,
   },
   {
     name: "kExRSAPrivateDecrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExRSAPrivateDecrypt
+    op: OpCode.kExRSAPrivateDecrypt,
   },
   {
     name: "kExRSAPrivateEncrypt",
     min: 4,
     max: 4,
-    op: OpCode.kExRSAPrivateEncrypt
+    op: OpCode.kExRSAPrivateEncrypt,
   },
   {
     name: "kExRSAPublicEncrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExRSAPublicEncrypt
+    op: OpCode.kExRSAPublicEncrypt,
   },
   {
     name: "kExRSAPublicDecrypt",
     min: 2,
     max: 2,
-    op: OpCode.kExRSAPublicDecrypt
+    op: OpCode.kExRSAPublicDecrypt,
   },
   {
     name: "kDeleteP256File",
     min: 1,
     max: 1,
-    op: OpCode.kDeleteP256File
+    op: OpCode.kDeleteP256File,
   },
   {
     name: "kCreateP256File",
     min: 1,
     max: 5,
-    op: OpCode.kCreateP256File
+    op: OpCode.kCreateP256File,
   },
   {
     name: "kGenerateP256",
     min: 2,
     max: 3,
-    op: OpCode.kGenerateP256
+    op: OpCode.kGenerateP256,
   },
   {
     name: "kImportP256",
     min: 2,
     max: 2,
-    op: OpCode.kImportP256
+    op: OpCode.kImportP256,
   },
   {
     name: "kP256Sign",
     min: 3,
     max: 3,
-    op: OpCode.kP256Sign
+    op: OpCode.kP256Sign,
   },
   {
     name: "kExP256CheckPointOnCurve",
     min: 1,
     max: 1,
-    op: OpCode.kExP256CheckPointOnCurve
+    op: OpCode.kExP256CheckPointOnCurve,
   },
   {
     name: "kExP256DecompressPoint",
     min: 3,
     max: 3,
-    op: OpCode.kExP256DecompressPoint
+    op: OpCode.kExP256DecompressPoint,
   },
   {
     name: "kExP256ComputePubkey",
     min: 2,
     max: 2,
-    op: OpCode.kExP256ComputePubkey
+    op: OpCode.kExP256ComputePubkey,
   },
   {
     name: "kExP256GenerateKeyPair",
     min: 2,
     max: 2,
-    op: OpCode.kExP256GenerateKeyPair
+    op: OpCode.kExP256GenerateKeyPair,
   },
   {
     name: "kExP256Sign",
     min: 3,
     max: 3,
-    op: OpCode.kExP256Sign
+    op: OpCode.kExP256Sign,
   },
   {
     name: "kExP256Verify",
     min: 3,
     max: 3,
-    op: OpCode.kExP256Verify
+    op: OpCode.kExP256Verify,
   },
   {
     name: "kExP256ComputeSecret",
     min: 3,
     max: 3,
-    op: OpCode.kExP256ComputeSecret
+    op: OpCode.kExP256ComputeSecret,
   },
   {
     name: "kDeleteSM2File",
     min: 1,
     max: 1,
-    op: OpCode.kDeleteSM2File
+    op: OpCode.kDeleteSM2File,
   },
   {
     name: "kCreateSM2File",
     min: 1,
     max: 5,
-    op: OpCode.kCreateSM2File
+    op: OpCode.kCreateSM2File,
   },
   {
     name: "kGenerateSM2",
     min: 2,
     max: 3,
-    op: OpCode.kGenerateSM2
+    op: OpCode.kGenerateSM2,
   },
   {
     name: "kImportSM2",
     min: 2,
     max: 2,
-    op: OpCode.kImportSM2
+    op: OpCode.kImportSM2,
   },
   {
     name: "kSM2Sign",
     min: 3,
     max: 3,
-    op: OpCode.kSM2Sign
+    op: OpCode.kSM2Sign,
   },
   {
     name: "kSM2Decrypt",
     min: 3,
     max: 3,
-    op: OpCode.kSM2Decrypt
+    op: OpCode.kSM2Decrypt,
   },
   {
     name: "kExSM2CheckPointOnCurve",
     min: 1,
     max: 1,
-    op: OpCode.kExSM2CheckPointOnCurve
+    op: OpCode.kExSM2CheckPointOnCurve,
   },
   {
     name: "kExSM2DecompressPoint",
     min: 3,
     max: 3,
-    op: OpCode.kExSM2DecompressPoint
+    op: OpCode.kExSM2DecompressPoint,
   },
   {
     name: "kExSM2Sign",
     min: 3,
     max: 3,
-    op: OpCode.kExSM2Sign
+    op: OpCode.kExSM2Sign,
   },
   {
     name: "kExSM2Verify",
     min: 3,
     max: 3,
-    op: OpCode.kExSM2Verify
+    op: OpCode.kExSM2Verify,
   },
   {
     name: "kExSM2Decrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExSM2Decrypt
+    op: OpCode.kExSM2Decrypt,
   },
   {
     name: "kExSM2Encrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExSM2Encrypt
+    op: OpCode.kExSM2Encrypt,
   },
   {
     name: "kDigestSHA1",
     min: 3,
     max: 3,
-    op: OpCode.kDigestSHA1
+    op: OpCode.kDigestSHA1,
   },
   {
     name: "kDigestSM3",
     min: 3,
     max: 3,
-    op: OpCode.kDigestSM3
+    op: OpCode.kDigestSM3,
   },
   {
     name: "kExDigestSHA256",
     min: 3,
     max: 3,
-    op: OpCode.kExDigestSHA256
+    op: OpCode.kExDigestSHA256,
   },
   {
     name: "kExDigestSHA384",
     min: 3,
     max: 3,
-    op: OpCode.kExDigestSHA384
+    op: OpCode.kExDigestSHA384,
   },
   {
     name: "kExDigestSHA512",
     min: 3,
     max: 3,
-    op: OpCode.kExDigestSHA512
+    op: OpCode.kExDigestSHA512,
   },
   {
     name: "kDeleteSM4File",
     min: 1,
     max: 1,
-    op: OpCode.kDeleteSM4File
+    op: OpCode.kDeleteSM4File,
   },
   {
     name: "kCreateSM4File",
     min: 1,
     max: 2,
-    op: OpCode.kCreateSM4File
+    op: OpCode.kCreateSM4File,
   },
   {
     name: "kWriteSM4File",
     min: 2,
     max: 2,
-    op: OpCode.kWriteSM4File
+    op: OpCode.kWriteSM4File,
   },
   {
     name: "kSM4ECBEncrypt",
     min: 3,
     max: 3,
-    op: OpCode.kSM4ECBEncrypt
+    op: OpCode.kSM4ECBEncrypt,
   },
   {
     name: "kSM4ECBDecrypt",
     min: 3,
     max: 3,
-    op: OpCode.kSM4ECBDecrypt
+    op: OpCode.kSM4ECBDecrypt,
   },
   {
     name: "kExSM4ECBEncrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExSM4ECBEncrypt
+    op: OpCode.kExSM4ECBEncrypt,
   },
   {
     name: "kExSM4ECBDecrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExSM4ECBDecrypt
+    op: OpCode.kExSM4ECBDecrypt,
   },
   {
     name: "kDeleteTDESFile",
     min: 1,
     max: 1,
-    op: OpCode.kDeleteTDESFile
+    op: OpCode.kDeleteTDESFile,
   },
   {
     name: "kCreateTDESFile",
     min: 1,
     max: 2,
-    op: OpCode.kCreateTDESFile
+    op: OpCode.kCreateTDESFile,
   },
   {
     name: "kWriteTDESFile",
     min: 2,
     max: 2,
-    op: OpCode.kWriteTDESFile
+    op: OpCode.kWriteTDESFile,
   },
   {
     name: "kTDESECBEncrypt",
     min: 3,
     max: 3,
-    op: OpCode.kTDESECBEncrypt
+    op: OpCode.kTDESECBEncrypt,
   },
   {
     name: "kTDESECBDecrypt",
     min: 3,
     max: 3,
-    op: OpCode.kTDESECBDecrypt
+    op: OpCode.kTDESECBDecrypt,
   },
   {
     name: "kExTDESECBEncrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExTDESECBEncrypt
+    op: OpCode.kExTDESECBEncrypt,
   },
   {
     name: "kExTDESECBDecrypt",
     min: 3,
     max: 3,
-    op: OpCode.kExTDESECBDecrypt
+    op: OpCode.kExTDESECBDecrypt,
   },
   {
     name: "kExChaChaPolySeal",
     min: 4,
     max: 4,
-    op: OpCode.kExChaChaPolySeal
+    op: OpCode.kExChaChaPolySeal,
   },
   {
     name: "kExChaChaPolyOpen",
     min: 4,
     max: 4,
-    op: OpCode.kExChaChaPolyOpen
+    op: OpCode.kExChaChaPolyOpen,
   },
   {
     name: "kExSecp256K1CheckPointOnCurve",
     min: 1,
     max: 1,
-    op: OpCode.kExSecp256K1CheckPointOnCurve
+    op: OpCode.kExSecp256K1CheckPointOnCurve,
   },
   {
     name: "kExSecp256K1DecompressPoint",
     min: 3,
     max: 3,
-    op: OpCode.kExSecp256K1DecompressPoint
+    op: OpCode.kExSecp256K1DecompressPoint,
   },
   {
     name: "kExSecp256K1ComputePubkey",
     min: 2,
     max: 2,
-    op: OpCode.kExSecp256K1ComputePubkey
+    op: OpCode.kExSecp256K1ComputePubkey,
   },
   {
     name: "kExSecp256K1GenerateKeyPair",
     min: 2,
     max: 2,
-    op: OpCode.kExSecp256K1GenerateKeyPair
+    op: OpCode.kExSecp256K1GenerateKeyPair,
   },
   {
     name: "kExSecp256K1Sign",
     min: 3,
     max: 3,
-    op: OpCode.kExSecp256K1Sign
+    op: OpCode.kExSecp256K1Sign,
   },
   {
     name: "kExSecp256K1Verify",
     min: 3,
     max: 3,
-    op: OpCode.kExSecp256K1Verify
+    op: OpCode.kExSecp256K1Verify,
   },
   {
     name: "kExSecp256K1ComputeSecret",
     min: 3,
     max: 3,
-    op: OpCode.kExSecp256K1ComputeSecret
+    op: OpCode.kExSecp256K1ComputeSecret,
   },
   {
     name: "kExCurve25519ComputePubkey",
     min: 2,
     max: 2,
-    op: OpCode.kExCurve25519ComputePubkey
+    op: OpCode.kExCurve25519ComputePubkey,
   },
   {
     name: "kExCurve25519GenerateKeyPair",
     min: 2,
     max: 2,
-    op: OpCode.kExCurve25519GenerateKeyPair
+    op: OpCode.kExCurve25519GenerateKeyPair,
   },
   {
     name: "kExCurve25519ComputeSecret",
     min: 3,
     max: 3,
-    op: OpCode.kExCurve25519ComputeSecret
+    op: OpCode.kExCurve25519ComputeSecret,
   },
   {
     name: "kExEd25519ComputePubkey",
     min: 2,
     max: 2,
-    op: OpCode.kExEd25519ComputePubkey
+    op: OpCode.kExEd25519ComputePubkey,
   },
   {
     name: "kExEd25519GenerateKeyPair",
     min: 2,
     max: 2,
-    op: OpCode.kExEd25519GenerateKeyPair
+    op: OpCode.kExEd25519GenerateKeyPair,
   },
   {
     name: "kExEd25519Sign",
     min: 5,
     max: 5,
-    op: OpCode.kExEd25519Sign
+    op: OpCode.kExEd25519Sign,
   },
   {
     name: "kExEd25519Verify",
     min: 4,
     max: 4,
-    op: OpCode.kExEd25519Verify
-  }
+    op: OpCode.kExEd25519Verify,
+  },
 ];
 
 const table_memory_op = new Map<string, TypeMemoryOp>();
@@ -593,7 +593,7 @@ class Statement {
 
 class Expression {
   Statement(v: boolean): Statement {
-    throw Error(`Pure functon call ...`);
+    throw Error(`${v} Pure function call ...`);
   }
 }
 
@@ -636,7 +636,7 @@ class MemoryStoreExpr extends Expression {
     addr: Expression,
     value: Expression,
     op0: integer,
-    op1: integer
+    op1: integer,
   ) {
     super();
     this.line_ = line;
@@ -1053,6 +1053,14 @@ class Arguments {
   argv_ = <Expression[]>[];
 }
 
+type DataValue = {
+  name: string;
+  offset: integer;
+  sizeMin: integer;
+  sizeMax: integer;
+  options: Array<string | integer>;
+};
+
 export type TypeGrammar =
   | void
   | null
@@ -1098,12 +1106,12 @@ export class Context {
 
     const instance = await WebAssembly.instantiate(Context.wasmModule_, {
       env: {
-        memory
+        memory,
       },
       rLANG: {
         jsGrammar_yyError,
-        jsGrammar_yyCopyValue
-      }
+        jsGrammar_yyCopyValue,
+      },
     });
     const grammar = new Context(instance, script);
 
@@ -1142,7 +1150,7 @@ export class Context {
       if (this.error_ <= 0) {
         if (this.error_ < -1)
           throw Error(
-            `Line ${this.yyline_} Invalid Grammar.state ${this.error_}`
+            `Line ${this.yyline_} Invalid Grammar.state ${this.error_}`,
           );
         return this.error_;
       }
@@ -1173,7 +1181,7 @@ export class Context {
     let $$ = this.yyvsa_[offset + 1];
     const $ = (index: integer) => {
       console.assert(
-        index >= 1 && index <= argc && offset + index < kStackSize
+        index >= 1 && index <= argc && offset + index < kStackSize,
       );
       return this.yyvsa_[offset + index];
     };
@@ -1186,7 +1194,7 @@ export class Context {
         this.public_size_ = <integer>$(2);
         if (this.public_size_ < 0 || this.public_size_ > 1024)
           throw Error(
-            `Line ${this.yyline_} invalid public size ${this.public_size_}!`
+            `Line ${this.yyline_} invalid public size ${this.public_size_}!`,
           );
         break;
       case Action.AC_CONST_STATEMENT:
@@ -1196,7 +1204,7 @@ export class Context {
 
           if (this.named_const_value_.has(name)) {
             throw Error(
-              `Line ${this.yyline_} const value ${name} declared already!`
+              `Line ${this.yyline_} const value ${name} declared already!`,
             );
           }
 
@@ -1204,7 +1212,7 @@ export class Context {
             this.named_const_value_.set(name, value.value_);
           } else {
             throw Error(
-              `Line ${this.yyline_} Name ${name} The result of the expression is not a constant`
+              `Line ${this.yyline_} Name ${name} The result of the expression is not a constant`,
             );
           }
         }
@@ -1229,9 +1237,9 @@ export class Context {
 
       case Action.AC_EXPRESSION_DECLARE:
         {
-          const expr = <Expression>$(1);
-          console.assert(expr instanceof Expression);
-          $$ = expr.Statement(false);
+          const expr = $(1);
+          if (expr instanceof Expression) $$ = expr.Statement(false);
+          else console_warning(`[BugFix]`);
         }
         break;
 
@@ -1239,7 +1247,7 @@ export class Context {
         $$ = this.acIfStatement(
           <Expression>$(3),
           <Statement>$(5),
-          new Statement()
+          new Statement(),
         );
         break;
 
@@ -1247,7 +1255,7 @@ export class Context {
         $$ = this.acIfStatement(
           <Expression>$(3),
           <Statement>$(5),
-          <Statement>$(7)
+          <Statement>$(7),
         );
         break;
 
@@ -1264,7 +1272,7 @@ export class Context {
           <null | Expression>$(3),
           <null | Expression>$(5),
           <null | Expression>$(7),
-          <Statement>$(9)
+          <Statement>$(9),
         );
         break;
 
@@ -1506,7 +1514,7 @@ export class Context {
             )
               throw Error(`Line ${this.yyline_} raise SIGFPE`);
 
-            left.value_ = left.value_ % right.value_ | 0;
+            left.value_ = (left.value_ % right.value_) | 0;
           } else {
             $$ = new BinaryExpr(left, right, OpCode.kMod);
           }
@@ -1563,7 +1571,7 @@ export class Context {
           const value = this.named_const_value_.get(name);
           if (typeof value !== "number")
             throw Error(
-              `Line ${this.yyline_} Const value ${name} 404 Not Found!`
+              `Line ${this.yyline_} Const value ${name} 404 Not Found!`,
             );
           $$ = new ConstExpr(value);
         }
@@ -1590,6 +1598,159 @@ export class Context {
         (<Arguments>$$).argv_.push(<Expression>$(3));
         break;
 
+      case Action.AC_INPUT_END:
+        {
+          const curr = this.data_curr_!;
+          this.data_curr_ = null;
+
+          const a = curr.offset;
+          const b = curr.offset + curr.sizeMax;
+
+          for (const [, value] of this.data_) {
+            if (value === curr) continue;
+
+            const c = value.offset;
+            const d = value.offset + value.sizeMax;
+
+            if ((a <= c && b > c) || (c <= a && d > a))
+              throw Error(
+                `Overlapping data regions ${curr.name}[${a}, ${b}] and ${value.name}[${c}, ${d}] `,
+              );
+          }
+        }
+        break;
+
+      case Action.AC_INPUT_BEGIN:
+        {
+          console.assert(this.data_curr_ === null);
+          const name = <string>$(1);
+          if (this.data_.has(name))
+            throw Error(`Line ${this.yyline_}: Duplicate input ${name}`);
+          this.data_curr_ = {
+            name,
+            offset: -1,
+            sizeMin: -1,
+            sizeMax: -1,
+            options: [],
+          };
+          this.data_.set(name, this.data_curr_);
+          $$ = new Statement();
+        }
+        break;
+
+      case Action.AC_INPUT_OFFSET:
+        {
+          const expr = $(1);
+          if (!(expr instanceof ConstExpr))
+            throw Error(
+              `Line ${this.yyline_}: Input offset must be a constant`,
+            );
+          const offset = expr.value_;
+
+          if (offset < 256 || offset >= 1024)
+            throw Error(
+              `Line ${this.yyline_}: Input offset must be between 256 and 1023`,
+            );
+          console.assert(this.data_curr_ !== null);
+          this.data_curr_!.offset = offset;
+        }
+        break;
+
+      case Action.AC_INPUT_SIZE_1:
+        {
+          const offset = this.data_curr_!.offset;
+          console.assert(offset >= 256 && offset < 1024);
+
+          const expr = $(2);
+          if (!(expr instanceof ConstExpr))
+            throw Error(
+              `Line ${this.yyline_}: Input size must be a constant expression`,
+            );
+          const size = expr.value_;
+          if (size < 1 || size > 1024 || size + offset > 1024)
+            throw Error(
+              `Line ${this.yyline_}: Input size ${size} must be between 1 and 1024 - ${offset}`,
+            );
+
+          this.data_curr_!.sizeMax = this.data_curr_!.sizeMin = size;
+        }
+        break;
+
+      case Action.AC_INPUT_SIZE_2:
+        {
+          const offset = this.data_curr_!.offset;
+          console.assert(offset >= 256 && offset < 1024);
+
+          const exprMin = $(2);
+          const exprMax = $(4);
+          if (
+            !(exprMin instanceof ConstExpr) ||
+            !(exprMax instanceof ConstExpr)
+          )
+            throw Error(
+              `Line ${this.yyline_}: Input size must be a constant expression.`,
+            );
+
+          const sizeMin = exprMin.value_;
+          const sizeMax = exprMax.value_;
+          if (
+            sizeMin < 1 ||
+            sizeMax < sizeMin ||
+            sizeMax > 1024 ||
+            offset + sizeMax > 1024
+          )
+            throw Error(
+              `Line ${this.yyline_}: Input size range [${sizeMin}, ${sizeMax}] must be between 1 and 1024 - ${offset}.`,
+            );
+
+          this.data_curr_!.sizeMin = sizeMin;
+          this.data_curr_!.sizeMax = sizeMax;
+        }
+        break;
+
+      case Action.AC_INPUT_EXPR:
+        {
+          const size = this.data_curr_!.sizeMax;
+          if (
+            size !== this.data_curr_!.sizeMin ||
+            (size !== 1 && size !== 2 && size !== 4)
+          )
+            throw Error(
+              `Line ${this.yyline_}: Input size [${size}, ${this.data_curr_!.sizeMax}] must be 1, 2 or 4.`,
+            );
+
+          const expr = $(1);
+          if (!(expr instanceof ConstExpr))
+            throw Error(
+              `Line ${this.yyline_}: Input value must be a constant expression.`,
+            );
+          const value = expr.value_;
+
+          if (size === 1) {
+            if (value < -128 || value > 255)
+              throw Error(
+                `Line ${this.yyline_}: Input value.size.1 ${value} must be in range [-128, 255].`,
+              );
+          } else if (size === 2) {
+            if (value < -32768 || value > 65535)
+              throw Error(
+                `Line ${this.yyline_}: Input value.size.2 ${value} must be in range [-32768, 65535].`,
+              );
+          } else {
+            if (value < -2147483648 || value > 4294967295)
+              throw Error(
+                `Line ${this.yyline_}: Input value.size.4 ${value} must be in range [-2147483648, 4294967295].`,
+              );
+          }
+
+          this.data_curr_!.options.push(value);
+        }
+        break;
+
+      case Action.AC_INPUT_EXTERN:
+        this.data_curr_!.options.push(<string>$(3));
+        break;
+
       default:
         break;
     }
@@ -1600,9 +1761,9 @@ export class Context {
 
   private acIfStatement(expr: Expression, stmt: Statement, st_else: Statement) {
     let $$: Statement;
-    console.assert(expr instanceof Expression);
-    console.assert(stmt instanceof Statement);
-    console.assert(st_else instanceof Statement);
+    //console.assert(expr instanceof Expression);
+    //console.assert(stmt instanceof Statement);
+    //console.assert(st_else instanceof Statement);
 
     const logNot = CheckLogicNotExpr(expr);
     if (logNot) {
@@ -1685,7 +1846,7 @@ export class Context {
     init: null | Expression,
     expr: null | Expression,
     incl: null | Expression,
-    stmt: Statement
+    stmt: Statement,
   ) {
     if (!expr) expr = new ConstExpr(1);
     const stmt_incl = incl ? incl.Statement(false) : new Statement();
@@ -1706,12 +1867,12 @@ export class Context {
       if (logNot) {
         code.push(...logNot.Statement(true).code_);
         code.push(
-          OpCode.kJmpT | (2 + stmt.code_.length + stmt_incl.code_.length)
+          OpCode.kJmpT | (2 + stmt.code_.length + stmt_incl.code_.length),
         );
       } else {
         code.push(...expr.Statement(true).code_);
         code.push(
-          OpCode.kJmpF | (2 + stmt.code_.length + stmt_incl.code_.length)
+          OpCode.kJmpF | (2 + stmt.code_.length + stmt_incl.code_.length),
         );
       }
 
@@ -1759,22 +1920,21 @@ export class Context {
   }
 
   private acFuncCall(name: string, args: Arguments): Expression {
-    if (name[0] !== 'k') name = 'k' + name;
+    if (name[0] !== "k") name = "k" + name;
 
     if (table_memory_op.has(name)) {
       const entry = table_memory_op.get(name)!;
       if (entry.argc !== args.argv_.length)
         throw Error(
-          `Line ${this.yyline_} MemoryOp ${name} argc ${args.argv_.length} !== ${entry.argc}`
+          `Line ${this.yyline_} MemoryOp ${name} argc ${args.argv_.length} !== ${entry.argc}`,
         );
-      const addr = args.argv_[0];
       assert(entry.argc === 1 || entry.argc === 2);
       if (entry.argc === 1) {
         return new MemoryLoadExpr(
           this.yyline_,
           args.argv_[0],
           entry.op[0],
-          entry.op[1]
+          entry.op[1],
         );
       } else {
         return new MemoryStoreExpr(
@@ -1782,7 +1942,7 @@ export class Context {
           args.argv_[0],
           args.argv_[1],
           entry.op[0],
-          entry.op[1]
+          entry.op[1],
         );
       }
     } else if (table_func_call.has(name)) {
@@ -1790,7 +1950,7 @@ export class Context {
       const entry = table_func_call.get(name)!;
       if (argc < entry.min || argc > entry.max)
         throw RangeError(
-          `Line ${this.yyline_} Function ${name} argc ${argc} Out-of-range [${entry.min}, ${entry.max}]`
+          `Line ${this.yyline_} Function ${name} argc ${argc} Out-of-range [${entry.min}, ${entry.max}]`,
         );
       return new CallExpr(this.yyline_, args.argv_, name, entry.op);
     } else {
@@ -1811,6 +1971,7 @@ export class Context {
     if (code.length > 100)
       throw Error(`Script code size ${code.length} .GT. 100`);
     if (code.length < 100) code.push(OpCode.kExit);
+    if (code.length < 100) code.push(OpCode.kInv);
 
     for (const v of code) {
       if (v < 0 || v > 0xffff) throw Error(`Invalid code ${v}`);
@@ -1819,6 +1980,14 @@ export class Context {
     const result = Buffer.alloc(code.length * 2);
     for (let i = 0; i < code.length; ++i) {
       result.writeUInt16LE(code[i], i * 2);
+    }
+    return result;
+  }
+
+  data() {
+    const result = [];
+    for (const [, value] of this.data_) {
+      result.push(value);
     }
     return result;
   }
@@ -1834,4 +2003,6 @@ export class Context {
   private public_size_ = 0;
   private named_const_value_ = new Map<string, integer>();
   private statements_ = <Statement[]>[];
+  private readonly data_ = new Map<string, DataValue>();
+  private data_curr_: null | DataValue = null;
 }

@@ -4,11 +4,9 @@ export async function Parse(script: string) {
   if (0 !== ctx.yyparse())
     throw Error(`Parse script error line: ${ctx.yyline()}`);
 
-  const size_public = ctx.size_public();
-  const code = ctx.code();
-
   return {
-    size_public,
-    code: code.toString("base64"),
+    size_public : ctx.size_public(),
+    code: ctx.code().toString("base64"),
+    data: ctx.data(),
   };
 }

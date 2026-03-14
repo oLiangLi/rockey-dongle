@@ -28,70 +28,68 @@
        */
       var jsDongleExecv;
 
-      window.onload = async function() {
+      window.onload = async function () {
         jsCipher = await jsWorld.CipherLoader();
 
         const jsCryptoFactory = (globalThis.jsCryptoFactory =
           await jsWorld.CryptoLoader(jsCipher));
 
         const OpensslConfig = `
-#
-# OpenSSL example configuration file.
-# See doc/man5/config.pod for more info.
-#
-# This is mostly being used for generation of certificate requests,
-# but may be used for auto loading of providers
-#
-# Note that you can include other files from the main configuration
-# file using the .include directive.
-#.include filename
-#
-# This definition stops the following lines choking if HOME isn't
-# defined.
-#HOME                    = .
-#
-# Use this in order to automatically load providers.
-#openssl_conf = openssl_init
-#
-# Comment out the next line to ignore configuration errors
-#config_diagnostics = 1
-#
-# Extra OBJECT IDENTIFIER info:
-# oid_file       = $ENV::HOME/.oid
-#oid_section = new_oids
-#
-#
-# To use this configuration file with the "-extfile" option of the
-# "openssl x509" utility, name here the section containing the
-# X.509v3 extensions to use:
-# extensions            =
-# (Alternatively, use a configuration file that has only
-# X.509v3 extensions in its main [= default] section.)
-#
-#
-#
-# To use this configuration file with the "-extfile" option of the
-# "openssl x509" utility, name here the section containing the
-# X.509v3 extensions to use:
-# extensions            =
-# (Alternatively, use a configuration file that has only
-# X.509v3 extensions in its main [= default] section.)
-#
-          `;
+      #
+      # OpenSSL example configuration file.
+      # See doc/man5/config.pod for more info.
+      #
+      # This is mostly being used for generation of certificate requests,
+      # but may be used for auto loading of providers
+      #
+      # Note that you can include other files from the main configuration
+      # file using the .include directive.
+      #.include filename
+      #
+      # This definition stops the following lines choking if HOME isn't
+      # defined.
+      #HOME                    = .
+      #
+      # Use this in order to automatically load providers.
+      #openssl_conf = openssl_init
+      #
+      # Comment out the next line to ignore configuration errors
+      #config_diagnostics = 1
+      #
+      # Extra OBJECT IDENTIFIER info:
+      # oid_file       = $ENV::HOME/.oid
+      #oid_section = new_oids
+      #
+      #
+      # To use this configuration file with the "-extfile" option of the
+      # "openssl x509" utility, name here the section containing the
+      # X.509v3 extensions to use:
+      # extensions            =
+      # (Alternatively, use a configuration file that has only
+      # X.509v3 extensions in its main [= default] section.)
+      #
+      #
+      #
+      # To use this configuration file with the "-extfile" option of the
+      # "openssl x509" utility, name here the section containing the
+      # X.509v3 extensions to use:
+      # extensions            =
+      # (Alternatively, use a configuration file that has only
+      # X.509v3 extensions in its main [= default] section.)
+      #
+                `;
 
         console.info(`OpensslConfig size ${OpensslConfig.length}`);
         jsEmulator = await jsCryptoFactory.CreateEmulator({
-          UpdateLEDState : (led)=>{
+          UpdateLEDState: (led) => {
             console.info(`TODO: UpdateLEDState(${led})`);
           },
-          OpensslConfig
+          OpensslConfig,
         });
         jsEmulator.Create("1234567812345678", 0x100, 256);
 
         jsScriptParser = async (script) => {
-          const { size_public, code } =
-            await jsCryptoFactory.ParseScript(script);
-          return [size_public, Buffer.from(code, "base64")];
+          return await jsCryptoFactory.ParseScript(script);
         };
 
         jsDongleExecv = async (id, file, admin) => {
@@ -283,6 +281,7 @@
 
         async function List() {
           const start = Date.now();
+          prev_dashboard_value.clear();
           console.log(`#### List() ####`);
           const payload = Buffer.from(
             JSON.stringify({
@@ -303,10 +302,24 @@
           );
 
           UpdateDeviceList(Buffer.from(StdoutLine0(reply.stdout), "base64"));
+          for (const option of document.getElementById("keys").options) {
+            if (option?.value?.slice(0, 2) === "ff") continue;
+            try {
+              await Dashboard(option?.value, true, false);
+            } catch (err) {
+              console.log(`[IGNORE]Error ${err}`);
+            }
+          }
+          console.log(`List OK (${Date.now() - start} ms)!`);
         }
-        async function Dashboard() {
-          const id = document.getElementById("keys").value;
+
+        async function Dashboard(query_id, query_only, admin_mode) {
+          const id = query_id || document.getElementById("keys").value;
           if (!id) throw Error(`Dashboard: Select RockeyARM device!`);
+          const admin =
+            admin_mode === true || admin_mode === false
+              ? admin_mode
+              : document.getElementById("admin").checked;
 
           let buffer;
           console.log(`#### Dashboard() ####`);
@@ -320,7 +333,7 @@
               JSON.stringify({
                 cmd: "dashboard",
                 nonce: jsCipher.RandBytes(12).toString("base64"),
-                admin: document.getElementById("admin").checked,
+                admin,
                 id,
               }),
             );
@@ -355,6 +368,7 @@
           }
 
           if (id.slice(0, 2) !== "ff") prev_dashboard_value.set(id, buffer);
+          if (query_only === true) return;
 
           const blob = new Blob([buffer], { type: "application/octet-stream" });
           const url = URL.createObjectURL(blob);
@@ -495,6 +509,12 @@
           );
         }
         async function Execv() {}
+        async function ScriptParse() {
+          const script = document.getElementById("dongle_script").value;
+          const result = await jsScriptParser(script);
+          console.log(JSON.stringify(result, null, 2));
+        }
+        async function ScriptExport() {}
 
         function UpdateEmulatorInfo() {
           /**
@@ -591,7 +611,7 @@
 
           jsEmulator.SetLEDState(2);
 
-          await Test(async ()=>{
+          await Test(async () => {
             jsEmulator.DeleteFile(3, 100);
             jsEmulator.DeleteFile(3, 110);
             jsEmulator.DeleteFile(3, 120);
@@ -601,55 +621,66 @@
             jsEmulator.CreatePKEYFile(3, 256, 120);
           });
 
-          await Test(async ()=>{
+          await Test(async () => {
             const pkey1 = jsEmulator.GenerateSM2(100, true);
             const pkey2 = jsEmulator.GenerateSM2(110, true);
             const pkey3 = jsEmulator.GenerateSM2(120, true);
 
-            const Y = jsEmulator.EmuDecompressPointSM2(pkey1.subarray(0, 32), pkey1[63] % 2 !== 0);
+            const Y = jsEmulator.EmuDecompressPointSM2(
+              pkey1.subarray(0, 32),
+              pkey1[63] % 2 !== 0,
+            );
             console.assert(Buffer.compare(Y, pkey1.subarray(32, 64)) === 0);
 
-            console.log(`pkey1: ${pkey1.toString('hex')}`);
-            console.log(`pkey2: ${pkey2.toString('hex')}`);
-            console.log(`pkey3: ${pkey3.toString('hex')}`);
+            console.log(`pkey1: ${pkey1.toString("hex")}`);
+            console.log(`pkey2: ${pkey2.toString("hex")}`);
+            console.log(`pkey3: ${pkey3.toString("hex")}`);
 
             const hash = jsCipher.RandBytes(32);
             const sign = jsEmulator.SM2Sign(100, hash);
-            console.log(`hash: ${hash.toString('hex')} sign: ${sign.toString('hex')}`);
+            console.log(
+              `hash: ${hash.toString("hex")} sign: ${sign.toString("hex")}`,
+            );
 
             sign[10] ^= 0x20;
             const V1 = jsEmulator.SM2Verify(pkey1.subarray(0, 64), hash, sign);
             sign[10] ^= 0x20;
             const V2 = jsEmulator.SM2Verify(pkey1.subarray(0, 64), hash, sign);
-            if(V1 !== false || V2 !== true) {
+            if (V1 !== false || V2 !== true) {
               console.error(`SM2Sign/SM2Verify Test Failed ${V1} ${V2}!`);
             } else {
               console.log(`SM2Sign/SM2Verify Test OK  ${V1} ${V2}!`);
             }
 
             pkey1[10] ^= 0x10;
-            console.assert(jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === false);
+            console.assert(
+              jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === false,
+            );
             pkey1[10] ^= 0x10;
-            console.assert(jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === true);
+            console.assert(
+              jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === true,
+            );
 
             const text = jsCipher.RandBytes(32);
-            console.log(`text: ${text.toString('hex')}  sm3: ${jsEmulator.SM3(text).toString('hex')}`);
+            console.log(
+              `text: ${text.toString("hex")}  sm3: ${jsEmulator.SM3(text).toString("hex")}`,
+            );
 
             const cipher1 = jsEmulator.SM2Encrypt(pkey1.subarray(0, 64), text);
             const cipher2 = jsEmulator.SM2Encrypt(pkey2.subarray(0, 64), text);
             const cipher3 = jsEmulator.SM2Encrypt(pkey3.subarray(0, 64), text);
 
-            console.log(`cipher1: ${cipher1.toString('hex')}`);
-            console.log(`cipher2: ${cipher2.toString('hex')}`);
-            console.log(`cipher3: ${cipher3.toString('hex')}`);
+            console.log(`cipher1: ${cipher1.toString("hex")}`);
+            console.log(`cipher2: ${cipher2.toString("hex")}`);
+            console.log(`cipher3: ${cipher3.toString("hex")}`);
 
             const verify1 = jsEmulator.SM2Decrypt(pkey1, cipher1);
             const verify2 = jsEmulator.SM2Decrypt(110, cipher2);
             const verify3 = jsEmulator.SM2Decrypt(120, cipher3);
 
-            console.log(`verify1: ${verify1.toString('hex')}`);
-            console.log(`verify2: ${verify2.toString('hex')}`);
-            console.log(`verify3: ${verify3.toString('hex')}`);
+            console.log(`verify1: ${verify1.toString("hex")}`);
+            console.log(`verify2: ${verify2.toString("hex")}`);
+            console.log(`verify3: ${verify3.toString("hex")}`);
 
             console.assert(Buffer.compare(text, verify1) === 0);
             console.assert(Buffer.compare(text, verify2) === 0);
@@ -660,15 +691,19 @@
         document.getElementById("list").onclick = List;
         document.getElementById("factory").onclick = Factory;
         document.getElementById("lock").onclick = Lock;
-        document.getElementById("dashboard").onclick = Dashboard;
+        document.getElementById("dashboard").onclick = () => {
+          Dashboard(null, false);
+        };
         document.getElementById("execv").onclick = Execv;
         document.getElementById("EmuCreate").onclick = CreateEmulator;
         document.getElementById("EmuExport").onclick = ExportEmulator;
         document.getElementById("EmuImport").onclick = ImportEmulator;
         document.getElementById("EmuTests").onclick = EmuTests;
+
+        document.getElementById("ScriptExport").onclick = ScriptExport;
+        document.getElementById("ScriptParse").onclick = ScriptParse;
         UpdateDeviceList(null);
       };
-    
     </script>
   </head>
   <body>
@@ -725,8 +760,18 @@
 
     <p>
       <label for="admin">Admin:</label><input type="checkbox" id="admin" />
+      <label for="bootstrap">Bootstrap:</label
+      ><input type="checkbox" id="bootstrap" />
       <label for="program">PROGRAM:</label><input type="file" id="program" />
-      <button id="dashboard">dashboard</button><button id="execv">execv</button>
+      <button id="dashboard">dashboard</button
+      ><button id="execv">FileExecv</button>
+      <button id="ScriptExport">ScriptExport</button
+      ><button id="ScriptParse">ScriptParse</button>
+    </p>
+
+    <p>
+      <label for="dongle_script"></label
+      ><textarea id="dongle_script" rows="40" cols="120"></textarea>
     </p>
 
     <p>
