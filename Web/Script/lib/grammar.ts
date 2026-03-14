@@ -1970,8 +1970,11 @@ export class Context {
 
     if (code.length > 100)
       throw Error(`Script code size ${code.length} .GT. 100`);
-    if (code.length < 100) code.push(OpCode.kExit);
-    if (code.length < 100) code.push(OpCode.kInv);
+
+    if(code.length < 100)
+      code.push(OpCode.kExit | 0x0400); /// Exit() => Exit(0) ...
+    while(code.length < 100)
+      code.push(OpCode.kInv);
 
     for (const v of code) {
       if (v < 0 || v > 0xffff) throw Error(`Invalid code ${v}`);

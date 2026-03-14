@@ -1,0 +1,148 @@
+public 1024;
+
+const {
+  /**!! 全局公开信息[1024] */
+  kOffsetDonglePublic = 7 * 1024;
+
+  /**!! 加密密钥托管信息[1024] */
+  kOffsetDongleTrust = 6 * 1024;
+
+  /**!! TODO: (P256签名证书/SM2签名证书/SM2加密证书)[2048] */
+  kOffsetX509Chain = 4 * 1024; /* Dashboard[0,4096] 可被匿名修改, 不要在低4KB区域存放重要信息 */
+
+  kFileSM2ECDSA = 1;
+  kFileSECP256r1 = 2;
+  kFileRSA2048 = 3;
+  kFileSM2ECIES = 4;
+
+  kOffsetPubkey_SM2ECDSA = 20;
+  kOffsetPubkey_Secp256r1 = 84;
+  kOffsetPubkey_RSA2048 = 148;
+  kOffsetPubkey_SM2ECIES = 408;
+
+  kOffsetDongleNonce1 = 472;
+  kOffsetDongleInfo = 504;
+  kOffsetDongleNonce2 = 544;
+
+  kOffsetSign_SM2ECIES = 576;
+  kOffsetSign_RSA2048 = 640;
+  kOffsetSign_Secp256r1 = 896;
+  kOffsetSign_SM2ECDSA = 960;
+  kSizePublic = 1024;
+
+  /**!! */
+  rLANG_WORLD_MAGIC = 0xc8c04e1f; // rLANG
+  kCategory_MAGIC_Public = 0xC35880AF; // "pub@k"
+  kCategory_MAGIC_Admin = 0x864B40AF;  // "adm@k"
+
+  /**!! */
+  kVersionCurrent = 0x04000101;
+
+  /**!! 外部输入参数 */
+  kOff_WorldMagic = 1024 - 32;
+  kOff_Category = 1024 - 16;
+  kOff_Version = 1024 - 8;
+}
+
+///
+/// 外部输入变量 ...
+///
+rLANG_ADMIN_NONCE @ kOffsetDongleNonce2 [32] = { ${NONCE} }; /// 初始化时选择的随机数 ...
+rLANG_WORLD_MAGIC @ kOff_WorldMagic [4] = {  rLANG_WORLD_MAGIC };
+rLANG_CATEGORY @ kOff_Category [4] = { kCategory_MAGIC_Public, kCategory_MAGIC_Admin };
+rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };
+
+///
+/// 初始化脚本必须以管理员权限运行 ...
+///
+if(ValidPINState() < 2)
+  Exit(1);
+
+///
+/// 清除可能存在的本地私钥托管信息, 外部输入参数最小的偏移为 kOffsetDongleNonce2 .GT. 512 ...
+///
+Memset(0, 0, 512);
+WriteDataFile(0xffff, kOffsetDongleTrust, 0, 512);
+
+///
+/// Header[20]
+///
+StoreI32(0, LoadI32(kOff_WorldMagic));
+StoreI32(4, LoadI32(kOff_Category));
+StoreI32(16, LoadI32(kOff_Version));
+
+///
+/// 读取Dongle信息
+///
+ReadDongleInfo(kOffsetDongleInfo);
+
+///
+/// 初始化基本的随机数 ...
+///
+RandBytes(kOffsetDongleNonce1, 32);
+
+///
+/// 这组随机数由生成时外部输入 ...
+///
+///RandBytes(kOffsetDongleNonce2, 32);
+
+///
+/// 删除可能存在的私钥文件 ...
+///
+DeleteRSAFile(kFileRSA2048);
+DeleteP256File(kFileSECP256r1);
+DeleteSM2File(kFileSM2ECDSA);
+DeleteSM2File(kFileSM2ECIES);
+
+///
+/// 创建新的私钥文件, 只允许管理员+脚本程序使用 ...
+///
+CreateRSAFile(kFileRSA2048, 2);
+CreateP256File(kFileSECP256r1, 2);
+CreateSM2File(kFileSM2ECDSA, 2);
+CreateSM2File(kFileSM2ECIES, 2);
+
+///
+/// 产生三个用于签名的私钥文件, 这些私钥从未被导出, 也永远不应该导出 ...
+///
+GenerateRSA(kFileRSA2048, kOffsetPubkey_RSA2048);
+GenerateP256(kFileSECP256r1, kOffsetPubkey_Secp256r1);
+GenerateSM2(kFileSM2ECDSA, kOffsetPubkey_SM2ECDSA);
+
+///
+/// 产生加密密钥(同时也是本地管理员签名密钥), 私钥未被导出, 确认是否要从外部导入加密密钥或者将密钥托管 ...
+///
+///  *** 警告 ***: 如果不从外部导入加密密钥, 在uKey锁定后, 任何人都无法以管理员权限执行代码 ...
+///  *** 警告 ***: 如果不从外部导入加密密钥, 在uKey失效后, 任何加密的数据将***无法***解密 ...
+///  *** 警告 ***: 加密密钥***应该***从外部导入, 仅在设备内部生成加密密钥将导致数据丢失风险 ...
+///
+GenerateSM2(kFileSM2ECIES, kOffsetPubkey_SM2ECIES);
+
+///
+/// [Key=4, SM2ECIES]SM2.Sign ...
+///
+DigestSM3(0, kOffsetSign_SM2ECIES, kOffsetSign_SM2ECIES);
+SM2Sign(kFileSM2ECIES, kOffsetSign_SM2ECIES, kOffsetSign_SM2ECIES);
+
+///
+/// [Key=3, RSA]RSA.Sign ...
+///
+ExDigestSHA256(0, kOffsetSign_RSA2048, kOffsetSign_RSA2048);
+RSAPrivateEncrypt(kFileRSA2048, kOffsetSign_RSA2048, 32);
+
+///
+/// [Key=2, Secp256r1]ECDSA.Sign ...
+///
+ExDigestSHA256(0, kOffsetSign_Secp256r1, kOffsetSign_Secp256r1);
+P256Sign(kFileSECP256r1, kOffsetSign_Secp256r1, kOffsetSign_Secp256r1);
+
+///
+/// [Key=1, SM2ECDSA]SM2.Sign ...
+///
+DigestSM3(0, kOffsetSign_SM2ECDSA, kOffsetSign_SM2ECDSA);
+SM2Sign(kFileSM2ECDSA, kOffsetSign_SM2ECDSA, kOffsetSign_SM2ECDSA);
+
+///
+/// 写入公共信息 ...
+///
+WriteDataFile(0xffff, kOffsetDonglePublic, 0, 1024);
