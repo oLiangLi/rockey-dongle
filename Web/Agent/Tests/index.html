@@ -514,7 +514,16 @@
           const result = await jsScriptParser(script);
           console.log(JSON.stringify(result, null, 2));
         }
-        async function ScriptExport() {}
+        async function ScriptExport() {
+          const script = document.getElementById("dongle_script").value;
+          const result = await jsScriptParser(script);
+          await ScriptExportHelper(
+            result,
+            document.getElementById("keys").value,
+            document.getElementById("bootstrap").checked,
+            document.getElementById("admin").checked,
+          );
+        }
 
         function UpdateEmulatorInfo() {
           /**
@@ -705,6 +714,432 @@
         UpdateDeviceList(null);
       };
     </script>
+    <script>
+      function CreateDataSegment(program, param, size) {
+        const result = jsCipher.RandBytes(256 + size);
+        for (const arg of program.data) {
+          const off = arg.offset;
+          let count_words = 0;
+          let count_integer = 0;
+          for (const opt of arg.options) {
+            if (typeof opt === "string") {
+              ++count_words;
+            } else {
+              ++count_integer;
+            }
+          }
+
+          const value =
+            0 === count_words && 1 === count_integer
+              ? arg.options[0]
+              : param[arg.name];
+          if (typeof value === "number") {
+            if (
+              arg.sizeMin !== arg.sizeMax ||
+              (arg.sizeMax !== 1 && arg.sizeMax !== 2 && arg.sizeMax !== 4)
+            )
+              throw jsCipher.Annihilus_(
+                `integer value: param ${arg.name} size [${arg.sizeMin} ${arg.sizeMax}], mismatching!`,
+              );
+
+            result[off + 0] = 0xff & (value >>> 0);
+            if (arg.sizeMax > 1) {
+              result[off + 1] = 0xff & (value >>> 8);
+              if (arg.sizeMax > 2) {
+                result[off + 2] = 0xff & (value >>> 16);
+                result[off + 3] = 0xff & (value >>> 24);
+              }
+            }
+          } else if (value instanceof Buffer) {
+            if (value.length < arg.sizeMin || value.length > arg.sizeMax)
+              throw jsCipher.Annihilus_(
+                `param ${arg.name} [${(arg.sizeMin, arg.sizeMax)}], value.size : ${value.length}`,
+              );
+            value.copy(result, off);
+          } else {
+            throw jsCipher.Annihilus_(`param ${arg.name} undefined!`);
+          }
+        }
+
+        return result.subarray(256);
+      }
+
+      async function UserConfirmParamImpl(div, program) {
+        return new Promise((resolve, reject) => {
+          const PARAM_RESULT = {};
+          div.innerHTML = ``;
+
+          const table = document.createElement("table");
+          const tbody = document.createElement("tbody");
+          table.setAttribute("border", "2");
+
+          const items = [
+            ["Name", 100],
+            ["Offset", 50],
+            ["SizMin", 50],
+            ["SizMax", 50],
+            ["Select", 120],
+            ["Input", 200],
+            ["File", 200],
+          ];
+
+          const tr = document.createElement("tr");
+          for (const item of items) {
+            const td = document.createElement("td");
+            td.appendChild(document.createTextNode(item[0]));
+            td.style.width = `${item[1]}px`;
+            td.style.textAlign = "center";
+            tr.appendChild(td);
+          }
+          tbody.appendChild(tr);
+
+          for (const arg of program.data) {
+            const name = arg.name;
+            const i_values = [];
+            const s_values = [];
+
+            for (const opt of arg.options) {
+              if (typeof opt === "number") {
+                i_values.push(opt);
+              } else {
+                s_values.push(opt);
+              }
+            }
+
+            if (i_values.length === 0 && s_values.length === 0)
+              s_values.push(name);
+            const prompt = s_values.length > 0 ? s_values.join(" ") : "";
+            const rodata = i_values.length === 1 && s_values.length === 0;
+            if (rodata) PARAM_RESULT[name] = i_values[0];
+
+            const tr = document.createElement("tr");
+
+            /// Name ...
+            {
+              const td = document.createElement("td");
+              td.append(document.createTextNode(name));
+              td.style.textAlign = "left";
+              tr.appendChild(td);
+            }
+
+            /// Offset ...
+            {
+              const td = document.createElement("td");
+              td.append(document.createTextNode(`${arg.offset}`));
+              td.style.textAlign = "right";
+              tr.appendChild(td);
+            }
+
+            /// SizeMin ...
+            {
+              const td = document.createElement("td");
+              td.append(document.createTextNode(`${arg.sizeMin}`));
+              td.style.textAlign = "right";
+              tr.appendChild(td);
+            }
+
+            /// SizeMax ...
+            {
+              const td = document.createElement("td");
+              td.append(document.createTextNode(`${arg.sizeMax}`));
+              td.style.textAlign = "right";
+              tr.appendChild(td);
+            }
+
+            const input = document.createElement("input");
+            const file = document.createElement("input");
+
+            /// Select ...
+            {
+              input.type = "text";
+              file.type = "file";
+              input.style.width = "90%";
+              file.style.width = "90%";
+
+              function check_int_value() {
+                delete PARAM_RESULT[name];
+                if (input.value !== "")
+                  PARAM_RESULT[name] = parseInt(input.value, 16);
+              }
+
+              function check_b64_value() {
+                delete PARAM_RESULT[name];
+                const buf = Buffer.from(input.value, "base64");
+                if (buf.length >= arg.sizeMin && buf.length <= arg.sizeMax)
+                  PARAM_RESULT[name] = buf;
+              }
+
+              function check_file_value() {}
+
+              if (i_values.length > 0) {
+                input.pattern = `[0-9a-fA-F]+`;
+                input.onchange = check_int_value;
+              } else {
+                input.pattern = "[0-9a-zA-Z+/]+=*";
+                input.onchange = check_b64_value;
+              }
+
+              function i2s(val) {
+                if (arg.sizeMax === 1) {
+                  val &= 0xff;
+                  return `0x${("00" + val.toString(16)).slice(-2).toUpperCase()}`;
+                } else if (arg.sizeMax === 2) {
+                  val &= 0xffff;
+                  return `0x${("0000" + val.toString(16)).slice(-4).toUpperCase()}`;
+                } else {
+                  val &= 0xffffffff;
+                  if (val < 0) val += 2 ** 32;
+                  return `0x${("00000000" + val.toString(16)).slice(-8).toUpperCase()}`;
+                }
+              }
+
+              const td = document.createElement("td");
+              const select = document.createElement("select");
+              select.style.width = "90%";
+              td.appendChild(select);
+
+              file.onchange = check_file_value;
+              input.disabled = true;
+              file.disabled = true;
+
+              if (prompt !== "") {
+                input.placeholder = prompt;
+              }
+
+              function select_onchange() {
+                input.disabled = true;
+                file.disabled = true;
+                delete PARAM_RESULT[name];
+
+                const value = select.value;
+                if (value.slice(0, 1) === "+") {
+                  PARAM_RESULT[name] = value.slice(1) | 0;
+                } else if (value === "#") {
+                  /// Hex ...
+                  input.disabled = false;
+                  check_int_value();
+                } else if (value === "$") {
+                  /// Base64 ...
+                  input.disabled = false;
+                  check_b64_value();
+                } else if (value === "@") {
+                  /// File ...
+                  file.disabled = false;
+                  check_file_value();
+                } else if (value === "r") {
+                  /// RandBytes[Max] ...
+                  PARAM_RESULT[name] = jsCipher.RandBytes(arg.sizeMax);
+                } else if (value === "z") {
+                  /// Zero[Min] ...
+                  PARAM_RESULT[name] = Buffer.alloc(arg.sizeMin);
+                }
+              }
+              select.onchange = select_onchange;
+
+              if (i_values.length > 0) {
+                for (const val of i_values) {
+                  const option = document.createElement("option");
+                  option.value = `+${val}`;
+                  option.text = i2s(val);
+                  select.appendChild(option);
+                }
+                if (s_values.length > 0) {
+                  const option = document.createElement("option");
+                  option.value = "#";
+                  option.text = "INPUT(HEX)";
+                  select.appendChild(option);
+                }
+                select.value = `+${i_values[0]}`;
+              } else {
+                {
+                  const option = document.createElement("option");
+                  option.value = "r"; /// RANDBytes[Max] ...
+                  option.text = "RANDBytes[Max]";
+                  select.appendChild(option);
+                }
+
+                {
+                  const option = document.createElement("option");
+                  option.value = "z"; /// ZeroFill[Min] ...
+                  option.text = "ZeroFill[Min]";
+                  select.appendChild(option);
+                }
+
+                {
+                  const option = document.createElement("option");
+                  option.value = "$"; /// Base64 ...
+                  option.text = "INPUT(BASE64)";
+                  select.appendChild(option);
+                }
+                {
+                  const option = document.createElement("option");
+                  option.value = "@"; /// File ...
+                  option.text = "INPUT(FILE)";
+                  select.appendChild(option);
+                }
+                select.value = "r"; /// default RandBytes ...
+              }
+              select_onchange();
+              tr.appendChild(td);
+            }
+
+            /// Input ...
+            {
+              const td = document.createElement("td");
+              td.append(input);
+              tr.appendChild(td);
+            }
+
+            /// File ...
+            {
+              const td = document.createElement("td");
+              td.append(file);
+              tr.appendChild(td);
+            }
+
+            tbody.appendChild(tr);
+          }
+
+          {
+            const tr = document.createElement("tr");
+            const td = document.createElement("td");
+            td.style.textAlign = "center";
+            td.colSpan = items.length;
+
+            const submit = document.createElement("button");
+            const cancel = document.createElement("button");
+
+            submit.innerText = "OK";
+            submit.style.width = "300px";
+
+            cancel.innerText = "CANCEL";
+            cancel.style.width = "300px";
+
+            td.appendChild(submit);
+            td.appendChild(cancel);
+
+            submit.addEventListener("click", () => {
+              let error = 0;
+              for (const arg of program.data) {
+                if (!PARAM_RESULT.hasOwnProperty(arg.name)) {
+                  console.error(`Configure ${arg.name} please!`);
+                  ++error;
+                }
+              }
+              if (0 === error) return resolve(PARAM_RESULT);
+            });
+
+            cancel.addEventListener("click", () => {
+              return reject(Error("User Cancelled"));
+            });
+
+            tr.appendChild(td);
+            tbody.appendChild(tr);
+          }
+
+          table.appendChild(tbody);
+          div.appendChild(table);
+          div.style.display = "block";
+        });
+      }
+
+      let flags_UserConfirmParam_ = false;
+      async function UserConfirmParam(program) {
+        const div = document.getElementById("infoScriptExport");
+        if (flags_UserConfirmParam_) return Promise.reject(Error(`Wait ...`));
+
+        flags_UserConfirmParam_ = true;
+        try {
+          return await UserConfirmParamImpl(div, program);
+        } finally {
+          flags_UserConfirmParam_ = false;
+          div.style.display = "none";
+          div.innerHTML = "";
+        }
+      }
+
+      async function ScriptExportHelper(program, id, bootstrap, admin) {
+        console.log(`id: ${id}, bootstrap: ${bootstrap}, admin: ${admin}`);
+        console.log(JSON.stringify(program, null, 2));
+        const code = Buffer.from(program.code, "base64");
+        const size_public = program.size_public;
+
+        ///
+        /// Bootstrap 模式隐含以Admin权限登录运行, 以普通程序方式打包数据, 无数据签名, 脚本直接获得管理员权限执行程序 ...
+        /// Admin模式以匿名方式运行脚本, 最后64字节为SM2ECIES密钥对数据的签名, 当验签通过后, 脚本内部提权为Admin权限 ...
+        ///
+        if (bootstrap === true) admin = false;
+        console.assert(code.length === 200);
+
+        const size_data = admin === true ? 1024 - 256 - 64 : 1024 - 256;
+        const off_limit = 256 + size_data;
+
+        let argc = 0,
+          confirm = 0;
+        for (const arg of program.data) {
+          ++argc;
+
+          const offset = arg.offset;
+          const sizeMin = arg.sizeMin;
+          const sizeMax = arg.sizeMax;
+
+          if (
+            Math.floor(offset) !== offset ||
+            Math.floor(sizeMin) !== sizeMin ||
+            Math.floor(sizeMax) !== sizeMax
+          )
+            throw jsCipher.Annihilus_(
+              `PARAM ${arg.name} INVALID Configure ${offset} ${sizeMin} ${sizeMax}`,
+            );
+          if (offset < 256 || offset >= 1024)
+            throw jsCipher.Annihilus_(
+              `PARAM ${arg.name} INVALID Offset ${offset}`,
+            );
+          if (
+            sizeMin < 0 ||
+            sizeMax < sizeMin ||
+            sizeMax < 1 ||
+            sizeMax > size_data ||
+            offset + sizeMax > off_limit
+          )
+            throw jsCipher.Annihilus_(
+              `PARAM ${arg.name} INVALID SIZE offset: ${offset}, size: [${sizeMin}, ${sizeMax}], limit: ${off_limit}`,
+            );
+
+          let count_words = 0;
+          let count_integer = 0;
+          for (const opt of arg.options) {
+            if (typeof opt === "string") {
+              ++count_words;
+            } else {
+              ++count_integer;
+            }
+          }
+          if (
+            count_integer > 0 &&
+            (arg.sizeMin !== arg.sizeMax ||
+              (arg.sizeMax !== 1 && arg.sizeMax !== 2 && arg.sizeMax !== 4))
+          )
+            throw jsCipher.Annihilus_(
+              `integer value: param ${arg.name} size [${arg.sizeMin} ${arg.sizeMax}], mismatching!`,
+            );
+
+          if (0 === count_words && 1 === count_integer) {
+            /* rodata  */
+          } else {
+            ++confirm;
+          }
+        }
+        console.log(
+          `size: ${size_public}, argc : ${argc}, confirm : ${confirm}, code: ${code.length}`,
+        );
+
+        const param = confirm > 0 ? await UserConfirmParam(program) : null;
+        const data = CreateDataSegment(program, param, size_data);
+
+        console.log(`Z.data ${data.toString("hex")}`);
+      }
+    </script>
   </head>
   <body>
     <label for="url">API:</label
@@ -771,8 +1206,10 @@
 
     <p>
       <label for="dongle_script"></label
-      ><textarea id="dongle_script" rows="40" cols="120"></textarea>
+      ><textarea id="dongle_script" rows="20" cols="120"></textarea>
     </p>
+
+    <div id="infoScriptExport" style="display: none">HelloWorld</div>
 
     <p>
       <button onclick="document.getElementById('m').innerHTML = ''">

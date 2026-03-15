@@ -1694,7 +1694,8 @@ export class Context {
           const sizeMin = exprMin.value_;
           const sizeMax = exprMax.value_;
           if (
-            sizeMin < 1 ||
+            sizeMin < 0 ||
+            sizeMax < 1 ||
             sizeMax < sizeMin ||
             sizeMax > 1024 ||
             offset + sizeMax > 1024
@@ -1710,9 +1711,9 @@ export class Context {
 
       case Action.AC_INPUT_EXPR:
         {
-          const size = this.data_curr_!.sizeMax;
+          const size = this.data_curr_!.sizeMin;
           if (
-            size !== this.data_curr_!.sizeMin ||
+            size !== this.data_curr_!.sizeMax ||
             (size !== 1 && size !== 2 && size !== 4)
           )
             throw Error(
@@ -1971,10 +1972,8 @@ export class Context {
     if (code.length > 100)
       throw Error(`Script code size ${code.length} .GT. 100`);
 
-    if(code.length < 100)
-      code.push(OpCode.kExit | 0x0400); /// Exit() => Exit(0) ...
-    while(code.length < 100)
-      code.push(OpCode.kInv);
+    if (code.length < 100) code.push(OpCode.kExit | 0x0400); /// Exit() => Exit(0) ...
+    while (code.length < 100) code.push(OpCode.kInv);
 
     for (const v of code) {
       if (v < 0 || v > 0xffff) throw Error(`Invalid code ${v}`);
