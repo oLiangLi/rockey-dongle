@@ -19,7 +19,7 @@
       var jsCipher;
 
       /**
-       * @type {(script : string)=>Promise<[size_public : integer, code : Buffer]>}
+       * @type {(script : string)=>Promise<[size_public : integer, code : Buffer, data : Array<{name: string; offset : number; sizeMin : number; sizeMax : number ; options : Array<string|number> }>]>}
        */
       var jsScriptParser;
 
@@ -28,63 +28,21 @@
        */
       var jsDongleExecv;
 
+      /**
+       * @type { (info: Buffer, online ?: boolean)=>void }
+       */
+      var jsAddDevice;
+
       window.onload = async function () {
         jsCipher = await jsWorld.CipherLoader();
 
         const jsCryptoFactory = (globalThis.jsCryptoFactory =
           await jsWorld.CryptoLoader(jsCipher));
 
-        const OpensslConfig = `
-      #
-      # OpenSSL example configuration file.
-      # See doc/man5/config.pod for more info.
-      #
-      # This is mostly being used for generation of certificate requests,
-      # but may be used for auto loading of providers
-      #
-      # Note that you can include other files from the main configuration
-      # file using the .include directive.
-      #.include filename
-      #
-      # This definition stops the following lines choking if HOME isn't
-      # defined.
-      #HOME                    = .
-      #
-      # Use this in order to automatically load providers.
-      #openssl_conf = openssl_init
-      #
-      # Comment out the next line to ignore configuration errors
-      #config_diagnostics = 1
-      #
-      # Extra OBJECT IDENTIFIER info:
-      # oid_file       = $ENV::HOME/.oid
-      #oid_section = new_oids
-      #
-      #
-      # To use this configuration file with the "-extfile" option of the
-      # "openssl x509" utility, name here the section containing the
-      # X.509v3 extensions to use:
-      # extensions            =
-      # (Alternatively, use a configuration file that has only
-      # X.509v3 extensions in its main [= default] section.)
-      #
-      #
-      #
-      # To use this configuration file with the "-extfile" option of the
-      # "openssl x509" utility, name here the section containing the
-      # X.509v3 extensions to use:
-      # extensions            =
-      # (Alternatively, use a configuration file that has only
-      # X.509v3 extensions in its main [= default] section.)
-      #
-                `;
-
-        console.info(`OpensslConfig size ${OpensslConfig.length}`);
         jsEmulator = await jsCryptoFactory.CreateEmulator({
           UpdateLEDState: (led) => {
             console.info(`TODO: UpdateLEDState(${led})`);
           },
-          OpensslConfig,
         });
         jsEmulator.Create("1234567812345678", 0x100, 256);
 
@@ -206,40 +164,55 @@
           );
         }
 
-        function DongleDisplayValue(key) {
-          function V2(v) {
-            return ("00" + v.toString(16)).slice(-2);
+        jsAddDevice = function (info, online) {
+          /**
+           * @type {HTMLSelectElement}
+           */
+          const keys = document.getElementById("keys");
+          const json = DongleDisplayValue(info);
+          json.online = !!online;
+
+          const text = JSON.stringify(json);
+          for (const opt of keys.options) {
+            if (opt.value === json.id) {
+              if (opt.text !== text) opt.text = text;
+              return /**/;
+            }
           }
-          function V8(v) {
-            return "0x" + ("00000000" + v.toString(16)).slice(-8);
+
+          const option = document.createElement("option");
+          option.value = json.id;
+          option.text = text;
+          keys.add(option);
+        };
+
+        function UpdateEmulatorInfo() {
+          if (!jsEmulator) return;
+
+          const json = DongleDisplayValue(jsEmulator.GetDongleInfo());
+          json.online = true;
+          const text = JSON.stringify(json);
+
+          /**
+           * @type {HTMLSelectElement}
+           */
+          const keys = document.getElementById("keys");
+
+          for (const opt of keys.options) {
+            if (opt.value.slice(0, 2) === "ff") {
+              opt.value = json.id;
+              opt.text = text;
+              return;
+            }
           }
-          const version = V8(key.readUInt32LE(0));
-          const type = V8(key.readUInt32LE(4));
-          const birthday = `20${V2(key[8])}-${V2(key[9])}-${V2(key[10])} ${V2(key[11])}:${V2(key[12])}:${V2(key[13])}`;
-          const agent = V8(key.readUInt32LE(16));
-          const pid = V8(key.readUInt32LE(20));
-          const uid = V8(key.readUInt32LE(24));
-          const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
-          return { version, id, pid, uid, type, birthday, agent };
+
+          const option = document.createElement("option");
+          option.value = json.id;
+          option.text = text;
+          keys.add(option);
         }
 
         function UpdateDeviceList(buffer) {
-          const keys = document.getElementById("keys");
-          const prev_value = keys.value;
-          function addOption(text, value) {
-            const option = document.createElement("option");
-            option.value = value;
-            option.text = text;
-            if (value === prev_value) option.selected = true;
-            keys.add(option);
-          }
-
-          /// @param {Buffer} key - DONGLE_INFO ...
-          function addKey(key) {
-            const value = DongleDisplayValue(key);
-            addOption(JSON.stringify(value), value.id);
-          }
-
           function CheckBuffer() {
             if (
               !buffer ||
@@ -258,16 +231,11 @@
               throw Error(`SHA256.Check Error!`);
             return (buffer.length - 32) / 40;
           }
-
-          while (keys.length > 0) {
-            keys.remove(0);
-          }
-          addKey(jsEmulator.GetDongleInfo());
-
           const count = CheckBuffer();
           for (let i = 0; i < count; ++i) {
-            addKey(buffer.subarray(i * 40));
+            jsAddDevice(buffer.subarray(i * 40, (i + 1) * 40), true);
           }
+          UpdateEmulatorInfo();
         }
 
         function StdoutLine0(stdout) {
@@ -281,7 +249,7 @@
 
         async function List() {
           const start = Date.now();
-          prev_dashboard_value.clear();
+          // prev_dashboard_value.clear();
           console.log(`#### List() ####`);
           const payload = Buffer.from(
             JSON.stringify({
@@ -410,6 +378,9 @@
                 );
               resolve(result);
             };
+            reader.onerror = function () {
+              reject(Error(`Load file ${file.name} Error!`));
+            };
             reader.readAsArrayBuffer(file);
           });
         }
@@ -523,26 +494,6 @@
             document.getElementById("bootstrap").checked,
             document.getElementById("admin").checked,
           );
-        }
-
-        function UpdateEmulatorInfo() {
-          /**
-           * @type {HTMLSelectElement}
-           */
-          const select = document.getElementById("keys");
-          const value = select.value;
-
-          const key = jsEmulator.GetDongleInfo();
-          const json = DongleDisplayValue(key);
-
-          for (const option of select.options) {
-            if (option.value.slice(0, 2) === "ff") {
-              option.text = JSON.stringify(json);
-              option.value = json.id;
-              if (value.slice(0, 2) === "ff") select.value = json.id;
-              break;
-            }
-          }
         }
 
         async function CreateEmulator() {
@@ -711,6 +662,10 @@
 
         document.getElementById("ScriptExport").onclick = ScriptExport;
         document.getElementById("ScriptParse").onclick = ScriptParse;
+        document.getElementById("ExportAllDashboard").onclick =
+          ExportAllDashboard;
+        document.getElementById("ImportAllDashboard").onclick =
+          ImportAllDashboard;
         UpdateDeviceList(null);
       };
     </script>
@@ -820,7 +775,7 @@
             const span = document.createElement("span");
 
             function SetOK(ok) {
-              span.style.color = ok ? 'green' : 'red';
+              span.style.color = ok ? "green" : "red";
             }
 
             /// Name ...
@@ -861,7 +816,7 @@
             {
               input.type = "text";
               file.type = "file";
-              select.style.width = input.style.width = file.style.width ="95%";
+              select.style.width = input.style.width = file.style.width = "95%";
 
               function check_int_value() {
                 delete PARAM_RESULT[name];
@@ -875,7 +830,7 @@
 
               function check_b64_value() {
                 delete PARAM_RESULT[name];
-                if(input.value.match(/^[0-9a-z+\/]+={0,2}$/i)) {
+                if (input.value.match(/^[0-9a-z+\/]+={0,2}$/i)) {
                   const buf = Buffer.from(input.value, "base64");
                   if (buf.length >= arg.sizeMin && buf.length <= arg.sizeMax) {
                     PARAM_RESULT[name] = buf;
@@ -891,17 +846,23 @@
                 delete PARAM_RESULT[name];
                 const f = file.files[0];
 
-                if(!f) return;
-                if(f.size < arg.sizeMin || f.size > arg.sizeMax) {
-                  console.error(`Invalid file size ${f.size} / [${arg.sizeMin}, ${arg.sizeMax}]`);
+                if (!f) return;
+                if (f.size < arg.sizeMin || f.size > arg.sizeMax) {
+                  console.error(
+                    `Invalid file size ${f.size} / [${arg.sizeMin}, ${arg.sizeMax}]`,
+                  );
                   file.value = null;
                   return;
                 }
 
                 const reader = new FileReader();
-                reader.onload = function() {
+                reader.onload = function () {
                   const result = Buffer.from(reader.result);
-                  if(select.value !== '@' || result.length < arg.sizeMin || result.length > arg.sizeMax) {
+                  if (
+                    select.value !== "@" ||
+                    result.length < arg.sizeMin ||
+                    result.length > arg.sizeMax
+                  ) {
                     file.value = null;
                   } else {
                     PARAM_RESULT[name] = result;
@@ -912,10 +873,10 @@
               }
 
               if (i_values.length > 0) {
-                input.maxLength = 2 * arg.sizeMax;  /// HEX Encode, 不允许输入空白字符 ...
+                input.maxLength = 2 * arg.sizeMax; /// HEX Encode, 不允许输入空白字符 ...
                 input.onchange = check_int_value;
               } else {
-                input.maxLength = ((arg.sizeMax + 2) / 3 | 0) * 4; /// BASE64 Encode, 不允许输入非法字符(即使这些字符在解码时会被忽略) ...
+                input.maxLength = (((arg.sizeMax + 2) / 3) | 0) * 4; /// BASE64 Encode, 不允许输入非法字符(即使这些字符在解码时会被忽略) ...
                 input.onchange = check_b64_value;
               }
 
@@ -1179,10 +1140,172 @@
           `size: ${size_public}, argc : ${argc}, confirm : ${confirm}, code: ${code.length}`,
         );
 
+        let program_name = '';
+        let program_binary = Buffer.alloc(1024);
         const param = confirm > 0 ? await UserConfirmParam(program) : null;
         const data = CreateDataSegment(program, param, size_data);
 
-        console.log(`Z.data ${data.toString("hex")}`);
+        if (bootstrap) {
+          program_binary.writeUInt32LE(0, 0); // Zero ...
+          program_binary.writeUInt32LE(0xc8c04e1f, 4); /// 'rLANG'
+          program_binary.writeUInt32LE(0x0d214153, 8); /// 'CREAT'
+          program_binary.writeUInt32LE(0x5cf48c13, 12); /// 'WORLD'
+
+          program_binary.writeUInt32LE(0x0443493b, 16); /// 'ADMIN'
+          program_binary[20] = 1; /// Version 1.1
+          program_binary[21] = 1;
+          program_binary.writeUInt16LE(program.size_public, 22); /// Size.Export ...
+          code.copy(program_binary, 24); /// .text ...
+          jsCipher.RandBytes(program_binary.subarray(224, 240)); /// Nonce ...
+          const sm3 = jsEmulator.SM3(program_binary.subarray(16, 240));
+          const aead = jsCipher.ChaChaPoly(sm3);
+          const encrypt_data = aead.Seal(data, sm3.subarray(0, 12));
+          console.assert(encrypt_data.length === size_data + 16);
+          sm3.fill(0);
+          aead.Clear();
+
+          encrypt_data.subarray(size_data).copy(program_binary, 240);
+          encrypt_data.subarray(0, size_data).copy(program_binary, 256);
+          const hashId = jsCipher.Digest('SHA256').Init().Update(code).Final().subarray(0, 6).toString('hex');
+
+          program_name = `Bootstrap-${hashId}-${new Date().toISOString()}.dongle.program`;
+        } else {
+          throw jsCipher.Annihilus_(`Not implemented`);
+        }
+
+        const blob = new Blob([program_binary], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const name = program_name;
+        a.href = url;
+        a.download = name;
+        a.innerText = `${name}`;
+
+        const li = document.createElement("li");
+        li.appendChild(a);
+
+        document.getElementById("m").appendChild(li);
+      }
+
+      async function ExportAllDashboard() {
+        const all = {};
+        const admin = document.getElementById("admin").checked;
+
+        for (const [id, value] of prev_dashboard_value) {
+          const info = DongleDisplayValue(value.subarray(504, 544));
+          if (admin || info.id === id) all[id] = value.toString("base64");
+        }
+
+        if (jsEmulator) {
+          const v = jsEmulator.ReadDataFile(0xffff, 0, 8192);
+          const verify = jsCipher.Digest("SHA256").Init().Update(v).Final();
+          const buffer = Buffer.concat([v, verify]);
+          const info = jsEmulator.GetDongleInfo();
+          if (admin || Buffer.compare(info, v.subarray(504, 544)) === 0) {
+            all[DongleDisplayValue(info).id] = buffer.toString("base64");
+          }
+        }
+
+        if (Object.keys(all).length === 0)
+          return console.info(`No effective RockeyARM device was found!!`);
+
+        const content = Buffer.from(JSON.stringify(all, null, 2));
+        const blob = new Blob([content], { type: "application/octet-stream" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        const name = `Export-RockeyARM-${new Date().toISOString()}.json`;
+        a.href = url;
+        a.download = name;
+        a.innerText = `${name}`;
+
+        const li = document.createElement("li");
+        li.appendChild(a);
+
+        document.getElementById("m").appendChild(li);
+      }
+
+      async function ImportFile(file) {
+        const kSizeMin = 10 * 1024,
+          kSizeMax = 4096 * kSizeMin;
+        console.info(`Import file: ${file.name} size: ${file.size}`);
+
+        if (file.size < kSizeMin || file.size > kSizeMax)
+          return console.error(
+            `Invalid file ${file.name} size ${file.size});!!`,
+          );
+
+        return new Promise((resolve, reject) => {
+          const reader = new FileReader();
+          reader.onloadend = function () {
+            try {
+              const json = JSON.parse(Buffer.from(reader.result).toString());
+              const all = Object.keys(json);
+
+              for (const key of all) {
+                if (!key.match(/[0-9a-f]{8}-[0-9a-f]{16}/)) continue;
+                const value = json[key];
+                if (typeof value !== "string") continue;
+
+                const buffer = Buffer.from(value, "base64");
+                if (buffer.length !== 8192 + 32) continue;
+
+                const verify = jsCipher
+                  .Digest("SHA256")
+                  .Init()
+                  .Update(buffer.subarray(0, 8192))
+                  .Final();
+                if (0 !== Buffer.compare(buffer.subarray(8192), verify))
+                  continue;
+
+                console.info(`Import info ${key} ...`);
+                prev_dashboard_value.set(key, buffer);
+              }
+            } catch (err) {
+              reject(err);
+            }
+          };
+          reader.onerror = function () {
+            reject(Error(`Load ${file.name} Error!`));
+          };
+          reader.readAsArrayBuffer(file);
+        });
+      }
+
+      async function ImportAllDashboard() {
+        const fileControl = document.createElement("input");
+        fileControl.type = "file";
+        fileControl.multiple = true;
+        fileControl.accept = ".json";
+
+        fileControl.onchange = async () => {
+          const all = [];
+          for (const file of fileControl.files) {
+            all.push(
+              ImportFile(file).catch((err) => {
+                console.error(`ImportFile ${file} Error ${err}`);
+              }),
+            );
+          }
+          await Promise.all(all);
+        };
+        fileControl.click();
+      }
+
+      function DongleDisplayValue(key) {
+        function V2(v) {
+          return ("00" + v.toString(16)).slice(-2);
+        }
+        function V8(v) {
+          return "0x" + ("00000000" + v.toString(16)).slice(-8);
+        }
+        const version = V8(key.readUInt32LE(0));
+        const type = V8(key.readUInt32LE(4));
+        const birthday = `20${V2(key[8])}-${V2(key[9])}-${V2(key[10])} ${V2(key[11])}:${V2(key[12])}:${V2(key[13])}`;
+        const agent = V8(key.readUInt32LE(16));
+        const pid = V8(key.readUInt32LE(20));
+        const uid = V8(key.readUInt32LE(24));
+        const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
+        return { id, pid, uid, type, birthday, agent, version };
       }
     </script>
   </head>
@@ -1201,7 +1324,11 @@
     <label for="keys">RockeyARM:</label
     ><select id="keys" style="width: 700px"></select>
 
-    <p>列出所有的RockeyARM设备:<button id="list">list</button></p>
+    <p>
+      列出所有的RockeyARM设备:<button id="list">List-All</button
+      ><button id="ExportAllDashboard">Export-All</button>
+      <button id="ImportAllDashboard">Import-All</button>
+    </p>
     <p>
       RockeyARM 模拟器操作:
       <label>
