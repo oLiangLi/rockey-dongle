@@ -40,16 +40,44 @@ const {
 
   /**!! 外部输入参数 */
   kOff_WorldMagic = 1024 - 32;
+  kOff_DecryptCount = 1024 - 28;
+  kOff_DecryptGlobal = 1024 - 24;
+  kOff_RSAPermission = 1024 - 20;
+  kOff_P256Permission = 1024 - 19;
+  kOff_SM2ECDSAPermission = 1024 - 18;
+  kOff_SM2ECIESPermission = 1024 - 17;
   kOff_Category = 1024 - 16;
   kOff_Version = 1024 - 8;
 }
 
 ///
-/// 外部输入变量 ...
+/// 外部输入变量, 缺省的只允许管理员+脚本程序使用+不限制使用次数, 在修改这些缺省的输入值时, 请确认自己正确的理解了这些参数的意义 ...
 ///
-rLANG_ADMIN_NONCE @ kOffsetDongleNonce2 [32] = { ${NONCE} }; /// 初始化时选择的随机数 ...
+rLANG_ADMIN_NONCE @ kOffsetDongleNonce2 [32] = { ${NONCE} }; /// 初始化时选择的随机数, 它应该选择 TRNG[32] ...
 rLANG_WORLD_MAGIC @ kOff_WorldMagic [4] = {  rLANG_WORLD_MAGIC };
-rLANG_CATEGORY @ kOff_Category [4] = { kCategory_MAGIC_Public, kCategory_MAGIC_Admin };
+
+///
+/// 2: kAdministrator, 1: kNormal, 0: kAnonymous ...
+///
+rLANG_RSA_PERM @ kOff_RSAPermission [1] = { 2, 1, 0 };
+rLANG_P256_PERM @ kOff_P256Permission [1] = { 2, 1, 0 };
+rLANG_SM2ECDSA_PERM @ kOff_SM2ECDSAPermission [1] = { 2, 1, 0 };
+rLANG_SM2ECIES_PERM @ kOff_SM2ECIESPermission [1] = { 2, 1, 0 };
+
+///
+/// 当设置了解密密钥的使用次数时, 记得初始化需要额外的几次私钥操作, 应该增加部分的额外计数 ...
+///
+rLANG_DECRYPT_COUNT @ kOff_DecryptCount [4] = { -1, 10, 20, 50, 100, 1000, ${CUSTOM}, ${COUNT} };
+
+///
+/// 是否全局的减少私钥使用次数计数, 0 : 缺省的只在内存中减小计数, 当计数为0时, 可用重新插拔uKey, 1 : 全局减少使用计数 ...
+///
+rLANG_DECRYPT_GLOBAL @ kOff_DecryptGlobal [1] = { 0, 1 };
+
+///
+/// Admin 类型的uKey将只能运行由ECIES.Key签名的代码, 请确认在锁定uKey前已经妥善的保存了uKey的加密密钥 ...
+///
+rLANG_CATEGORY @ kOff_Category [4] = { kCategory_MAGIC_Public, kCategory_MAGIC_Admin, ${CUSTOM}, ${CATEGORY} };
 rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };
 
 ///
@@ -95,12 +123,12 @@ DeleteSM2File(kFileSM2ECDSA);
 DeleteSM2File(kFileSM2ECIES);
 
 ///
-/// 创建新的私钥文件, 只允许管理员+脚本程序使用 ...
+/// 创建新的私钥文件 ...
 ///
-CreateRSAFile(kFileRSA2048, 2);
-CreateP256File(kFileSECP256r1, 2);
-CreateSM2File(kFileSM2ECDSA, 2);
-CreateSM2File(kFileSM2ECIES, 2);
+CreateRSAFile(kFileRSA2048, LoadU8(kOff_RSAPermission));
+CreateP256File(kFileSECP256r1, LoadU8(kOff_P256Permission));
+CreateSM2File(kFileSM2ECDSA, LoadU8(kOff_SM2ECDSAPermission));
+CreateSM2File(kFileSM2ECIES, LoadU8(kOff_SM2ECIESPermission), LoadI32(kOff_DecryptCount), LoadU8(kOff_DecryptGlobal));
 
 ///
 /// 产生三个用于签名的私钥文件, 这些私钥从未被导出, 也永远不应该导出 ...

@@ -814,10 +814,21 @@
 
             const tr = document.createElement("tr");
 
+            const input = document.createElement("input");
+            const file = document.createElement("input");
+            const select = document.createElement("select");
+            const span = document.createElement("span");
+
+            function SetOK(ok) {
+              span.style.color = ok ? 'green' : 'red';
+            }
+
             /// Name ...
             {
               const td = document.createElement("td");
-              td.append(document.createTextNode(name));
+              const textNode = document.createTextNode(name);
+              span.appendChild(textNode);
+              td.append(span);
               td.style.textAlign = "left";
               tr.appendChild(td);
             }
@@ -846,36 +857,65 @@
               tr.appendChild(td);
             }
 
-            const input = document.createElement("input");
-            const file = document.createElement("input");
-
             /// Select ...
             {
               input.type = "text";
               file.type = "file";
-              input.style.width = "90%";
-              file.style.width = "90%";
+              select.style.width = input.style.width = file.style.width ="95%";
 
               function check_int_value() {
                 delete PARAM_RESULT[name];
-                if (input.value !== "")
+                if (input.value.match(/^[0-9a-f]+$/i)) {
                   PARAM_RESULT[name] = parseInt(input.value, 16);
+                  SetOK(true);
+                } else {
+                  SetOK(false);
+                }
               }
 
               function check_b64_value() {
                 delete PARAM_RESULT[name];
-                const buf = Buffer.from(input.value, "base64");
-                if (buf.length >= arg.sizeMin && buf.length <= arg.sizeMax)
-                  PARAM_RESULT[name] = buf;
+                if(input.value.match(/^[0-9a-z+\/]+={0,2}$/i)) {
+                  const buf = Buffer.from(input.value, "base64");
+                  if (buf.length >= arg.sizeMin && buf.length <= arg.sizeMax) {
+                    PARAM_RESULT[name] = buf;
+                    SetOK(true);
+                  } else {
+                    SetOK(false);
+                  }
+                }
               }
 
-              function check_file_value() {}
+              function check_file_value() {
+                SetOK(false);
+                delete PARAM_RESULT[name];
+                const f = file.files[0];
+
+                if(!f) return;
+                if(f.size < arg.sizeMin || f.size > arg.sizeMax) {
+                  console.error(`Invalid file size ${f.size} / [${arg.sizeMin}, ${arg.sizeMax}]`);
+                  file.value = null;
+                  return;
+                }
+
+                const reader = new FileReader();
+                reader.onload = function() {
+                  const result = Buffer.from(reader.result);
+                  if(select.value !== '@' || result.length < arg.sizeMin || result.length > arg.sizeMax) {
+                    file.value = null;
+                  } else {
+                    PARAM_RESULT[name] = result;
+                    SetOK(true);
+                  }
+                };
+                reader.readAsArrayBuffer(f);
+              }
 
               if (i_values.length > 0) {
-                input.pattern = `[0-9a-fA-F]+`;
+                input.maxLength = 2 * arg.sizeMax;  /// HEX Encode, 不允许输入空白字符 ...
                 input.onchange = check_int_value;
               } else {
-                input.pattern = "[0-9a-zA-Z+/]+=*";
+                input.maxLength = ((arg.sizeMax + 2) / 3 | 0) * 4; /// BASE64 Encode, 不允许输入非法字符(即使这些字符在解码时会被忽略) ...
                 input.onchange = check_b64_value;
               }
 
@@ -894,8 +934,7 @@
               }
 
               const td = document.createElement("td");
-              const select = document.createElement("select");
-              select.style.width = "90%";
+              td.style.textAlign = "center";
               td.appendChild(select);
 
               file.onchange = check_file_value;
@@ -907,12 +946,14 @@
               }
 
               function select_onchange() {
+                SetOK(false);
                 input.disabled = true;
                 file.disabled = true;
                 delete PARAM_RESULT[name];
 
                 const value = select.value;
                 if (value.slice(0, 1) === "+") {
+                  SetOK(true);
                   PARAM_RESULT[name] = value.slice(1) | 0;
                 } else if (value === "#") {
                   /// Hex ...
@@ -928,9 +969,11 @@
                   check_file_value();
                 } else if (value === "r") {
                   /// RandBytes[Max] ...
+                  SetOK(true);
                   PARAM_RESULT[name] = jsCipher.RandBytes(arg.sizeMax);
                 } else if (value === "z") {
-                  /// Zero[Min] ...
+                  /// ZERO[Min] ...
+                  SetOK(true);
                   PARAM_RESULT[name] = Buffer.alloc(arg.sizeMin);
                 }
               }
@@ -953,15 +996,15 @@
               } else {
                 {
                   const option = document.createElement("option");
-                  option.value = "r"; /// RANDBytes[Max] ...
-                  option.text = "RANDBytes[Max]";
+                  option.value = "r"; /// TRNG[Max] ...
+                  option.text = `TRNG[${arg.sizeMax}]`;
                   select.appendChild(option);
                 }
 
                 {
                   const option = document.createElement("option");
-                  option.value = "z"; /// ZeroFill[Min] ...
-                  option.text = "ZeroFill[Min]";
+                  option.value = "z"; /// ZERO[Min] ...
+                  option.text = `ZERO[${arg.sizeMin}]`;
                   select.appendChild(option);
                 }
 
@@ -986,6 +1029,7 @@
             /// Input ...
             {
               const td = document.createElement("td");
+              td.style.textAlign = "center";
               td.append(input);
               tr.appendChild(td);
             }
@@ -993,6 +1037,7 @@
             /// File ...
             {
               const td = document.createElement("td");
+              td.style.textAlign = "center";
               td.append(file);
               tr.appendChild(td);
             }
@@ -1010,10 +1055,10 @@
             const cancel = document.createElement("button");
 
             submit.innerText = "OK";
-            submit.style.width = "300px";
+            submit.style.width = "40%";
 
             cancel.innerText = "CANCEL";
-            cancel.style.width = "300px";
+            cancel.style.width = "40%";
 
             td.appendChild(submit);
             td.appendChild(cancel);
