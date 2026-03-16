@@ -24,7 +24,7 @@
       var jsScriptParser;
 
       /**
-       * @type {(id : string , file : Buffer, admin ?: boolean)=>Promise<Buffer>}
+       * @type {(id : string , InOutBuffer : Buffer, admin ?: boolean)=>Promise<void>}
        */
       var jsDongleExecv;
 
@@ -51,7 +51,22 @@
         };
 
         jsDongleExecv = async (id, file, admin) => {
-          return Promise.reject(Error("NOT IMPLEMENTED"));
+          if (file.length !== 1024)
+            return Promise.reject(
+              Error(`Invalid program length ${file.length} !== 1024`),
+            );
+
+          if (id.slice(0, 2) === "ff") {
+            const emu = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+            if (id !== emu)
+              return Promise.reject(
+                Error(`Invalid jsEmulator.id ${id} !== ${emu}`),
+              );
+
+            jsEmulator.Execv(file);
+          } else {
+            return Promise.reject(Error("NOT IMPLEMENTED"));
+          }
         };
 
         /**
@@ -479,7 +494,17 @@
             `#### Lock::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
           );
         }
-        async function Execv() {}
+        async function Execv() {
+          const id = document.getElementById("keys").value;
+          if (!id) throw Error(`Execv: Select RockeyARM device!`);
+          const admin = document.getElementById("admin").checked;
+
+          const InOutBuffer = await ReadFileContent('program', 1024, 1024);
+          await jsDongleExecv(id, InOutBuffer, admin);
+
+          console.log(`TODO: Export Result ....`);
+        }
+
         async function ScriptParse() {
           const script = document.getElementById("dongle_script").value;
           const result = await jsScriptParser(script);
@@ -1140,7 +1165,7 @@
           `size: ${size_public}, argc : ${argc}, confirm : ${confirm}, code: ${code.length}`,
         );
 
-        let program_name = '';
+        let program_name = "";
         let program_binary = Buffer.alloc(1024);
         const param = confirm > 0 ? await UserConfirmParam(program) : null;
         const data = CreateDataSegment(program, param, size_data);
@@ -1166,14 +1191,22 @@
 
           encrypt_data.subarray(size_data).copy(program_binary, 240);
           encrypt_data.subarray(0, size_data).copy(program_binary, 256);
-          const hashId = jsCipher.Digest('SHA256').Init().Update(code).Final().subarray(0, 6).toString('hex');
+          const hashId = jsCipher
+            .Digest("SHA256")
+            .Init()
+            .Update(code)
+            .Final()
+            .subarray(0, 6)
+            .toString("hex");
 
           program_name = `Bootstrap-${hashId}-${new Date().toISOString()}.dongle.program`;
         } else {
           throw jsCipher.Annihilus_(`Not implemented`);
         }
 
-        const blob = new Blob([program_binary], { type: "application/octet-stream" });
+        const blob = new Blob([program_binary], {
+          type: "application/octet-stream",
+        });
         const url = URL.createObjectURL(blob);
         const a = document.createElement("a");
         const name = program_name;

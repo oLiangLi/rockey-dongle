@@ -9,7 +9,7 @@ namespace script {
 
 static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szData) {
   uint8_t mac[16];
-  uint8_t sm3[32];
+  uint8_t sha512[64];
 
   uint8_t* const vmdata = static_cast<uint8_t*>(vm.data_) + 256;
   if (text->ver_major_ != rLANG_DONGLE_VERSION_MAJOR || text->ver_minor_ != rLANG_DONGLE_VERSION_MINOR)
@@ -17,12 +17,13 @@ static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szDat
   if (text->size_public_ > 1024)
     return -EINVAL;
 
-  vm.dongle_->SM3(text, sizeof(ScriptText) - 16, sm3);
+  vm.dongle_->SHA512(text, sizeof(ScriptText) - 16, sha512);
 
   rlCryptoChaChaPolyCtx ctx;
   rlCryptoChaChaPolyInit(&ctx);
-  rlCryptoChaChaPolySetKey(&ctx, sm3);
-  rlCryptoChaChaPolyStarts(&ctx, sm3, 0);
+  rlCryptoChaChaPolySetKey(&ctx, &sha512[0]);
+  rlCryptoChaChaPolyStarts(&ctx, &sha512[32], 0);
+  rlCryptoChaChaPolyUpdateAAd(&ctx, &sha512[44], 20);
   rlCryptoChaChaPolyUpdate(&ctx, vmdata, vmdata, szData);
   rlCryptoChaChaPolyFinish(&ctx, mac);
   if (0 != memcmp(mac, text->check_, 16)) {
