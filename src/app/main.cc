@@ -33,7 +33,16 @@ int Main(void* InOutBuf, void* ExtendBuf, _Ty* dongle) {
     result = vm.Execute();
 
   if (0 == result && vm.kSizeOutput < 1024) {
-    memset((uint8_t*)InOutBuf + vm.kSizeOutput, 0, 1024 - vm.kSizeOutput);
+    uint8_t cipher[32];
+    rlCryptoChaCha20Ctx ctx;
+    uint8_t* data = (uint8_t*)InOutBuf + vm.kSizeOutput;
+    size_t size = 1024 - vm.kSizeOutput;
+
+    memset(data, 0, size);
+    dongle->RandBytes(cipher, sizeof(cipher));
+    rlCryptoChaCha20Init(&ctx);
+    rlCryptoChaCha20SetKey(&ctx, cipher);
+    rlCryptoChaCha20Update(&ctx, data, data, size);
   }
 #else  /* __RockeyARM__ || __EMULATOR__ */
   int execute_result = 0;
@@ -260,7 +269,7 @@ int main(int argc, char* argv[]) {
   using namespace machine::dongle;
   using namespace machine::dongle::script;
   rlLOGI(TAG, "ZION.Execv argc: %d", argc);
-  for(int i = 0; i < argc; ++i) {
+  for (int i = 0; i < argc; ++i) {
     rlLOGI(TAG, "  argv[%d/%d] : %s", i, argc, argv[i]);
   }
 
@@ -417,18 +426,19 @@ int main(int argc, char* argv[]) {
   const char* input = argv[1];
 
   if (0 == strcmp(input, "-")) {
-    for(;;) {
+    for (;;) {
       rlLOGW(TAG, "Input Message:");
       memset(line, 0, sizeof(line));
       if (!fgets(line, sizeof(line) - 1, stdin))
         break;
-      for(auto& cc : line) {
-        if(cc == 0 || cc == 13 || cc == 10) {
+      for (auto& cc : line) {
+        if (cc == 0 || cc == 13 || cc == 10) {
           cc = 0;
           break;
         }
       }
-      if(line[0]) break;
+      if (line[0])
+        break;
     }
     input = line;
   }

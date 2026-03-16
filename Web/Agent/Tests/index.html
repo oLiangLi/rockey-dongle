@@ -50,25 +50,6 @@
           return await jsCryptoFactory.ParseScript(script);
         };
 
-        jsDongleExecv = async (id, file, admin) => {
-          if (file.length !== 1024)
-            return Promise.reject(
-              Error(`Invalid program length ${file.length} !== 1024`),
-            );
-
-          if (id.slice(0, 2) === "ff") {
-            const emu = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
-            if (id !== emu)
-              return Promise.reject(
-                Error(`Invalid jsEmulator.id ${id} !== ${emu}`),
-              );
-
-            jsEmulator.Execv(file);
-          } else {
-            return Promise.reject(Error("NOT IMPLEMENTED"));
-          }
-        };
-
         /**
          * @type {BufferConstructor}
          */
@@ -262,9 +243,59 @@
           return stdout;
         }
 
+        jsDongleExecv = async (id, file, admin) => {
+          console.log(`#### jsDongleExecv(${id}) ####`);
+
+          if (file.length !== 1024)
+            return Promise.reject(
+              Error(`Invalid program length ${file.length} !== 1024`),
+            );
+
+          if (id.slice(0, 2) === "ff") {
+            const emu = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+            if (id !== emu)
+              return Promise.reject(
+                Error(`Invalid jsEmulator.id ${id} !== ${emu}`),
+              );
+
+            jsEmulator.Execv(file);
+          } else {
+            const start = Date.now();
+            const payload = Buffer.from(JSON.stringify({
+              cmd: "execv",
+              nonce: jsCipher.RandBytes(12).toString("base64"),
+              stdin: file.toString('base64'),
+              admin: !!admin,
+              id
+            }));
+            const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+            const [pow, cipher] = await POW(md);
+
+            const json = Seal(pow, cipher, payload);
+            console.log(
+                    `#### List::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+            );
+            const reply = await Ajax(json, cipher);
+            const stdout = Buffer.from(StdoutLine0(reply.stdout), 'base64');
+            delete reply.stdout;
+
+            console.log(
+                    `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+            );
+
+            if(stdout.length !== 1024 + 32)
+              return Promise.reject(Error(`Invalid result size ${stdout.length} !== 1024 + 32`));
+
+            const verify = jsCipher.Digest('SHA256').Init().Update(stdout.subarray(0, 1024)).Final();
+            if(Buffer.compare(verify, stdout.subarray(1024)) !== 0)
+              return Promise.reject(Error(`Verify result failed!`));
+            stdout.copy(file);
+            stdout.fill(0);
+          }
+        };
+
         async function List() {
           const start = Date.now();
-          // prev_dashboard_value.clear();
           console.log(`#### List() ####`);
           const payload = Buffer.from(
             JSON.stringify({
@@ -499,10 +530,22 @@
           if (!id) throw Error(`Execv: Select RockeyARM device!`);
           const admin = document.getElementById("admin").checked;
 
-          const InOutBuffer = await ReadFileContent('program', 1024, 1024);
+          const InOutBuffer = await ReadFileContent("program", 1024, 1024);
           await jsDongleExecv(id, InOutBuffer, admin);
 
-          console.log(`TODO: Export Result ....`);
+          const blob = new Blob([InOutBuffer], {
+            type: "application/octet-stream",
+          });
+          const url = URL.createObjectURL(blob);
+          const a = document.createElement("a");
+          const name = `ExecvOutput-${id}-${new Date().toISOString()}.bin`;
+          a.href = url;
+          a.download = name;
+          a.innerText = `${name}`;
+
+          const li = document.createElement("li");
+          li.appendChild(a); /**! */
+          document.getElementById("m").appendChild(li);
         }
 
         async function ScriptParse() {
@@ -1182,11 +1225,14 @@
           program_binary.writeUInt16LE(program.size_public, 22); /// Size.Export ...
           code.copy(program_binary, 24); /// .text ...
           jsCipher.RandBytes(program_binary.subarray(224, 240)); /// Nonce ...
-          const sm3 = jsEmulator.SM3(program_binary.subarray(16, 240));
-          const aead = jsCipher.ChaChaPoly(sm3);
-          const encrypt_data = aead.Seal(data, sm3.subarray(0, 12));
+
+          const cipher = jsEmulator.SM3(program_binary.subarray(16, 240));
+          const nonce = Buffer.alloc(12);
+
+          const aead = jsCipher.ChaChaPoly(cipher);
+          const encrypt_data = aead.Seal(data, nonce);
           console.assert(encrypt_data.length === size_data + 16);
-          sm3.fill(0);
+          cipher.fill(0);
           aead.Clear();
 
           encrypt_data.subarray(size_data).copy(program_binary, 240);
