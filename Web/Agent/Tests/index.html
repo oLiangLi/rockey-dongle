@@ -261,33 +261,43 @@
             jsEmulator.Execv(file);
           } else {
             const start = Date.now();
-            const payload = Buffer.from(JSON.stringify({
+            const json_request = {
               cmd: "execv",
               nonce: jsCipher.RandBytes(12).toString("base64"),
-              stdin: file.toString('base64'),
               admin: !!admin,
-              id
-            }));
+              id,
+            };
+
+            const output_request = JSON.stringify(json_request);
+
+            json_request.stdin = file.toString("base64");
+            const payload = Buffer.from(JSON.stringify(json_request));
             const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
             const [pow, cipher] = await POW(md);
 
             const json = Seal(pow, cipher, payload);
             console.log(
-                    `#### List::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+              `#### List::Ajax::REQ(${Date.now() - start} ms) ${output_request}`,
             );
             const reply = await Ajax(json, cipher);
-            const stdout = Buffer.from(StdoutLine0(reply.stdout), 'base64');
+            const stdout = Buffer.from(StdoutLine0(reply.stdout), "base64");
             delete reply.stdout;
 
             console.log(
-                    `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+              `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
             );
 
-            if(stdout.length !== 1024 + 32)
-              return Promise.reject(Error(`Invalid result size ${stdout.length} !== 1024 + 32`));
+            if (stdout.length !== 1024 + 32)
+              return Promise.reject(
+                Error(`Invalid result size ${stdout.length} !== 1024 + 32`),
+              );
 
-            const verify = jsCipher.Digest('SHA256').Init().Update(stdout.subarray(0, 1024)).Final();
-            if(Buffer.compare(verify, stdout.subarray(1024)) !== 0)
+            const verify = jsCipher
+              .Digest("SHA256")
+              .Init()
+              .Update(stdout.subarray(0, 1024))
+              .Final();
+            if (Buffer.compare(verify, stdout.subarray(1024)) !== 0)
               return Promise.reject(Error(`Verify result failed!`));
             stdout.copy(file);
             stdout.fill(0);
@@ -1227,10 +1237,12 @@
           jsCipher.RandBytes(program_binary.subarray(224, 240)); /// Nonce ...
 
           const cipher = jsEmulator.SM3(program_binary.subarray(16, 240));
-          const nonce = Buffer.alloc(12);
 
           const aead = jsCipher.ChaChaPoly(cipher);
-          const encrypt_data = aead.Seal(data, nonce);
+          const encrypt_data = aead.Seal(
+            data,
+            program_binary.subarray(224, 236),
+          );
           console.assert(encrypt_data.length === size_data + 16);
           cipher.fill(0);
           aead.Clear();
