@@ -35,9 +35,9 @@
 %%
 
 goal:
-    public_size const_declares declares
+    public_size const_declares declares   { /**@ AC_GOAL_1 */ }
     |
-    public_size declares
+    public_size declares        { /**@ AC_GOAL_2 */ }
     ;
 
 public_size:

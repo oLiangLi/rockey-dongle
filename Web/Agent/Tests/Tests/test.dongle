@@ -1,0 +1,11 @@
+public 100;
+
+const {
+    kOffI = 1024 - 4;
+}
+
+Memset(0, 0, 1024);
+while(LoadU16(kOffI) < 256) {
+    StoreI8(LoadU8(kOffI), LoadU8(kOffI));
+    StoreI16(kOffI, LoadU16(kOffI) + 1);
+}

@@ -43,6 +43,7 @@ int Main(void* InOutBuf, void* ExtendBuf, _Ty* dongle) {
     rlCryptoChaCha20Init(&ctx);
     rlCryptoChaCha20SetKey(&ctx, cipher);
     rlCryptoChaCha20Update(&ctx, data, data, size);
+    memset(cipher, 0, sizeof(cipher));
   }
 #else  /* __RockeyARM__ || __EMULATOR__ */
   int execute_result = 0;

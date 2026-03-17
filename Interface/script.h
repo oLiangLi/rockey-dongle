@@ -220,6 +220,42 @@ struct WorldPublic {
   static constexpr size_t kSizePublic = 1024;
 };
 
+/**
+ *! 全局的私钥(kFileSM2ECIES/ED25519/X25519)托管信息保存在数据文件偏移 6KB 的位置, 大小为1024 ...
+ *! 1) 默认Ed25519/X25519的私钥是外部导入(且已泄露), **不应**用于重要信息的验证和加密 ...
+ */
+struct WorldEnTrust {
+  static constexpr size_t kSizeEnTrust = 1024;
+  static constexpr size_t kMaxKeys = 5; /* */
+
+  static constexpr uint32_t kEd25519Magic = 0x1642C41B;  /// EdKDF
+  static constexpr uint32_t kEx25519Magic = 0x1782C41B;  /// ExKDF
+
+  struct EnTrustKey {
+    /*  0 */ uint8_t hid_[12]; /* - */
+    /* 12 */ uint8_t kid_[3];  /* 用于 hid_ 索引 SM2 私钥文件, 默认使用 SM3(kFileSM2ECDSA.pubkey)[0,1,2] */
+    /* 15 */ uint8_t Yodd_;
+    /* 16 */ uint8_t cipher_[96]; /* 加密的kFileSM2ECIES私钥, Y[32]未保存, 奇偶性Yodd_ */
+  };
+
+  /*     0 */ WorldPublic::Header header_;
+  /*    20 */ uint8_t dongle_ed25519_pubkey_[32];   /* pkey: SM3(kEd25519Magic + nonce_ + MasterSecret[128]) */
+  /*    52 */ uint8_t dongle__x25519_pubkey_[32];   /* pkey: SM3(kEx25519Magic + nonce_ + MasterSecret[128]) */
+  /*    84 */ uint8_t dongle_master_secret__[224];  /* kFileSM2ECDSA.Encrypt(MasterSecret[128]) */
+  /*   308 */ EnTrustKey dongle_entrust_[kMaxKeys]; /* */
+  /*   868 */ uint8_t nonce_[28];                   /* */
+  /*   896 */ uint8_t dongle_ed25519_sign_[64];     /* ed25519.sign(SHA512(0...offset($$))) */
+  /*   960 */ uint8_t dongle_sm2ecdsa_sign_[64];    /* sm2(1).sign(SM3(0...offsetof($$))    */
+
+  static constexpr size_t kOffsetEd25519Pubkey_ = 20;
+  static constexpr size_t kOffset_X25519Pubkey_ = 52;
+  static constexpr size_t kOffset_MasterSecret_ = 84;
+  static constexpr size_t kOffset_DongleEnTrust_ = 308;
+  static constexpr size_t kOffset_Nonce_ = 868;
+  static constexpr size_t kOffset_Ed25519Signature_ = 896;
+  static constexpr size_t kOffset_SM2ECDSASignature_ = 960;
+};
+
 rLANG_ABIREQUIRE(WorldPublic::kCategoryHeaderMagicPublic == rLANG_DECLARE_MAGIC_Xs("pub@k"));
 rLANG_ABIREQUIRE(WorldPublic::kCategoryHeaderMagicAdmin == rLANG_DECLARE_MAGIC_Xs("adm@k"));
 
@@ -242,6 +278,16 @@ rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_RSA2048 == offsetof(WorldPublic, dongl
 rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_Secp256r1 == offsetof(WorldPublic, dongle_secp256r1_sign_));
 rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_SM2ECDSA == offsetof(WorldPublic, dongle_sm2ecdsa_sign_));
 rLANG_ABIREQUIRE(WorldPublic::kSizePublic == sizeof(WorldPublic) && 1024 == sizeof(WorldPublic));
+
+
+rLANG_ABIREQUIRE(WorldEnTrust::kMaxKeys == 5 && 0 == offsetof(WorldEnTrust, header_));
+rLANG_ABIREQUIRE(WorldEnTrust::kOffsetEd25519Pubkey_ == offsetof(WorldEnTrust, dongle_ed25519_pubkey_));
+rLANG_ABIREQUIRE(WorldEnTrust::kOffset_X25519Pubkey_ == offsetof(WorldEnTrust, dongle__x25519_pubkey_));
+rLANG_ABIREQUIRE(WorldEnTrust::kOffset_MasterSecret_ == offsetof(WorldEnTrust, dongle_master_secret__));
+rLANG_ABIREQUIRE(WorldEnTrust::kOffset_DongleEnTrust_ == offsetof(WorldEnTrust, dongle_entrust_));
+rLANG_ABIREQUIRE(WorldEnTrust::kOffset_Ed25519Signature_ == offsetof(WorldEnTrust, dongle_ed25519_sign_));
+rLANG_ABIREQUIRE(WorldEnTrust::kOffset_SM2ECDSASignature_ == offsetof(WorldEnTrust, dongle_sm2ecdsa_sign_));
+rLANG_ABIREQUIRE(WorldEnTrust::kSizeEnTrust == sizeof(WorldEnTrust) && 1024 == sizeof(WorldEnTrust));
 
 /**
  *!

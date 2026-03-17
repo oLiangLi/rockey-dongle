@@ -591,6 +591,8 @@ _XDPDA_IMPLEMENT_TABLE_STORE(_XDPDA_IMPLEMENT_NAME_OF( yystos )[]) =
  */
 #ifdef _XDPDA_IMPLEMENT_USER_ACTIONLIST_DECLARE_  
 enum {
+    AC_GOAL_1                                = 2,
+    AC_GOAL_2                                = 3,
     AC_PUBLIC_SIZE_0                         = 4,
     AC_PUBLIC_SIZE_X                         = 5,
     AC_CONST_STATEMENT                       = 10,

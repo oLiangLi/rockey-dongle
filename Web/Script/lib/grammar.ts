@@ -67,6 +67,12 @@ type TypeFuncCall = {
 
 const AllFunc: TypeFuncCall[] = [
   {
+    name: "kInv",
+    min: 0,
+    max: 0,
+    op: OpCode.kInv,
+  },
+  {
     name: "kExit",
     min: 0,
     max: 1,
@@ -1187,6 +1193,12 @@ export class Context {
     };
 
     switch (rule) {
+      case Action.AC_GOAL_1:
+        this.statements_.push(<Statement>$(3));
+        break;
+      case Action.AC_GOAL_2:
+        this.statements_.push(<Statement>$(2));
+        break;
       case Action.AC_PUBLIC_SIZE_0:
         this.public_size_ = 0;
         break;
@@ -1219,11 +1231,11 @@ export class Context {
         break;
 
       case Action.AC_DECL_1:
-        this.statements_.push(<Statement>$(1));
+        $$ = $(1);
         break;
 
       case Action.AC_DECL_X:
-        this.statements_.push(<Statement>$(2));
+        (<Statement>$$).code_.push(...(<Statement>$(2)).code_);
         break;
 
       case Action.AC_EMPTY_STMT:

@@ -33,6 +33,8 @@ $MAX_TOKEN_VALUE = 276
 
 
 export const enum Action {
+    AC_GOAL_1                                = 2,
+    AC_GOAL_2                                = 3,
     AC_PUBLIC_SIZE_0                         = 4,
     AC_PUBLIC_SIZE_X                         = 5,
     AC_CONST_STATEMENT                       = 10,
