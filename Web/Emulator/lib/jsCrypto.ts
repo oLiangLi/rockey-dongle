@@ -1238,7 +1238,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         const frame = native._emscripten_stack_alloc(256);
         point.copy(HEAP, frame);
         hash.copy(HEAP, frame + 64);
-        hash.copy(HEAP, frame + 128);
+        sign.copy(HEAP, frame + 128);
         const result = native.EmuP256Verify(
           thiz,
           frame,

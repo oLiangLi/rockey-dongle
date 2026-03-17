@@ -19,7 +19,7 @@
       var jsCipher;
 
       /**
-       * @type {(script : string)=>Promise<[size_public : integer, code : Buffer, data : Array<{name: string; offset : number; sizeMin : number; sizeMax : number ; options : Array<string|number> }>]>}
+       * @type {(script : string)=>Promise<{size_public : integer, code : Buffer, data : Array<{name: string; offset : number; sizeMin : number; sizeMax : number ; options : Array<string|number> }>}>}
        */
       var jsScriptParser;
 
@@ -32,6 +32,16 @@
        * @type { (info: Buffer, online ?: boolean)=>void }
        */
       var jsAddDevice;
+
+      /**
+       * @type {(info: Buffer) => object }
+       */
+      var jsCheckMaster;
+
+      /**
+       * @type {(master: object, info: Buffer) => object}
+       */
+      var jsCheckEnTrust;
 
       window.onload = async function () {
         jsCipher = await jsWorld.CipherLoader();
@@ -277,14 +287,14 @@
 
             const json = Seal(pow, cipher, payload);
             console.log(
-              `#### List::Ajax::REQ(${Date.now() - start} ms) ${output_request}`,
+              `#### jsDongleExecv::Ajax::REQ(${Date.now() - start} ms) ${output_request}`,
             );
             const reply = await Ajax(json, cipher);
             const stdout = Buffer.from(StdoutLine0(reply.stdout), "base64");
             delete reply.stdout;
 
             console.log(
-              `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+              `#### jsDongleExecv::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
             );
 
             if (stdout.length !== 1024 + 32)
@@ -334,6 +344,12 @@
               console.log(`[IGNORE]Error ${err}`);
             }
           }
+
+          if(jsEmulator) {
+            await Dashboard(DongleDisplayValue(jsEmulator.GetDongleInfo()).id, true).catch((err)=>{
+              console.error(`jsEmulator.Dashboard Error ${err}`);
+            });
+          }
           console.log(`List OK (${Date.now() - start} ms)!`);
         }
 
@@ -351,6 +367,18 @@
             const v = jsEmulator.ReadDataFile(0xffff, 0, 8192);
             const verify = jsCipher.Digest("SHA256").Init().Update(v).Final();
             buffer = Buffer.concat([v, verify]);
+
+            try {
+              const master = jsCheckMaster(v.subarray(7 * 1024));
+              if (master.dongle.id !== id) {
+                console.error(`jsEmulator id mismatch!`);
+              } else {
+                prev_dashboard_value.set(id, buffer);
+                console.info(`jsEmulator.Master ${JSON.stringify(master, null, 2)}`);
+              }
+            } catch (err) {
+              console.error(`[IGNORE]Error ${err}`);
+            }
           } else {
             const start = Date.now();
             const payload = Buffer.from(
@@ -375,7 +403,7 @@
             delete reply.stdout;
 
             console.log(
-              `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+              `#### Dashboard::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
             );
 
             buffer = Buffer.from(stdout, "base64");
@@ -630,6 +658,10 @@
           jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
           jsEmulator.Open(admin ? 2 : 0, storage, secret, loop);
           UpdateEmulatorInfo();
+
+          await Dashboard(DongleDisplayValue(jsEmulator.GetDongleInfo()).id, true).catch((err)=>{
+            console.error(`jsEmulator.Dashboard Error ${err}`);
+          });
         }
 
         const Test = async function (cb) {
@@ -1398,6 +1430,104 @@
         const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
         return { id, pid, uid, type, birthday, agent, version };
       }
+
+      jsCheckMaster = (info) => {
+        const result = {};
+        if (!(info instanceof Buffer) || info.length !== 1024)
+          throw jsCipher.Annihilus_(`EINVAL typeof(info) : Buffer[1024]`);
+
+        if (
+          0xc8c04e1f !== info.readUInt32LE(0) ||
+          0 !== info.readUInt32LE(8) ||
+          0 !== info.readUInt32LE(12) ||
+          0x04000101 !== info.readUInt32LE(16)
+        )
+          throw jsCipher.Annihilus_(`EINVAL Invalid Header!`);
+
+        result.category = info.readUInt32LE(4);
+        result.SM2ECDSA = info.subarray(20, 84).toString("base64");
+        result.P256ECDSA = info.subarray(84, 148).toString("base64");
+        result.RSA2048 = info.subarray(148, 408).toString("base64");
+        result.SM2ECIES = info.subarray(408, 472).toString("base64");
+        result.nonce_local = info.subarray(472, 504).toString("base64");
+        result.dongle = DongleDisplayValue(info.subarray(504, 544));
+        result.nonce_admin = info.subarray(544, 576).toString("base64");
+
+        if (
+          true !==
+          jsEmulator.SM2Verify(
+            info.subarray(408, 472),
+            jsEmulator.SM3(info.subarray(0, 576)),
+            info.subarray(576, 640),
+          )
+        )
+          throw jsCipher.Annihilus_(`EBADFD Invalid SM2ECIES.Signature!`);
+
+        {
+          const rsa2048pubkey = info.subarray(148, 408);
+          const sha256 = jsCipher
+            .Digest("SHA256")
+            .Init()
+            .Update(info.subarray(0, 640))
+            .Final();
+          const origin = jsEmulator.RSAPublic(
+            rsa2048pubkey.readUInt32LE(0),
+            rsa2048pubkey.subarray(4),
+            info.subarray(640, 896),
+            false,
+          );
+
+          if (origin.length !== 32 || 0 !== Buffer.compare(sha256, origin))
+            throw jsCipher.Annihilus_(`EBADFD Invalid RSA2048.Signature!`);
+        }
+
+        if (
+          true !==
+          jsEmulator.P256Verify(
+            info.subarray(84, 148),
+            jsCipher
+              .Digest("SHA256")
+              .Init()
+              .Update(info.subarray(0, 896))
+              .Final(),
+            info.subarray(896, 960),
+          )
+        )
+          throw jsCipher.Annihilus_(`EBADFD Invalid P256ECDSA.Signature!`);
+
+        if (
+          true !==
+          jsEmulator.SM2Verify(
+            info.subarray(20, 84),
+            jsEmulator.SM3(info.subarray(0, 960)),
+            info.subarray(960),
+          )
+        )
+          throw jsCipher.Annihilus_(`EBADFD Invalid SM2ECDSA.Signature!`);
+
+        return result;
+      };
+
+      jsCheckEnTrust = (master, info) => {
+        throw jsCipher.Annihilus_(`ENOTIMPL`);
+      };
+    </script>
+    <script>
+      function HandleCheckMaster() {
+        const id = document.getElementById("keys").value;
+        if (!id) throw Error(`HandleCheckMaster: Select RockeyARM device!`);
+
+        const dashboard = prev_dashboard_value.get(id);
+        if (!dashboard)
+          throw Error(`HandleCheckMaster ${id}: Dashboard Info NOT_FOUND!`);
+
+        const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+        if (master.dongle.id !== id)
+          throw Error(`HandleCheckMaster Error ${id}, ${master.dongle.id}!`);
+
+        console.log(`Master(${id}): ${JSON.stringify(master, null, 2)}`);
+      }
+      function HandleCheckEnTrust() {}
     </script>
   </head>
   <body>
@@ -1419,6 +1549,8 @@
       列出所有的RockeyARM设备:<button id="list">List-All</button
       ><button id="ExportAllDashboard">Export-All</button>
       <button id="ImportAllDashboard">Import-All</button>
+      <button onclick="HandleCheckMaster()">Check-Master</button>
+      <button onclick="HandleCheckEnTrust()">Check-EnTrust</button>
     </p>
     <p>
       RockeyARM 模拟器操作:
