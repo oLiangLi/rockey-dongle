@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <base/base.h>
 
 rLANG_DECLARE_MACHINE
@@ -2192,6 +2192,7 @@ struct Helper {
   void ge_scalarmult(ge_p3* R, const uint8_t k[32], const ge_p3* point) {
     bool init = false;
 
+    A = *point;
     for (int i = 0;; ++i) {
       const bool bit = k[i / 8] & (1 << (i % 8));
       if (bit) {

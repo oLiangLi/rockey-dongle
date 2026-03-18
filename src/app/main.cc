@@ -269,6 +269,7 @@ int main(int argc, char* argv[]) {
   using namespace machine;
   using namespace machine::dongle;
   using namespace machine::dongle::script;
+
   rlLOGI(TAG, "ZION.Execv argc: %d", argc);
   for (int i = 0; i < argc; ++i) {
     rlLOGI(TAG, "  argv[%d/%d] : %s", i, argc, argv[i]);
@@ -276,15 +277,6 @@ int main(int argc, char* argv[]) {
 
   uint64_t InOutBuf[(3 << 10) / 8] = {0};
   uint64_t ExtendBuf[(1 << 10) / 8] = {0};
-
-  int result = 0;
-  int stdout_ = dup(fileno(stdout));
-
-  /**
-   *!
-   */
-  close(fileno(stdout));
-  std::ignore = dup2(fileno(stderr), fileno(stdout));
 
 #if defined(_WIN32)
   if (argc >= 2 && 0 == strcmp("-d", argv[1])) {
@@ -298,6 +290,153 @@ int main(int argc, char* argv[]) {
     //::DebugBreak();
   }
 #endif /* */
+
+  if (argc >= 2 && 0 == strcmp("--check", argv[1])) {
+    --argc;
+    ++argv;
+
+    constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("z@foo");
+    rlLOGI(TAG, "FoobarTestings %p, %p", InOutBuf, ExtendBuf);
+
+    auto Wait = [] {
+#if defined(_WIN32)
+      ::Sleep(500);
+#else  /* */
+      ::usleep(500);
+#endif /* */
+    };
+
+    uint8_t input[64];
+    uint8_t sha256_1[32], sha256_2[32];
+    uint8_t sha384_1[48], sha384_2[48];
+    uint8_t sha512_1[64], sha512_2[64];
+    uint8_t pubkey_ed25519_1[32], pubkey_ed25519_2[32], sign_ed25519_1[64], sign_ed25519_2[64];
+    uint8_t pubkey_x25519_1[32], pubkey_x25519_2[32], secret_1[32], secret_2[32];
+    int error = 0;
+
+    for (int i = 0; i < 2; ++i) {
+      RAND_bytes(input, sizeof(input));
+      rlLOGXI(TAG, input, sizeof(input), "Input[64]");
+
+      rlCryptoShaCtx ctx;
+      Sha256Ctx().Init().Update(input, sizeof(input)).Final(sha256_1);
+      Sha384Ctx().Init().Update(input, sizeof(input)).Final(sha384_1);
+      Sha512Ctx().Init().Update(input, sizeof(input)).Final(sha512_1);
+
+      rlCryptoSha256CtxInit(&ctx);
+      rlCryptoSha256CtxUpdate(&ctx, input, sizeof(input));
+      rlCryptoSha256CtxFinal(&ctx, sha256_2);
+      rlCryptoSha384CtxInit(&ctx);
+      rlCryptoSha384CtxUpdate(&ctx, input, sizeof(input));
+      rlCryptoSha384CtxFinal(&ctx, sha384_2);
+      rlCryptoSha512CtxInit(&ctx);
+      rlCryptoSha512CtxUpdate(&ctx, input, sizeof(input));
+      rlCryptoSha512CtxFinal(&ctx, sha512_2);
+
+      rlLOGXI(TAG, sha256_1, sizeof(sha256_1), "Sha256Ctx()");
+      rlLOGXI(TAG, sha256_2, sizeof(sha256_2), "rlCryptoSha256Ctx()");
+      if (0 != memcmp(sha256_1, sha256_2, sizeof(sha256_1)))
+        ++error, rlLOGE(TAG, "SHA256.Check Failed!");
+      else
+        rlLOGI(TAG, "SHA256.Check OK!");
+      Wait();
+
+      rlLOGXI(TAG, sha384_1, sizeof(sha384_1), "Sha384Ctx()");
+      rlLOGXI(TAG, sha384_2, sizeof(sha384_2), "rlCryptoSha384Ctx()");
+      if (0 != memcmp(sha384_1, sha384_2, sizeof(sha384_1)))
+        ++error, rlLOGE(TAG, "SHA384.Check Failed!");
+      else
+        rlLOGI(TAG, "SHA384.Check OK!");
+      Wait();
+
+      rlLOGXI(TAG, sha512_1, sizeof(sha512_1), "Sha512Ctx()");
+      rlLOGXI(TAG, sha512_2, sizeof(sha512_2), "rlCryptoSha512Ctx()");
+      if (0 != memcmp(sha512_1, sha512_2, sizeof(sha512_1)))
+        ++error, rlLOGE(TAG, "SHA512.Check Failed!");
+      else
+        rlLOGI(TAG, "SHA512.Check OK!");
+      Wait();
+
+      Ed25519().ComputePubkey(ExtendBuf, pubkey_ed25519_1, input);
+      rlCryptoEd25519Pubkey(pubkey_ed25519_2, input);
+
+      rlLOGXI(TAG, pubkey_ed25519_1, sizeof(pubkey_ed25519_1), "Ed25519().ComputePubkey()");
+      rlLOGXI(TAG, pubkey_ed25519_2, sizeof(pubkey_ed25519_2), "rlCryptoEd25519Pubkey()");
+      if (0 != memcmp(pubkey_ed25519_1, pubkey_ed25519_2, sizeof(pubkey_ed25519_1)))
+        ++error, rlLOGE(TAG, "rlCryptoEd25519Pubkey.Check Failed!");
+      else
+        rlLOGI(TAG, "rlCryptoEd25519Pubkey OK!");
+      Wait();
+
+      Ed25519().Sign(ExtendBuf, sign_ed25519_1, input, sizeof(input), pubkey_ed25519_1, input);
+      rlCryptoEd25519Sign(sign_ed25519_2, input, sizeof(input), pubkey_ed25519_2, input);
+
+      rlLOGXI(TAG, sign_ed25519_1, sizeof(sign_ed25519_1), "Ed25519().Sign()");
+      rlLOGXI(TAG, sign_ed25519_2, sizeof(sign_ed25519_2), "rlCryptoEd25519Sign");
+      if (0 != memcmp(sign_ed25519_1, sign_ed25519_2, sizeof(sign_ed25519_1)))
+        ++error, rlLOGE(TAG, "rlCryptoEd25519Sign.Check Failed!");
+      else
+        rlLOGI(TAG, "rlCryptoEd25519Sign.Check OK!");
+      Wait();
+
+      int v1 = Ed25519().Verify(ExtendBuf, input, sizeof(input), sign_ed25519_1, pubkey_ed25519_1);
+      int v2 = rlCryptoEd25519Verify(input, sizeof(input), sign_ed25519_2, pubkey_ed25519_2);
+      rlLOGI(TAG, "rlCryptoEd25519Verify %d %d", v1, v2);
+
+      if (v1 != v2)
+        ++error, rlLOGE(TAG, "rlCryptoEd25519Verify Failed!");
+      Wait();
+
+      uint8_t pkey1[32], pkey2[32];
+      RAND_bytes(pkey1, sizeof(pkey1));
+      RAND_bytes(pkey2, sizeof(pkey2));
+
+      Curve25519().ComputePubkey(pubkey_x25519_1, pkey1);
+      rlCryptoX25519Pubkey(pubkey_x25519_2, pkey1);
+      rlLOGXI(TAG, pubkey_x25519_1, sizeof(pubkey_x25519_1), "Curve25519().ComputePubkey()");
+      rlLOGXI(TAG, pubkey_x25519_2, sizeof(pubkey_x25519_2), "rlCryptoX25519Pubkey()");
+      if (0 != memcmp(pubkey_x25519_1, pubkey_x25519_2, sizeof(pubkey_x25519_1)))
+        ++error, rlLOGE(TAG, "rlCryptoX25519Pubkey Failed!");
+      else
+        rlLOGI(TAG, "rlCryptoX25519Pubkey OK!");
+      Wait();
+
+      Curve25519().ComputePubkey(pubkey_x25519_1, pkey1);
+      Curve25519().ComputePubkey(pubkey_x25519_2, pkey2);
+      rlLOGXI(TAG, pubkey_x25519_2, sizeof(pubkey_x25519_2), "Curve25519().ComputePubkey.2");
+
+      Curve25519().X25519(secret_1, pkey2, pubkey_x25519_1);
+      Curve25519().X25519(secret_2, pkey1, pubkey_x25519_2);
+      if (0 != memcmp(secret_1, secret_2, sizeof(secret_1)))
+        ++error, rlLOGE(TAG, "Curve25519().X25519 Failed!");
+      else
+        rlLOGI(TAG, "Curve25519().X25519 OK!");
+
+      rlCryptoX25519Pubkey(pubkey_x25519_1, pkey1);
+      rlCryptoX25519Pubkey(pubkey_x25519_2, pkey2);
+      rlCryptoX25519(secret_1, pkey2, pubkey_x25519_1);
+      rlCryptoX25519(secret_2, pkey1, pubkey_x25519_2);
+      rlLOGXI(TAG, secret_1, sizeof(secret_1), "rlCryptoX25519.1");
+      rlLOGXI(TAG, secret_2, sizeof(secret_2), "rlCryptoX25519.2");
+      if (0 != memcmp(secret_1, secret_2, sizeof(secret_1)))
+        ++error, rlLOGE(TAG, "rlCryptoX25519 Failed!");
+      else
+        rlLOGI(TAG, "rlCryptoX25519 OK!");
+      Wait();
+    }
+
+    rlLOGW(TAG, "Foobar Tests Error %d", error);
+    Wait();
+  }
+
+  int result = 0;
+  int stdout_ = dup(fileno(stdout));
+
+  /**
+   *!
+   */
+  close(fileno(stdout));
+  std::ignore = dup2(fileno(stderr), fileno(stdout));
 
 #if defined(__EMULATOR__)
   const char* dongleFile = ".foobar-dongle.bin";

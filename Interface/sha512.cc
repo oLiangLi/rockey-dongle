@@ -1,11 +1,11 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <base/base.h>
 
 rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
-#ifndef __RockeyARM__
+#if !defined(__RockeyARM__) && 0
 
 Sha384Ctx& Sha384Ctx::Init() {
   rlCryptoSha384CtxInit(&ctx_);
