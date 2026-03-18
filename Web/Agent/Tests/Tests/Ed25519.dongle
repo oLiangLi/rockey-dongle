@@ -1,0 +1,27 @@
+﻿public 1024;
+
+const {
+	kOff_Ed25519_public = 0;
+	kOff_Ed25519_pkey = kOff_Ed25519_public + 32;
+	kOff_SHA512 = kOff_Ed25519_pkey + 32;
+	kOff_SIGN = kOff_SHA512 + 64;
+	v1 = kOff_SIGN + 64;
+	v2 = v1 + 4;
+	i  = v2 + 4;
+}
+
+Memset(0, 0, 1024);
+
+while(LoadI8(i) < 32) {
+	StoreI8(LoadI8(i) + kOff_Ed25519_pkey, LoadI8(i));
+	StoreI8(i, LoadI8(i) + 1);
+}
+
+ExEd25519ComputePubkey(kOff_Ed25519_pkey, kOff_Ed25519_public);
+ExDigestSHA512(0, kOff_SHA512, kOff_SHA512);
+ExEd25519Sign(kOff_Ed25519_public, kOff_Ed25519_pkey, kOff_SHA512, 64, kOff_SIGN);
+StoreI32(v1, ExEd25519Verify(kOff_Ed25519_public, kOff_SIGN, kOff_SHA512, 64));
+StoreI8(kOff_SIGN + 40, LoadU8(kOff_SIGN + 40) + 1);
+StoreI32(v2, ExEd25519Verify(kOff_Ed25519_public, kOff_SIGN, kOff_SHA512, 64));
+
+
