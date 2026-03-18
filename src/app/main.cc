@@ -423,6 +423,20 @@ int main(int argc, char* argv[]) {
       else
         rlLOGI(TAG, "rlCryptoX25519 OK!");
       Wait();
+
+      rlCryptoX25519Pubkey(pubkey_x25519_1, pkey1);
+      rlCryptoX25519Pubkey(pubkey_x25519_2, pkey2);
+      Curve25519().X25519(secret_1, pkey2, pubkey_x25519_1);
+      rlCryptoX25519(secret_2, pkey1, pubkey_x25519_2);
+      rlLOGXI(TAG, secret_1, sizeof(secret_1), "rlCryptoX25519.X.1");
+      rlLOGXI(TAG, secret_2, sizeof(secret_2), "rlCryptoX25519.X.2");
+      if (0 != memcmp(secret_1, secret_2, sizeof(secret_1)))
+        ++error, rlLOGE(TAG, "rlCryptoX25519 Failed!");
+      else
+        rlLOGI(TAG, "rlCryptoX25519 OK!");
+      Wait();
+
+
     }
 
     rlLOGW(TAG, "Foobar Tests Error %d", error);
