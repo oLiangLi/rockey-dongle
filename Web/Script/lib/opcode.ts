@@ -232,5 +232,10 @@ export const enum OpCode {
   kExEd25519ComputePubkey = 0x230, // argc : 2, value = ExEd25519ComputePubkey(private[32], out_pubkey[32])
   kExEd25519GenerateKeyPair, // argc : 2, value = ExEd25519GenerateKeyPair(private[32], out_pubkey[32])
   kExEd25519Sign, // argc : 5, value = ExEd25519Sign(pubkey[32], pkey[32], m[len], len, sign[64])
-  kExEd25519Verify // argc : 4, value = ExEd25519Verify(pubkey[32], sign[64], m[len], len)
+  kExEd25519Verify, // argc : 4, value = ExEd25519Verify(pubkey[32], sign[64], m[len], len)
+
+  /**
+   *!
+   */
+  kExecuteCreateEnTrust = 0x280, // argc : 0, Exit(ExecuteCreateEnTrust()) ...
 }

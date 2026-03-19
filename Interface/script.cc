@@ -41,8 +41,7 @@ static inline constexpr PERMISSION PermissionFrom(int code) {
   return PERMISSION::kAnonymous;
 }
 
-VM_t::VM_t(Dongle* dongle, void* data, void* buffer)
-    : dongle_(dongle), data_(data), buffer_(buffer) {
+VM_t::VM_t(Dongle* dongle, void* data, void* buffer) : dongle_(dongle), data_(data), buffer_(buffer) {
   memset(text_, 0, sizeof(text_));
   memset(stack_, 0, sizeof(stack_));
   assert(dongle && data && buffer);
@@ -1551,6 +1550,12 @@ int VM_t::Execute() {
             }
           } else /* 0x280 ... 0x2FF */ {
             zero_ = SIGILL;
+
+            if (op == OpCode::kExecuteCreateEnTrust) {
+              zero_ = RockeyTrustExecuteCreateEnTrust(*this, data_, buffer_);
+            }
+
+            break;
           }
         } else {
           zero_ = SIGILL;
@@ -1566,6 +1571,8 @@ int VM_t::Execute() {
 
   if (zero_) {
     memset(data_, 0, kSizeData);
+
+    rlLOGE(rLANG_ATOMC_WORLD_MAGIC, "Rockey.Execuite Error zero: %d, nstk: %d, pc: %d", zero_, nstk_, pc_);
 
     zero_ = (zero_ & 0xFF) | ((nstk_ & 0xFF) << 8) | ((pc_ & 0xFF) << 16) | (1 << 30);
 

@@ -345,8 +345,11 @@
             }
           }
 
-          if(jsEmulator) {
-            await Dashboard(DongleDisplayValue(jsEmulator.GetDongleInfo()).id, true).catch((err)=>{
+          if (jsEmulator) {
+            await Dashboard(
+              DongleDisplayValue(jsEmulator.GetDongleInfo()).id,
+              true,
+            ).catch((err) => {
               console.error(`jsEmulator.Dashboard Error ${err}`);
             });
           }
@@ -374,7 +377,9 @@
                 console.error(`jsEmulator id mismatch!`);
               } else {
                 prev_dashboard_value.set(id, buffer);
-                console.info(`jsEmulator.Master ${JSON.stringify(master, null, 2)}`);
+                console.info(
+                  `jsEmulator.Master ${JSON.stringify(master, null, 2)}`,
+                );
               }
             } catch (err) {
               console.error(`[IGNORE]Error ${err}`);
@@ -579,7 +584,7 @@
           const name = `ExecvOutput-${id}-${new Date().toISOString()}.bin`;
           a.href = url;
           a.download = name;
-          a.innerText = `${name}`;
+          a.innerText = name;
 
           const li = document.createElement("li");
           li.appendChild(a); /**! */
@@ -591,15 +596,38 @@
           const result = await jsScriptParser(script);
           console.log(JSON.stringify(result, null, 2));
         }
-        async function ScriptExport() {
+        async function ScriptExecv(flag) {
+          const id = document.getElementById("keys").value;
+          const bootstrap = document.getElementById("bootstrap").checked;
+          const admin = document.getElementById("admin").checked;
+
+          if (flag === true && id.slice(0, 2) !== "ff")
+            throw jsCipher.Annihilus_(`ScriptExecv: jsEmulator Only!`);
+
+          const cb =
+            flag !== true
+              ? void 0
+              : async (InOutBuffer) => {
+                  await jsDongleExecv(id, InOutBuffer, admin);
+
+                  const blob = new Blob([InOutBuffer], {
+                    type: "application/octet-stream",
+                  });
+                  const url = URL.createObjectURL(blob);
+                  const a = document.createElement("a");
+                  const name = `ExecvOutput-${id}-${new Date().toISOString()}.bin`;
+                  a.href = url;
+                  a.download = name;
+                  a.innerText = name;
+
+                  const li = document.createElement("li");
+                  li.appendChild(a); /**! */
+                  document.getElementById("m").appendChild(li);
+                };
+
           const script = document.getElementById("dongle_script").value;
           const result = await jsScriptParser(script);
-          await ScriptExportHelper(
-            result,
-            document.getElementById("keys").value,
-            document.getElementById("bootstrap").checked,
-            document.getElementById("admin").checked,
-          );
+          await ScriptExportHelper(result, id, bootstrap, admin, cb);
         }
 
         async function CreateEmulator() {
@@ -659,7 +687,10 @@
           jsEmulator.Open(admin ? 2 : 0, storage, secret, loop);
           UpdateEmulatorInfo();
 
-          await Dashboard(DongleDisplayValue(jsEmulator.GetDongleInfo()).id, true).catch((err)=>{
+          await Dashboard(
+            DongleDisplayValue(jsEmulator.GetDongleInfo()).id,
+            true,
+          ).catch((err) => {
             console.error(`jsEmulator.Dashboard Error ${err}`);
           });
         }
@@ -770,12 +801,22 @@
         document.getElementById("EmuImport").onclick = ImportEmulator;
         document.getElementById("EmuTests").onclick = EmuTests;
 
-        document.getElementById("ScriptExport").onclick = ScriptExport;
+        document.getElementById("ScriptExecv").onclick = async () => {
+          await ScriptExecv(true);
+        };
+        document.getElementById("ScriptExport").onclick = async () => {
+          await ScriptExecv(false);
+        };
         document.getElementById("ScriptParse").onclick = ScriptParse;
         document.getElementById("ExportAllDashboard").onclick =
           ExportAllDashboard;
         document.getElementById("ImportAllDashboard").onclick =
           ImportAllDashboard;
+        document.getElementById("keys").onchange = () => {
+          const id = document.getElementById("keys").value;
+          document.getElementById("ScriptExecv").disabled =
+            id.slice(0, 2) !== "ff";
+        };
         UpdateDeviceList(null);
       };
     </script>
@@ -1174,7 +1215,7 @@
         }
       }
 
-      async function ScriptExportHelper(program, id, bootstrap, admin) {
+      async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
         console.log(`id: ${id}, bootstrap: ${bootstrap}, admin: ${admin}`);
         console.log(JSON.stringify(program, null, 2));
         const code = Buffer.from(program.code, "base64");
@@ -1252,7 +1293,7 @@
 
         let program_name = "";
         let program_binary = Buffer.alloc(1024);
-        const param = confirm > 0 ? await UserConfirmParam(program) : null;
+        const param = await UserConfirmParam(program);
         const data = CreateDataSegment(program, param, size_data);
 
         if (bootstrap) {
@@ -1293,6 +1334,8 @@
         } else {
           throw jsCipher.Annihilus_(`Not implemented`);
         }
+
+        if (cb) return await cb(program_binary);
 
         const blob = new Blob([program_binary], {
           type: "application/octet-stream",
@@ -1452,6 +1495,15 @@
         result.nonce_local = info.subarray(472, 504).toString("base64");
         result.dongle = DongleDisplayValue(info.subarray(504, 544));
         result.nonce_admin = info.subarray(544, 576).toString("base64");
+        const entrust = Buffer.alloc(80);
+
+        info.subarray(532, 544).copy(entrust);
+        info.subarray(20, 84).copy(entrust, 16);
+        jsEmulator.SM3(entrust.subarray(16)).subarray(0, 3).copy(entrust, 12);
+        result.EnTrust = [
+          entrust.subarray(12, 15).toString("hex"),
+          entrust.toString("base64"),
+        ];
 
         if (
           true !==
@@ -1592,10 +1644,11 @@
       <label for="admin">Admin:</label><input type="checkbox" id="admin" />
       <label for="bootstrap">Bootstrap:</label
       ><input type="checkbox" id="bootstrap" />
-      <label for="program">PROGRAM:</label><input type="file" id="program" />
+      <label for="program"></label><input type="file" id="program" />
       <button id="dashboard">dashboard</button
       ><button id="execv">FileExecv</button>
-      <button id="ScriptExport">ScriptExport</button
+      <button id="ScriptExecv">ScriptExecv</button
+      ><button id="ScriptExport">ScriptExport</button
       ><button id="ScriptParse">ScriptParse</button>
     </p>
 

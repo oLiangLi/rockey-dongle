@@ -35,8 +35,8 @@ const kErrno_ENOENT = 44,
   kErrno_EROFS = 69;
 
 const kFileID_null = 8848,
-    kFileID_Config = 10001,
-    kFileID_Random = 10086;
+  kFileID_Config = 10001,
+  kFileID_Random = 10086;
 
 /** ABI.Check */
 console.assert(
@@ -404,8 +404,44 @@ interface Native0_ {
 export type CreateEmulatorOption = {
   UpdateLEDState?: (led: LED_STATE) => void;
   LogWriteMessage?: (level: integer, message: string) => void;
-  OpensslConfig ?: string;
+  OpensslConfig?: string;
 };
+
+/**
+ *! console.info/console.warning/... 会记录调用栈帧, 这不是很合适 ...
+ */
+function default_logWrite(level: integer, message: string) {
+  switch (level) {
+    case 0:
+      console.error(`%c${message}`, "color: purple");
+      break;
+    case 1:
+      console.error(`%c${message}`, "color: red");
+      break;
+    case 2:
+      console.warn(`%c${message}`, "color: darkorange");
+      break;
+    case 3:
+      console.info(`%c${message}`, "color: blue");
+      break;
+    default:
+      console.log(`%c${message}`, "color: dimgray");
+      break;
+  }
+}
+
+type LogEntry = {
+  logWrite: typeof default_logWrite;
+  level: integer;
+  message: string;
+};
+const global_logs = <LogEntry[]>[];
+setInterval(() => {
+  for (const { logWrite, level, message } of global_logs) {
+    logWrite(level, message);
+  }
+  global_logs.length = 0;
+}, 200);
 
 export async function CryptoLoader(jsCipher: CipherSuiteV0) {
   const wasmModule_ = await WebAssembly.compile(jsCryptoText.Assets());
@@ -423,7 +459,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
     });
 
     const supperUpdateLEDState = option?.UpdateLEDState;
-    const supperLogWriteMessage = option?.LogWriteMessage;
+    const logWrite = option?.LogWriteMessage || default_logWrite;
     const defaultOpensslConfig = Buffer.from(option?.OpensslConfig || "");
 
     let nextImportBuffer: null | Buffer = null;
@@ -450,27 +486,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
     function jsLogWrite(level: integer, m: Addr, size: integer) {
       const message = HEAP.subarray(m, m + size).toString();
-      if (supperLogWriteMessage) {
-        supperLogWriteMessage(level, message);
-      } else {
-        switch (level) {
-          case 0:
-            console.error(`%c${message}`, "color: purple");
-            break;
-          case 1:
-            console.error(`%c${message}`, "color: red");
-            break;
-          case 2:
-            console.warn(`%c${message}`, "color: darkorange");
-            break;
-          case 3:
-            console.info(`%c${message}`, "color: blue");
-            break;
-          default:
-            console.log(`%c${message}`, "color: dimgray");
-            break;
-        }
-      }
+      global_logs.push({
+        logWrite,
+        level,
+        message,
+      });
       return 1;
     }
 
@@ -513,7 +533,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
     function fd_close(fd: integer) {
       console.log(`close(${fd})`);
-      if(fd === kFileID_Config) {
+      if (fd === kFileID_Config) {
         offsetOpensslConfig = 0;
       }
       return 0;
@@ -555,7 +575,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         return 0;
       }
 
-      if(fd === kFileID_Config) {
+      if (fd === kFileID_Config) {
         let offset = offsetOpensslConfig;
         let request = 0;
         for (let i = 0; i < iovcnt; ++i, iov += 8) {
@@ -564,7 +584,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           console.log(`  CONF> 0x${ptr.toString(16)} ${siz}`);
 
           request += siz;
-          if(offset >= defaultOpensslConfig.length) {
+          if (offset >= defaultOpensslConfig.length) {
             HEAP32[(iov + 4) >>> 2] = 0;
           } else {
             const sz = Math.min(siz, defaultOpensslConfig.length - offset);
@@ -575,7 +595,9 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           }
         }
         HEAP32[pnum >>> 2] = result;
-        console.log(`fd_read ${iovcnt}> ${fd} ${offsetOpensslConfig} / ${defaultOpensslConfig.length} / ${result} / ${request}`);
+        console.log(
+          `fd_read ${iovcnt}> ${fd} ${offsetOpensslConfig} / ${defaultOpensslConfig.length} / ${result} / ${request}`,
+        );
         offsetOpensslConfig += result;
         return 0;
       }
@@ -638,13 +660,77 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       env: { memory },
     });
 
-    const native = <Native0_>(<unknown>instance.exports);
+    const {
+      EmuSize,
+      EmuNew,
+      EmuClear,
+      EmuCreate,
+      EmuOpen,
+      EmuWrite,
+      EmuExecv,
+      EmuGetDongleInfo,
+      EmuGetPINState,
+      EmuSetLEDState,
+      EmuReadShareMemory,
+      EmuWriteShareMemory,
+      EmuDeleteFile,
+      EmuCreateDataFile,
+      EmuWriteDataFile,
+      EmuReadDataFile,
+      EmuCreatePKEYFile,
+      EmuGenerateRSA,
+      EmuImportRSA,
+      EmuGenerateP256,
+      EmuImportP256,
+      EmuGenerateSM2,
+      EmuImportSM2,
+      EmuCreateKeyFile,
+      EmuWriteKeyFile,
+      EmuRSAPrivate,
+      EmuRSAPrivateEx,
+      EmuRSAPublic,
+      EmuP256Sign,
+      EmuP256SignEx,
+      EmuP256Verify,
+      EmuSM2Sign,
+      EmuSM2SignEx,
+      EmuSM2Verify,
+      EmuSM2Decrypt,
+      EmuSM2DecryptEx,
+      EmuSM2Encrypt,
+      EmuSM3,
+      EmuSM4ECB,
+      EmuSM4ECBEx,
+      EmuCheckPointOnCurveSM2,
+      EmuDecompressPointSM2,
+      EmuCheckPointOnCurvePrime256v1,
+      EmuDecompressPointPrime256v1,
+      EmuComputePubkeyPrime256v1,
+      EmuGenerateKeyPairPrime256v1,
+      EmuComputeSecretPrime256v1,
+      EmuSignMessagePrime256v1,
+      EmuVerifySignPrime256v1,
+      EmuCheckPointOnCurveSecp256k1,
+      EmuDecompressPointSecp256k1,
+      EmuComputePubkeySecp256k1,
+      EmuGenerateKeyPairSecp256k1,
+      EmuComputeSecretSecp256k1,
+      EmuSignMessageSecp256k1,
+      EmuVerifySignSecp256k1,
+      Initialize,
+      RANDSeedBytes,
+      MemoryManager,
+      _initialize,
+      _emscripten_stack_restore,
+      _emscripten_stack_alloc,
+      emscripten_stack_get_current,
+    } = <Native0_>(<unknown>instance.exports);
 
-    native._initialize();
-    native.Initialize();
+    _initialize();
+    Initialize();
 
     let instanceDongle = 0;
-    const memoryDongle = native.MemoryManager(0, native.EmuSize());
+    const memoryDongle = MemoryManager(0, EmuSize());
     console.assert(0 !== memoryDongle);
 
     function CheckInstance() {
@@ -672,15 +758,15 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         v = jsCipher.Digest("SHA256").Init().Update(v).Final();
 
         jsCipher.SeedBytes(v);
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(32);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(32);
         v.copy(HEAP, frame);
-        native.RANDSeedBytes(frame, 32);
-        native._emscripten_stack_restore(stack);
+        RANDSeedBytes(frame, 32);
+        _emscripten_stack_restore(stack);
       }
 
       Export(): Buffer {
-        const size = native.EmuWrite(CheckInstance());
+        const size = EmuWrite(CheckInstance());
         if (size !== nextExportBuffer?.length)
           throw jsCipher.Annihilus_(`Export Error ${size}`);
         const result = nextExportBuffer;
@@ -690,31 +776,26 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
       Create(secret: string | Buffer, uid: integer, loop: integer = 256): void {
         if (instanceDongle) {
-          native.EmuClear(instanceDongle);
+          EmuClear(instanceDongle);
           instanceDongle = 0;
         }
 
-        instanceDongle = native.EmuNew(memoryDongle, PERMISSION.kAdministrator);
+        instanceDongle = EmuNew(memoryDongle, PERMISSION.kAdministrator);
         console.assert(instanceDongle === memoryDongle);
 
         if (typeof secret === "string") secret = Buffer.from(secret);
 
-        const stack = native.emscripten_stack_get_current();
-        const master_secret = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const master_secret = _emscripten_stack_alloc(64);
         jsCipher
           .Digest("SHA512")
           .Init()
           .Update(secret)
           .Final()
           .copy(HEAP, master_secret);
-        const result = native.EmuCreate(
-          instanceDongle,
-          master_secret,
-          uid,
-          loop,
-        );
+        const result = EmuCreate(instanceDongle, master_secret, uid, loop);
         HEAP.fill(0, master_secret, master_secret + 64);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
         if (result < 0)
           throw jsCipher.Annihilus_(`dongle.Create Error ${result}`);
       }
@@ -726,27 +807,27 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         loop: integer = 256,
       ): void {
         if (instanceDongle) {
-          native.EmuClear(instanceDongle);
+          EmuClear(instanceDongle);
           instanceDongle = 0;
         }
 
-        instanceDongle = native.EmuNew(memoryDongle, perm);
+        instanceDongle = EmuNew(memoryDongle, perm);
         console.assert(instanceDongle === memoryDongle);
 
         if (typeof secret === "string") secret = Buffer.from(secret);
 
         nextImportBuffer = storage;
-        const stack = native.emscripten_stack_get_current();
-        const master_secret = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const master_secret = _emscripten_stack_alloc(64);
         jsCipher
           .Digest("SHA512")
           .Init()
           .Update(secret)
           .Final()
           .copy(HEAP, master_secret);
-        const result = native.EmuOpen(instanceDongle, master_secret, loop);
+        const result = EmuOpen(instanceDongle, master_secret, loop);
         HEAP.fill(0, master_secret, master_secret + 64);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
         nextImportBuffer = null;
 
         if (result < 0)
@@ -760,11 +841,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const buffer = native._emscripten_stack_alloc(1024);
+        const stack = emscripten_stack_get_current();
+        const buffer = _emscripten_stack_alloc(1024);
         InOutBuffer.copy(HEAP, buffer);
-        const result = native.EmuExecv(thiz, buffer);
-        native._emscripten_stack_restore(stack);
+        const result = EmuExecv(thiz, buffer);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.Execv Error ${result}`);
@@ -776,10 +857,10 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       GetDongleInfo(): Buffer {
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const buffer = native._emscripten_stack_alloc(64);
-        const result = native.EmuGetDongleInfo(thiz, buffer);
-        native._emscripten_stack_restore(stack);
+        const stack = emscripten_stack_get_current();
+        const buffer = _emscripten_stack_alloc(64);
+        const result = EmuGetDongleInfo(thiz, buffer);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.GetDongleInfo Error ${result}`);
@@ -788,10 +869,10 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       GetPINState(): PERMISSION {
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(16);
-        const result = native.EmuGetPINState(thiz, frame);
-        native._emscripten_stack_restore(stack);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(16);
+        const result = EmuGetPINState(thiz, frame);
+        _emscripten_stack_restore(stack);
 
         if (0 === result) return <PERMISSION>HEAP[frame];
         else throw jsCipher.Annihilus_(`dongle.GetPINState Error ${result}`);
@@ -799,7 +880,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
       SetLEDState(state: LED_STATE): void {
         const thiz = CheckInstance();
-        const result = native.EmuSetLEDState(thiz, state);
+        const result = EmuSetLEDState(thiz, state);
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SetLEDState Error ${result}`);
       }
@@ -807,10 +888,10 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       ReadShareMemory(): Buffer {
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(32);
-        const result = native.EmuReadShareMemory(thiz, frame);
-        native._emscripten_stack_restore(stack);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(32);
+        const result = EmuReadShareMemory(thiz, frame);
+        _emscripten_stack_restore(stack);
 
         if (0 === result) return MoveBuffer(frame, 32);
         else
@@ -825,12 +906,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(32);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(32);
         buffer.copy(HEAP, frame);
-        const result = native.EmuWriteShareMemory(thiz, frame);
+        const result = EmuWriteShareMemory(thiz, frame);
         HEAP.fill(0, frame, frame + 32);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.WriteShareMemory Error ${result}`);
@@ -838,13 +919,13 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
       DeleteFile(type: SECRET_STORAGE_TYPE, id: integer): boolean {
         const thiz = CheckInstance();
-        const result = native.EmuDeleteFile(thiz, type, id);
+        const result = EmuDeleteFile(thiz, type, id);
         return 0 === result;
       }
 
       CreateDataFile(id: integer, size: integer): void {
         const thiz = CheckInstance();
-        const result = native.EmuCreateDataFile(thiz, id, size);
+        const result = EmuCreateDataFile(thiz, id, size);
         if (0 !== result)
           throw jsCipher.Annihilus_(
             `dongle.CreateDataFile ${id} Error ${result}`,
@@ -860,17 +941,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(8192);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(8192);
         buffer.copy(HEAP, frame);
-        const result = native.EmuWriteDataFile(
-          thiz,
-          id,
-          off,
-          frame,
-          buffer.length,
-        );
-        native._emscripten_stack_restore(stack);
+        const result = EmuWriteDataFile(thiz, id, off, frame, buffer.length);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -884,10 +959,10 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(
             `dongle.ReadDataFile ${id} Size.Over ${size}`,
           );
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(8192);
-        const result = native.EmuReadDataFile(thiz, id, off, frame, size);
-        native._emscripten_stack_restore(stack);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(8192);
+        const result = EmuReadDataFile(thiz, id, off, frame, size);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -902,7 +977,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         id: integer,
       ): void {
         const thiz = CheckInstance();
-        const result = native.EmuCreatePKEYFile(thiz, type, bits, id);
+        const result = EmuCreatePKEYFile(thiz, type, bits, id);
         if (0 !== result)
           throw jsCipher.Annihilus_(
             `dongle.WritePKEYFile ${id}/${type} Error ${result}`,
@@ -913,16 +988,16 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         /// [ modulus.LE[4], exponent[256] ] || [ modulus.LE[4], exponent[256], private_key[256] ]
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(1024);
-        const result = native.EmuGenerateRSA(
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(1024);
+        const result = EmuGenerateRSA(
           thiz,
           id,
           frame,
           frame + 4,
           export_private ? frame + 260 : 0,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.GenerateRSA ${id} Error ${result}`);
@@ -935,10 +1010,10 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(1024);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(1024);
         pkey.copy(HEAP, frame);
-        const result = native.EmuImportRSA(
+        const result = EmuImportRSA(
           thiz,
           id,
           HEAPU32[frame >>> 2],
@@ -946,7 +1021,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 260,
         );
         HEAP.fill(0, frame, frame + 1024);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.ImportRSA ${id} Error ${result}`);
@@ -956,16 +1031,16 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         /// [ X[32], Y[32] ] || [ X[32], Y[32], K[32] ]
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
-        const result = native.EmuGenerateP256(
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
+        const result = EmuGenerateP256(
           thiz,
           id,
           frame,
           frame + 32,
           export_private ? frame + 64 : 0,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -984,12 +1059,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         private_key.copy(HEAP, frame);
-        const result = native.EmuImportP256(thiz, id, frame);
+        const result = EmuImportP256(thiz, id, frame);
         HEAP.fill(0, frame, frame + 32);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.ImportP256 ${id} Error ${result}`);
@@ -998,16 +1073,16 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       GenerateSM2(id: integer, export_private: boolean): Buffer {
         const thiz = CheckInstance();
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
-        const result = native.EmuGenerateSM2(
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
+        const result = EmuGenerateSM2(
           thiz,
           id,
           frame,
           frame + 32,
           export_private ? frame + 64 : 0,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1025,12 +1100,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         private_key.copy(HEAP, frame);
-        const result = native.EmuImportSM2(thiz, id, frame);
+        const result = EmuImportSM2(thiz, id, frame);
         HEAP.fill(0, frame, frame + 32);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.ImportSM2 ${id} Error ${result}`);
@@ -1043,7 +1118,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const result = native.EmuCreateKeyFile(thiz, id, type);
+        const result = EmuCreateKeyFile(thiz, id, type);
         if (0 !== result)
           throw jsCipher.Annihilus_(
             `dongle.CreateKeyFile ${id}/${type} Error ${result}`,
@@ -1062,12 +1137,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
 
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         key.copy(HEAP, frame);
-        const result = native.EmuWriteKeyFile(thiz, id, frame, 16, type);
+        const result = EmuWriteKeyFile(thiz, id, frame, 16, type);
         HEAP.fill(0, frame, frame + 32);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1099,20 +1174,20 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.RSAPrivate invalid pkey size ${key.length}`,
           );
 
-        let result = 0;
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(2048);
+        let result: integer;
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(2048);
         const addr_buffer = frame + 256;
 
         input.copy(HEAP, frame);
         HEAP32[addr_buffer >>> 2] = input.length;
 
         if (typeof key === "number") {
-          result = native.EmuRSAPrivate(thiz, key, frame, addr_buffer, encrypt);
+          result = EmuRSAPrivate(thiz, key, frame, addr_buffer, encrypt);
         } else {
           const addr_pkey = frame + 512;
           key.copy(HEAP, addr_pkey);
-          result = native.EmuRSAPrivateEx(
+          result = EmuRSAPrivateEx(
             thiz,
             2048,
             HEAPU32[addr_pkey >>> 2],
@@ -1124,7 +1199,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
           HEAP.fill(0, addr_pkey, addr_pkey + 520);
         }
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1158,15 +1233,15 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.RSAPublic invalid pkey.size ${exponent.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(2048);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(2048);
         const addr_buffer = frame + 256;
         const addr_pkey = frame + 512;
 
         input.copy(HEAP, frame);
         exponent.copy(HEAP, addr_pkey);
         HEAP32[addr_buffer >>> 2] = input.length;
-        const result = native.EmuRSAPublic(
+        const result = EmuRSAPublic(
           thiz,
           2048,
           modulus,
@@ -1175,7 +1250,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           addr_buffer,
           encrypt,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1200,26 +1275,20 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             );
         }
 
-        let result = 0;
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(256);
+        let result: integer;
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(256);
         hash.copy(HEAP, frame);
 
         if (typeof key === "number") {
-          result = native.EmuP256Sign(thiz, key, frame, frame + 32, frame + 64);
+          result = EmuP256Sign(thiz, key, frame, frame + 32, frame + 64);
         } else {
           const addr_key = frame + 128;
           key.copy(HEAP, addr_key);
-          result = native.EmuP256SignEx(
-            thiz,
-            addr_key,
-            frame,
-            frame + 32,
-            frame + 64,
-          );
+          result = EmuP256SignEx(thiz, addr_key, frame, frame + 32, frame + 64);
           HEAP.fill(0, addr_key, addr_key + 32);
         }
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.P256Sign Error ${result}`);
@@ -1234,12 +1303,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.P256Verify EINVAL ${point.length}/${hash.length}/${sign.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(256);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(256);
         point.copy(HEAP, frame);
         hash.copy(HEAP, frame + 64);
         sign.copy(HEAP, frame + 128);
-        const result = native.EmuP256Verify(
+        const result = EmuP256Verify(
           thiz,
           frame,
           frame + 32,
@@ -1247,7 +1316,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 128,
           frame + 160,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (result < -1)
           throw jsCipher.Annihilus_(`dongle.P256Verify Error ${result}`);
@@ -1270,26 +1339,20 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             );
         }
 
-        let result = 0;
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(256);
+        let result: integer;
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(256);
         hash.copy(HEAP, frame);
 
         if (typeof key === "number") {
-          result = native.EmuSM2Sign(thiz, key, frame, frame + 32, frame + 64);
+          result = EmuSM2Sign(thiz, key, frame, frame + 32, frame + 64);
         } else {
           const addr_key = frame + 128;
           key.copy(HEAP, addr_key);
-          result = native.EmuSM2SignEx(
-            thiz,
-            addr_key,
-            frame,
-            frame + 32,
-            frame + 64,
-          );
+          result = EmuSM2SignEx(thiz, addr_key, frame, frame + 32, frame + 64);
           HEAP.fill(0, addr_key, addr_key + 32);
         }
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SM2Sign Error ${result}`);
@@ -1304,12 +1367,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.SM2Verify EINVAL ${point.length}/${hash.length}/${sign.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(256);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(256);
         point.copy(HEAP, frame);
         hash.copy(HEAP, frame + 64);
         sign.copy(HEAP, frame + 128);
-        const result = native.EmuSM2Verify(
+        const result = EmuSM2Verify(
           thiz,
           frame,
           frame + 32,
@@ -1317,7 +1380,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 128,
           frame + 160,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (result < -1)
           throw jsCipher.Annihilus_(`dongle.SM2Verify Error ${result}`);
@@ -1341,9 +1404,9 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.SM2Decrypt invalid cipher size ${cipher.length}`,
           );
 
-        let result = 0;
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(4096 + 256);
+        let result : number;
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(4096 + 256);
         const addr_cipher = frame + 3072;
         const addr_text = frame + 2048;
         const addr_size = frame + 2000;
@@ -1352,7 +1415,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         cipher.copy(HEAP, addr_cipher);
 
         if (typeof key === "number") {
-          result = native.EmuSM2Decrypt(
+          result = EmuSM2Decrypt(
             thiz,
             key,
             addr_cipher,
@@ -1362,7 +1425,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
         } else {
           key.copy(HEAP, frame);
-          result = native.EmuSM2DecryptEx(
+          result = EmuSM2DecryptEx(
             thiz,
             frame,
             addr_cipher,
@@ -1372,7 +1435,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           );
           HEAP.fill(0, frame, frame + 32);
         }
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SM2Decrypt Error ${result}`);
@@ -1393,14 +1456,14 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.SM2Encrypt invalid message size ${plain.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(4096);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(4096);
         const addr_text = frame + 1024;
         const addr_cipher = frame + 2048;
 
         point.copy(HEAP, frame);
         plain.copy(HEAP, addr_text);
-        const result = native.EmuSM2Encrypt(
+        const result = EmuSM2Encrypt(
           thiz,
           frame,
           frame + 32,
@@ -1409,7 +1472,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           addr_cipher,
         );
         HEAP.fill(0, addr_text, plain.length);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SM2Encrypt Error ${result}`);
@@ -1423,13 +1486,13 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         if (size < 1 || size > 1024)
           throw jsCipher.Annihilus_(`dongle.SM3 invalid message size ${size}`);
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(1024 + 32);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(1024 + 32);
         message.copy(HEAP, frame);
 
         const addr_md = frame + 1024;
-        const result = native.EmuSM3(thiz, frame, size, addr_md);
-        native._emscripten_stack_restore(stack);
+        const result = EmuSM3(thiz, frame, size, addr_md);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SM3 Error ${result}`);
@@ -1449,20 +1512,20 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.SM4ECB invalid message size ${size}`,
           );
 
-        let result = 0;
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(2048);
+        let result : number;
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(2048);
         input.copy(HEAP, frame);
 
         if (typeof key === "number") {
-          result = native.EmuSM4ECB(thiz, key, frame, size, encrypt);
+          result = EmuSM4ECB(thiz, key, frame, size, encrypt);
         } else {
           const addr_key = frame + 1024;
           key.copy(HEAP, addr_key);
-          result = native.EmuSM4ECBEx(thiz, addr_key, frame, size, encrypt);
+          result = EmuSM4ECBEx(thiz, addr_key, frame, size, encrypt);
           HEAP.fill(0, addr_key, addr_key + 16);
         }
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SM4ECB Error ${result}`);
@@ -1475,11 +1538,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(
             `dongle.CheckPointOnCurveSM2 invalid point size ${point.length}`,
           );
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(64);
         point.copy(HEAP, frame);
-        const result = native.EmuCheckPointOnCurveSM2(thiz, frame, frame + 32);
-        native._emscripten_stack_restore(stack);
+        const result = EmuCheckPointOnCurveSM2(thiz, frame, frame + 32);
+        _emscripten_stack_restore(stack);
 
         return 0 === result;
       }
@@ -1491,16 +1554,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.EmuDecompressPointSM2 invalid X size ${X.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(64);
         X.copy(HEAP, frame + 32);
-        const result = native.EmuDecompressPointSM2(
-          thiz,
-          frame,
-          frame + 32,
-          Yodd,
-        );
-        native._emscripten_stack_restore(stack);
+        const result = EmuDecompressPointSM2(thiz, frame, frame + 32, Yodd);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1515,15 +1573,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(
             `dongle.CheckPointOnCurvePrime256v1 invalid point size ${point.length}`,
           );
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(64);
         point.copy(HEAP, frame);
-        const result = native.EmuCheckPointOnCurvePrime256v1(
-          thiz,
-          frame,
-          frame + 32,
-        );
-        native._emscripten_stack_restore(stack);
+        const result = EmuCheckPointOnCurvePrime256v1(thiz, frame, frame + 32);
+        _emscripten_stack_restore(stack);
 
         return 0 === result;
       }
@@ -1535,16 +1589,16 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.DecompressPointPrime256v1 invalid X size ${X.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(64);
         X.copy(HEAP, frame + 32);
-        const result = native.EmuDecompressPointPrime256v1(
+        const result = EmuDecompressPointPrime256v1(
           thiz,
           frame,
           frame + 32,
           Yodd,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1561,17 +1615,17 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.ComputePubkeyPrime256v1 invalid pkey.size ${privateKey.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         privateKey.copy(HEAP, frame + 64);
-        const result = native.EmuComputePubkeyPrime256v1(
+        const result = EmuComputePubkeyPrime256v1(
           thiz,
           frame,
           frame + 32,
           frame + 64,
         );
         HEAP.fill(0, frame + 64, frame + 96);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1582,15 +1636,15 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
       GenerateKeyPairPrime256v1(): Buffer {
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
-        const result = native.EmuGenerateKeyPairPrime256v1(
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
+        const result = EmuGenerateKeyPairPrime256v1(
           thiz,
           frame,
           frame + 32,
           frame + 64,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
         if (0 !== result)
           throw jsCipher.Annihilus_(
             `dongle.GenerateKeyPairPrime256v1 Error ${result}`,
@@ -1612,11 +1666,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.ComputeSecretPrime256v1 invalid pkey.size ${privateKey.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         privateKey.copy(HEAP, frame + 32);
         point.copy(HEAP, frame + 64);
-        const result = native.EmuComputeSecretPrime256v1(
+        const result = EmuComputeSecretPrime256v1(
           thiz,
           frame,
           frame + 64,
@@ -1624,7 +1678,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 32,
         );
         HEAP.fill(0, frame + 32, frame + 64);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1645,11 +1699,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.SignMessagePrime256v1 invalid pkey.size ${privateKey.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         privateKey.copy(HEAP, frame + 64);
         hash.copy(HEAP, frame + 96);
-        const result = native.EmuSignMessagePrime256v1(
+        const result = EmuSignMessagePrime256v1(
           thiz,
           frame + 64,
           frame + 96,
@@ -1657,7 +1711,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 32,
         );
         HEAP.fill(0, frame + 64, frame + 96);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1680,12 +1734,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(
             `dongle.VerifySignPrime256v1 invalid sign.size ${sign.length}`,
           );
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(256);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(256);
         point.copy(HEAP, frame);
         hash.copy(HEAP, frame + 64);
         sign.copy(HEAP, frame + 128);
-        const result = native.EmuVerifySignPrime256v1(
+        const result = EmuVerifySignPrime256v1(
           thiz,
           frame,
           frame + 32,
@@ -1693,7 +1747,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 128,
           frame + 160,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         return 0 === result;
       }
@@ -1704,15 +1758,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(
             `dongle.CheckPointOnCurveSecp256k1 invalid point size ${point.length}`,
           );
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(64);
         point.copy(HEAP, frame);
-        const result = native.EmuCheckPointOnCurveSecp256k1(
-          thiz,
-          frame,
-          frame + 32,
-        );
-        native._emscripten_stack_restore(stack);
+        const result = EmuCheckPointOnCurveSecp256k1(thiz, frame, frame + 32);
+        _emscripten_stack_restore(stack);
 
         return 0 === result;
       }
@@ -1724,16 +1774,16 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.DecompressPointSecp256k1 invalid X size ${X.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(64);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(64);
         X.copy(HEAP, frame + 32);
-        const result = native.EmuDecompressPointSecp256k1(
+        const result = EmuDecompressPointSecp256k1(
           thiz,
           frame,
           frame + 32,
           Yodd,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1750,17 +1800,17 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.ComputePubkeySecp256k1 invalid pkey.size ${privateKey.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         privateKey.copy(HEAP, frame + 64);
-        const result = native.EmuComputePubkeySecp256k1(
+        const result = EmuComputePubkeySecp256k1(
           thiz,
           frame,
           frame + 32,
           frame + 64,
         );
         HEAP.fill(0, frame + 64, frame + 96);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1771,15 +1821,15 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
 
       GenerateKeyPairSecp256k1(): Buffer {
         const thiz = CheckInstance();
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
-        const result = native.EmuGenerateKeyPairSecp256k1(
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
+        const result = EmuGenerateKeyPairSecp256k1(
           thiz,
           frame,
           frame + 32,
           frame + 64,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
         if (0 !== result)
           throw jsCipher.Annihilus_(
             `dongle.GenerateKeyPairSecp256k1 Error ${result}`,
@@ -1801,11 +1851,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.ComputeSecretSecp256k1 invalid pkey.size ${privateKey.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         privateKey.copy(HEAP, frame + 32);
         point.copy(HEAP, frame + 64);
-        const result = native.EmuComputeSecretSecp256k1(
+        const result = EmuComputeSecretSecp256k1(
           thiz,
           frame,
           frame + 64,
@@ -1813,7 +1863,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 32,
         );
         HEAP.fill(0, frame + 32, frame + 64);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1834,11 +1884,11 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
             `dongle.SignMessageSecp256k1 invalid pkey.size ${privateKey.length}`,
           );
 
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(128);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(128);
         privateKey.copy(HEAP, frame + 64);
         hash.copy(HEAP, frame + 96);
-        const result = native.EmuSignMessageSecp256k1(
+        const result = EmuSignMessageSecp256k1(
           thiz,
           frame + 64,
           frame + 96,
@@ -1846,7 +1896,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 32,
         );
         HEAP.fill(0, frame + 64, frame + 96);
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         if (0 !== result)
           throw jsCipher.Annihilus_(
@@ -1869,12 +1919,12 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           throw jsCipher.Annihilus_(
             `dongle.VerifySignSecp256k1 invalid sign.size ${sign.length}`,
           );
-        const stack = native.emscripten_stack_get_current();
-        const frame = native._emscripten_stack_alloc(256);
+        const stack = emscripten_stack_get_current();
+        const frame = _emscripten_stack_alloc(256);
         point.copy(HEAP, frame);
         hash.copy(HEAP, frame + 64);
         sign.copy(HEAP, frame + 128);
-        const result = native.EmuVerifySignSecp256k1(
+        const result = EmuVerifySignSecp256k1(
           thiz,
           frame,
           frame + 32,
@@ -1882,7 +1932,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
           frame + 128,
           frame + 160,
         );
-        native._emscripten_stack_restore(stack);
+        _emscripten_stack_restore(stack);
 
         return 0 === result;
       }

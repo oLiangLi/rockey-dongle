@@ -576,6 +576,12 @@ const AllFunc: TypeFuncCall[] = [
     max: 4,
     op: OpCode.kExEd25519Verify,
   },
+  {
+    name: "kExecuteCreateEnTrust",
+    min: 0,
+    max: 0,
+    op: OpCode.kExecuteCreateEnTrust,
+  },
 ];
 
 const table_memory_op = new Map<string, TypeMemoryOp>();
