@@ -289,7 +289,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecuteCreateEnTrust(VM_t& vm, void* InOutBu
   if (0 != result)
     return result;
 
-  result = RockeyTrustExecuteCheckEnTrust(vm.dongle_, InOutBuf, ExtendBuf);
+  result = RockeyTrustExecuteCheckEnTrust(vm.dongle_, InOutBuf, ExtendBuf, true);
   if (0 != result)
     return result;
 
@@ -491,8 +491,56 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckMaster(Dongle* dongle, void* InO
   return 0;
 }
 
-rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* InOutBuf /* 1024 */, void* ExtendBuf) {
-  return -ENOSYS;
+rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* data, void* buffer, bool check_master) {
+  uint8_t* const ecdsa_pubkey = (uint8_t*)buffer + 256;
+  int result = RockeyTrustExecuteCheckMaster(dongle, data, buffer);
+  if (0 != result)
+    return result;
+
+  memcpy(ecdsa_pubkey, (uint8_t*)data + WorldPublic::kOffsetPubkey_SM2ECDSA, 64);
+  result = dongle->ReadDataFile(Dongle::kFactoryDataFileId, WorldEnTrust::kOffsetDataFile, data, 1024);
+  if (0 != result)
+    return result;
+
+  auto* entrust = static_cast<WorldEnTrust*>(data);
+  result = dongle->SM3(entrust, WorldEnTrust::kOffset_SM2ECDSASignature_, (uint8_t*)buffer);
+  if (0 != result)
+    return result;
+  rlLOGXI(TAG, buffer, 32, "[EnTrust.V]SM3!");
+
+  result = dongle->SM2Verify(ecdsa_pubkey, ecdsa_pubkey + 32, (uint8_t*)buffer, entrust->dongle_sm2ecdsa_sign_,
+                             entrust->dongle_sm2ecdsa_sign_ + 32);
+  if (0 != result)
+    return result;
+
+  rlLOGI(TAG, "ExecuteCheckEnTrust OK ... 1");
+  if(!check_master)
+    return 0;
+
+  size_t size = sizeof(entrust->dongle_master_secret__);
+  uint8_t* const MASTER_SECRET = (uint8_t*)buffer + 32;
+  result = dongle->SM2Decrypt(WorldPublic::kFileSM2ECDSA, entrust->dongle_master_secret__,
+                              sizeof(entrust->dongle_master_secret__), MASTER_SECRET, &size);
+  if (0 != result) {
+    rlLOGE(TAG, "SM2Decrypt MASTER_SECRET Failed %d!", result);
+    return result;
+  }
+
+  memcpy(MASTER_SECRET - 28, entrust->nonce_, sizeof(entrust->nonce_));
+  *(uint32_t*)buffer = WorldEnTrust::kEx25519Magic;
+  result = dongle->SM3(buffer, 32 + 128, (uint8_t*)buffer);
+  memset(MASTER_SECRET, 0, 128);
+  if (0 != result)
+    return result;
+
+  result = dongle->ComputePubkeyCurve25519((uint8_t*)buffer, (uint8_t*)buffer);
+  if (0 != result || 0 != memcmp(entrust->dongle__x25519_pubkey_, buffer, 32)) {
+    rlLOGE(TAG, "MASTER_SECRET.CHECK Failed %d!", result);
+    return -EFAULT;
+  }
+
+  rlLOGI(TAG, "ExecuteCheckEnTrust OK ... 2");
+  return 0;
 }
 
 static int RockeyCreateEnTrust(Dongle* dongle, void* data, void* buffer, uint8_t* X_Y_K, EnTrustRequest& req) {
@@ -542,8 +590,11 @@ static int RockeyCreateEnTrust(Dongle* dongle, void* data, void* buffer, uint8_t
     return -EFAULT;
   }
 
-  memcpy(&X_Y_K[4], entrust->nonce_, 28);  /// KDF[4] | NONCE[28] | MKEY[128] ...
-  dongle->RandBytes(&X_Y_K[32], 128);      /// MasterSecret ...
+  memcpy(&X_Y_K[4], entrust->nonce_, 28);       /// KDF[4] | NONCE[28] | MKEY[128] ...
+  result = dongle->RandBytes(&X_Y_K[32], 128);  /// MASTER_SECRET ...
+  if (0 != result)
+    return result;
+
   result = dongle->ReadDataFile(Dongle::kFactoryDataFileId,
                                 WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECDSA, buffer, 64);
   if (0 != result)
@@ -606,7 +657,7 @@ static int RockeyCreateEnTrust(Dongle* dongle, void* data, void* buffer, uint8_t
   result = dongle->SM3(entrust, WorldEnTrust::kOffset_SM2ECDSASignature_, entrust->dongle_sm2ecdsa_sign_);
   if (0 != result)
     return result;
-
+  rlLOGXI(TAG, entrust->dongle_sm2ecdsa_sign_, 32, "[EnTrust.G]SM3!");
   result = dongle->SM2Sign(WorldPublic::kFileSM2ECDSA, entrust->dongle_sm2ecdsa_sign_,
                            &entrust->dongle_sm2ecdsa_sign_[0], &entrust->dongle_sm2ecdsa_sign_[32]);
   if (0 != result)

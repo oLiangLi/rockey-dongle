@@ -78,10 +78,12 @@ class Sha512Ctx : public HashBase<Sha512Ctx> {
 
 class Curve25519 {
  public:
-  void ComputePubkey(uint8_t pubkey[32], const uint8_t prikey[32]) {
+  void ComputePubkey(uint8_t pubkey_[32], const uint8_t prikey[32]) {
+    uint8_t pubkey[32];
     memset(pubkey, 0, 32);
     pubkey[0] = 9;
     X25519(pubkey, prikey, pubkey);
+    memcpy(pubkey_, pubkey, 32);
   }
   void X25519(uint8_t secret[32], const uint8_t prikey[32], const uint8_t pubkey[32]);
 };

@@ -339,7 +339,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecuteCreateEnTrust(VM_t& vm, void* InOutBu
  *!
  */
 rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckMaster(Dongle* dongle, void* InOutBuf /* 1024 */, void* ExtendBuf);
-rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* InOutBuf /* 1024 */, void* ExtendBuf);
+rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* data, void* buffer, bool check_master);
 
 enum class OpCode : uint16_t {
   /**
