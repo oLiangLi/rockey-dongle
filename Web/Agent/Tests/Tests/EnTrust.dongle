@@ -1,0 +1,29 @@
+﻿public 1024;
+
+const {	
+	kWorldMagic = 0xC8C04E1F;
+	kTrustMagic = 0x532D73D3;
+
+	kOffsetWorldMagic = 256;
+	kOffsetTrustMagic = kOffsetWorldMagic + 4;
+	kOffsetNonce = kOffsetTrustMagic + 4;
+
+	kEnTrust0 = kOffsetNonce + 32;
+	kEnTrust1 = kEnTrust0 + 80;
+	kEnTrust2 = kEnTrust1 + 80;
+	kEnTrust3 = kEnTrust2 + 80;
+	kEnTrust4 = kEnTrust3 + 80;
+}
+
+rLANG_WORLD_MAGIC @ kOffsetWorldMagic [4] = { kWorldMagic };
+rLANG_EnTRUST_MAGIC @ kOffsetTrustMagic [4] = { kTrustMagic };
+rLANG_EnTRUST_NONCE @ kOffsetNonce [32] = { ${NONCE} }; /// 初始化时选择的随机数, 它应该选择 TRNG[32] ...
+
+rLANG_EnTRUST_0 @ kEnTrust0 [80];
+rLANG_EnTRUST_1 @ kEnTrust1 [80];
+rLANG_EnTRUST_2 @ kEnTrust2 [80];
+rLANG_EnTRUST_3 @ kEnTrust3 [80];
+rLANG_EnTRUST_4 @ kEnTrust4 [80];
+
+ExecuteCreateEnTrust();
+Exit(42); /// ExecuteCreateEnTrust 会自动调用 Exit, 本语句会被忽略 ...
