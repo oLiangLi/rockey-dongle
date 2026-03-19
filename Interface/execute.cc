@@ -506,8 +506,6 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* da
   result = dongle->SM3(entrust, WorldEnTrust::kOffset_SM2ECDSASignature_, (uint8_t*)buffer);
   if (0 != result)
     return result;
-  rlLOGXI(TAG, buffer, 32, "[EnTrust.V]SM3!");
-
   result = dongle->SM2Verify(ecdsa_pubkey, ecdsa_pubkey + 32, (uint8_t*)buffer, entrust->dongle_sm2ecdsa_sign_,
                              entrust->dongle_sm2ecdsa_sign_ + 32);
   if (0 != result)
@@ -657,7 +655,6 @@ static int RockeyCreateEnTrust(Dongle* dongle, void* data, void* buffer, uint8_t
   result = dongle->SM3(entrust, WorldEnTrust::kOffset_SM2ECDSASignature_, entrust->dongle_sm2ecdsa_sign_);
   if (0 != result)
     return result;
-  rlLOGXI(TAG, entrust->dongle_sm2ecdsa_sign_, 32, "[EnTrust.G]SM3!");
   result = dongle->SM2Sign(WorldPublic::kFileSM2ECDSA, entrust->dongle_sm2ecdsa_sign_,
                            &entrust->dongle_sm2ecdsa_sign_[0], &entrust->dongle_sm2ecdsa_sign_[32]);
   if (0 != result)
