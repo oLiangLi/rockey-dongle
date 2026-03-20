@@ -7,7 +7,52 @@ rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
+Dongle::Dongle() {
+  HwARandBytes((uint8_t*)entropy_local_, sizeof(entropy_local_));
+}
+
+int Dongle::SeedBytes(const void* buffer, size_t size) {
+  Sha512Ctx()
+      .Init()
+      .Update(entropy_local_, sizeof(entropy_local_))
+      .Update(buffer, size)
+      .Final((uint8_t*)entropy_local_);
+  return 0;
+}
+
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
+  union {
+    uint8_t stream[64];
+    uint32_t v_i32[16];
+  };
+
+  uint8_t* p = buffer;
+  HwARandBytes(p, size <= 128 ? size : 128);
+
+  while (size >= 64) {
+    ++entropy_local_[15];
+    rlCryptoChaCha20Block(entropy_local_, stream);
+    for (size_t i = 0; i < 64; ++i)
+      p[i] ^= stream[i];
+
+    p += 64;
+    size -= 64;
+  }
+
+  if (size > 0) {
+    ++entropy_local_[15];
+    rlCryptoChaCha20Block(entropy_local_, stream);
+    for (size_t i = 0; i < size; ++i)
+      p[i] ^= stream[i];
+  }
+
+  SHA512(buffer, size, stream);
+  for (int i = 0; i < 16; ++i)
+    entropy_local_[i] += v_i32[i];
+  return 0;
+}
+
+int Dongle::HwARandBytes(uint8_t* buffer, size_t size) {
   return DONGLE_CHECK(get_random(buffer, size));
 }
 int Dongle::SeedSecret(const void* input, size_t size, void* value) {
@@ -388,10 +433,10 @@ int Dongle::SM2Sign(const uint8_t private_[32], const uint8_t hash_[32], uint8_t
 }
 
 int Dongle::SM2Verify(const uint8_t X[32],
-              const uint8_t Y[32],
-              const uint8_t hash_[32],
-              const uint8_t R[32],
-              const uint8_t S[32]) override {
+                      const uint8_t Y[32],
+                      const uint8_t hash_[32],
+                      const uint8_t R[32],
+                      const uint8_t S[32]) override {
   ECCSM2_PUBLIC_KEY pubkey;
   uint8_t hash[32], sign[64];
 
@@ -471,6 +516,6 @@ int Dongle::CheckError(DWORD error) {
   return -1;
 }
 
-} // namespace dongle
+}  // namespace dongle
 
 rLANG_DECLARE_END

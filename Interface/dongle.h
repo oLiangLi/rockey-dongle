@@ -201,7 +201,7 @@ class Dongle {
   }
 
  public:
-  Dongle() = default;
+  Dongle();
   virtual ~Dongle() = default;
 
   Dongle(const Dongle&) = delete;
@@ -216,8 +216,13 @@ class Dongle {
   }
   void ClearLastError() { last_error_ = 0; }
 
+ protected:
+  uint32_t entropy_local_[16] = {0};
+
  public:
   virtual int RandBytes(uint8_t* buffer, size_t size);
+  virtual int SeedBytes(const void* buffer, size_t size);
+  virtual int HwARandBytes(uint8_t* buffer, size_t size);
   virtual int SeedSecret(const void* input, size_t size, void* value /* size_is(16) */);
 
 public:

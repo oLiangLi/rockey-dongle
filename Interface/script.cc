@@ -45,6 +45,7 @@ VM_t::VM_t(Dongle* dongle, void* data, void* buffer) : dongle_(dongle), data_(da
   memset(text_, 0, sizeof(text_));
   memset(stack_, 0, sizeof(stack_));
   assert(dongle && data && buffer);
+  dongle->SeedBytes(data, 1024);
 }
 
 int VM_t::Initialize(const void* text, int szText, int szOut) {

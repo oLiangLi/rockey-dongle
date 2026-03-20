@@ -43,7 +43,7 @@ rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state)
 rLANGIMPORT void rLANGAPI rLANG_RAND_Bytes(void* buf, int num)
     __attribute__((__import_module__("rLANG"), __import_name__("RAND_Bytes")));
 
-#else /* __EMSCRIPTEN__ && rLANG_WORLD_STANDALONE */
+#else  /* __EMSCRIPTEN__ && rLANG_WORLD_STANDALONE */
 
 void rLANGAPI rLANG_RAND_Bytes(void* buf, int num) {
   RAND_bytes((uint8_t*)buf, num);
@@ -87,7 +87,7 @@ rLANGIMPORT int rLANGAPI SetDongleLEDState(void* thiz, LED_STATE state) {
 #endif /* */
 
 class DongleHandle {
-public:
+ public:
   DongleHandle(const DongleHandle&) = delete;
   DongleHandle& operator=(const DongleHandle&) = delete;
 
@@ -101,7 +101,7 @@ public:
       uint8_t master_ed25519_[32];
       uint8_t master_xx25519_[32];
     } public_;
-    uint8_t master_prikey_encrypt_[64]; // Ed25519[32] + X25519[32]
+    uint8_t master_prikey_encrypt_[64];  // Ed25519[32] + X25519[32]
     uint8_t sign_[64];
   };
 
@@ -110,7 +110,7 @@ public:
     return 0;
   }
 
-public:
+ public:
   static constexpr uint32_t rLANG_DONGLE_MAGIC = rLANG_DECLARE_MAGIC_Xs("DONGL");
   static DongleHandle* Create(PERMISSION perm, const uint8_t master_[64], uint32_t uid, int loop) {
     DongleHandle* self = new DongleHandle(perm);
@@ -137,9 +137,7 @@ public:
     struct rlTM_t tm;
     rLANG_GetTimeFromDate(&tm, rLANG_GetCurrentDate());
 
-    auto V2BCD = [](int v) {
-      return (v / 10) * 16 + (v % 10);
-    };
+    auto V2BCD = [](int v) { return (v / 10) * 16 + (v % 10); };
 
     sb.public_.dongle_info_.ver_ = 0x0101;
     sb.public_.dongle_info_.type_ = rLANG_DECLARE_MAGIC_Xs("EMULA");
@@ -199,10 +197,9 @@ public:
                              int loop,
                              DongleHandle** outHandle) {
     DONGLE_VERIFY(nullptr == outHandle || nullptr == *outHandle);
-    if(rLANG_WORLD_MAGIC != sb.public_.world_magic_ ||
-      rLANG_DONGLE_MAGIC != sb.public_.file_magic_ ||
-      0xFF != sb.public_.dongle_info_.hid_[0] ||
-      !Ed25519Verify(&sb, sizeof(SupperBlock), sb.public_.master_ed25519_)) {
+    if (rLANG_WORLD_MAGIC != sb.public_.world_magic_ || rLANG_DONGLE_MAGIC != sb.public_.file_magic_ ||
+        0xFF != sb.public_.dongle_info_.hid_[0] ||
+        !Ed25519Verify(&sb, sizeof(SupperBlock), sb.public_.master_ed25519_)) {
       return -EFAULT;
     }
 
@@ -211,7 +208,7 @@ public:
 
     uint8_t secret[256];
     Dongle::SecretBuffer<16, uint32_t> state_mask_;
-    Dongle::SecretBuffer<64> MASTER_PKMASK, MASTER_PRIKEY;    
+    Dongle::SecretBuffer<64> MASTER_PKMASK, MASTER_PRIKEY;
 
     rLANG_RAND_Bytes((uint8_t*)&state_mask_[0], 64);
     rlCryptoChaCha20Block(state_mask_, MASTER_PKMASK);
@@ -260,7 +257,7 @@ public:
     return 0;
   }
 
-public:
+ public:
   size_t Write(uint8_t* buffer) {
     uint8_t* p = buffer;
 
@@ -324,7 +321,7 @@ public:
       r = -EFAULT;
     }
 
-    while(size > 0 && r >= 0) {
+    while (size > 0 && r >= 0) {
       FileHeader header;
 
       if (size < sizeof(header)) {
@@ -342,7 +339,7 @@ public:
         break;
       }
 
-      if(thiz->secret_files_.find(header) != thiz->secret_files_.end()) {
+      if (thiz->secret_files_.find(header) != thiz->secret_files_.end()) {
         r = -EFAULT;
         break;
       }
@@ -380,7 +377,7 @@ public:
     return r;
   }
 
-public:
+ public:
   static bool Ed25519Verify(const void* storage, size_t size, const uint8_t pubkey[32]) {
     DONGLE_VERIFY(size >= 64);
 
@@ -396,7 +393,7 @@ public:
   static void ExtendMasterSecret(uint8_t master_secret[64], int loop) {
     if (loop < 256)
       loop = 256;
-    
+
     for (int i = 0; i < loop; ++i) {
       struct {
         uint8_t ed25519[32];
@@ -491,17 +488,15 @@ public:
   }
 
   static constexpr size_t FileStorageSize(size_t size) {
-    return size + 128;  /* Header[8] + ACL[...] + X25519.pubkey[32] + Ed25519.Sign[64] */
+    return size + 128; /* Header[8] + ACL[...] + X25519.pubkey[32] + Ed25519.Sign[64] */
   }
-  static constexpr size_t FileContentSize(size_t size) {
-    return size + 96;   /* X25519.pubkey[32] + Ed25519.Sign[64] */
-  }
+  static constexpr size_t FileContentSize(size_t size) { return size + 96; /* X25519.pubkey[32] + Ed25519.Sign[64] */ }
 
   int CreateSecretFile(SECRET_STORAGE_TYPE type, uint16_t index, size_t size) {
     if (size >= 0xFF00)
       return -E2BIG;
 
-    FileHeader header{ type, 1, index, (uint32_t)size };
+    FileHeader header{type, 1, index, (uint32_t)size};
     if (secret_files_.find(header) != secret_files_.end())
       return -EEXIST;
 
@@ -526,7 +521,7 @@ public:
     return 0;
   }
 
-  template<typename CALLBACK_FUNCTION_>
+  template <typename CALLBACK_FUNCTION_>
   int OpWriteSecretFile(SECRET_STORAGE_TYPE type, uint16_t index, CALLBACK_FUNCTION_ callback) {
     auto iter = secret_files_.find(FileHeader{type, 1, index});
     if (iter == secret_files_.end())
@@ -535,7 +530,7 @@ public:
     auto& header = iter->first;
     size_t size = header.size_;
     int result = 0;
-    
+
     if (header.empty_file_) {
       header.empty_file_ = 0;
       DONGLE_VERIFY(iter->second.empty());
@@ -632,7 +627,52 @@ rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t
   return result;
 }
 
+Dongle::Dongle() {
+  rLANG_RAND_Bytes(entropy_local_, sizeof(entropy_local_));
+}
+
+int Dongle::SeedBytes(const void* buffer, size_t size) {
+  Sha512Ctx()
+      .Init()
+      .Update(entropy_local_, sizeof(entropy_local_))
+      .Update(buffer, size)
+      .Final((uint8_t*)entropy_local_);
+  return 0;
+}
+
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
+  union {
+    uint8_t stream[64];
+    uint32_t v_i32[16];
+  };
+
+  uint8_t* p = buffer;
+  HwARandBytes(p, size);
+
+  while (size >= 64) {
+    ++entropy_local_[15];
+    rlCryptoChaCha20Block(entropy_local_, stream);
+    for (size_t i = 0; i < 64; ++i)
+      p[i] ^= stream[i];
+
+    p += 64;
+    size -= 64;
+  }
+
+  if (size > 0) {
+    ++entropy_local_[15];
+    rlCryptoChaCha20Block(entropy_local_, stream);
+    for (size_t i = 0; i < size; ++i)
+      p[i] ^= stream[i];
+  }
+
+  SHA512(buffer, size, stream);
+  for (int i = 0; i < 16; ++i)
+    entropy_local_[i] += v_i32[i];
+  return 0;
+}
+
+int Dongle::HwARandBytes(uint8_t* buffer, size_t size) {
   rLANG_RAND_Bytes(buffer, (int)size);
   return 0;
 }
@@ -714,7 +754,7 @@ int Dongle::WriteDataFile(int id, size_t offset, const void* buffer, size_t size
   if (0 == size)
     return 0;
 
-  if (id <= 0 || id > 0xFFFF ||  offset >= 0xFFF0 || size >= 0xFFF0)
+  if (id <= 0 || id > 0xFFFF || offset >= 0xFFF0 || size >= 0xFFF0)
     return DONGLE_CHECK(-EINVAL);
 
   if (!handle_)
@@ -1546,6 +1586,6 @@ int Emulator::Open(const char* file, const char* master_secret, int loop) {
   return Open(file, &buffer[0], loop);
 }
 
-} // namespace dongle
+}  // namespace dongle
 
 rLANG_DECLARE_END

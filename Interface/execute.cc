@@ -45,7 +45,6 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
   int result = 0;
   rLANG_ABIREQUIRE(256 == sizeof(v));
   memcpy(&v, InOutBuf, sizeof(v));
-
   if (vm.data_ != InOutBuf || vm.buffer_ != ExtendBuf)
     return -EBADF;
 
@@ -512,7 +511,7 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* da
     return result;
 
   rlLOGI(TAG, "ExecuteCheckEnTrust OK ... 1");
-  if(!check_master)
+  if (!check_master)
     return 0;
 
   size_t size = sizeof(entrust->dongle_master_secret__);
@@ -556,19 +555,9 @@ static int RockeyCreateEnTrust(Dongle* dongle, void* data, void* buffer, uint8_t
   uint8_t* const cipher = &X_Y_K[32];
   memmove(K, &X_Y_K[64], 32);
 
-#if 1
   result = dongle->RandBytes(&entrust->nonce_[0], sizeof(entrust->nonce_));
   if (0 != result)
     return result;
-#else
-  result = dongle->RandBytes((uint8_t*)&req, 8);
-  if(0 != result)
-    return result;
-  result = dongle->SM3(&req, sizeof(EnTrustRequest), &X_Y_K[32]);
-  if(0 != result)
-    return result;
-  memcpy(entrust->nonce_, &X_Y_K[32], 28);
-#endif
 
   for (int i = 0; i < 5; ++i) {
     WorldEnTrust::EnTrustKey& ekey = entrust->dongle_entrust_[i];

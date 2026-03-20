@@ -66,6 +66,52 @@ rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t
 }
 
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {
+  union {
+    uint8_t stream[64];
+    uint32_t v_i32[16];
+  };
+
+  uint8_t* p = buffer;
+  if (0 != HwARandBytes(p, size <= 128 ? size : 128))
+    RAND_bytes(buffer, (int)size);
+
+  while (size >= 64) {
+    ++entropy_local_[15];
+    rlCryptoChaCha20Block(entropy_local_, stream);
+    for (size_t i = 0; i < 64; ++i)
+      p[i] ^= stream[i];
+
+    p += 64;
+    size -= 64;
+  }
+
+  if (size > 0) {
+    ++entropy_local_[15];
+    rlCryptoChaCha20Block(entropy_local_, stream);
+    for (size_t i = 0; i < size; ++i)
+      p[i] ^= stream[i];
+  }
+
+  SHA512(buffer, size, stream);
+  for (int i = 0; i < 16; ++i)
+    entropy_local_[i] += v_i32[i];
+  return 0;
+}
+
+int Dongle::SeedBytes(const void* buffer, size_t size) {
+  Sha512Ctx()
+      .Init()
+      .Update(entropy_local_, sizeof(entropy_local_))
+      .Update(buffer, size)
+      .Final((uint8_t*)entropy_local_);
+  return 0;
+}
+
+Dongle::Dongle() {
+  RAND_bytes((uint8_t*)entropy_local_, (int)sizeof(entropy_local_));
+}
+
+int Dongle::HwARandBytes(uint8_t* buffer, size_t size) {
   return DONGLE_CHECK(Dongle_GenRandom(handle_, static_cast<int>(size), buffer));
 }
 int Dongle::SeedSecret(const void* input, size_t size, void* value) {
@@ -106,7 +152,6 @@ int Dongle::ReadShareMemory(uint8_t buffer[32]) {
 int Dongle::WriteShareMemory(const uint8_t buffer[32]) {
   return DONGLE_CHECK(Dongle_WriteShareMemory(handle_, const_cast<uint8_t*>(&buffer[0]), 32));
 }
-
 
 int Dongle::DeleteFile(SECRET_STORAGE_TYPE type_, int id) {
   WORD type;
@@ -260,8 +305,7 @@ int Dongle::WriteKeyFile(int id, const void* buffer, size_t size, SECRET_STORAGE
     return last_error_ = -EINVAL;
   if (type != SECRET_STORAGE_TYPE::kTDES && type != SECRET_STORAGE_TYPE::kSM4)
     return last_error_ = -EINVAL;
-  return DONGLE_CHECK(
-      Dongle_WriteFile(handle_, FILE_KEY, id, 0, static_cast<uint8_t*>(const_cast<void*>(buffer)), 16));
+  return DONGLE_CHECK(Dongle_WriteFile(handle_, FILE_KEY, id, 0, static_cast<uint8_t*>(const_cast<void*>(buffer)), 16));
 }
 
 int Dongle::RSAPrivate(int id,
@@ -829,8 +873,8 @@ int RockeyARM::SetUserID(uint32_t id) {
 int RockeyARM::ChangePIN(PERMISSION perm, const char* old, const char* pin, int count) {
   return DONGLE_CHECK(Dongle_ChangePIN(handle_,
                                        perm == PERMISSION::kAdministrator ? FLAG_ADMINPIN
-                                       : perm == PERMISSION::kNormal     ? FLAG_USERPIN
-                                                                         : -1,
+                                       : perm == PERMISSION::kNormal      ? FLAG_USERPIN
+                                                                          : -1,
                                        const_cast<char*>(old), const_cast<char*>(pin), count));
 }
 int RockeyARM::ResetUserPIN(const char* admin) {
