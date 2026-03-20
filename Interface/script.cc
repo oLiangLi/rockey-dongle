@@ -15,24 +15,6 @@ static inline constexpr int Opcode_basic(uint16_t op) {
   return op & 0x03FF;
 }
 
-static inline constexpr bool operator==(uint16_t op, OpCode code) {
-  return static_cast<uint16_t>(code) == op;
-}
-static inline constexpr bool operator!=(uint16_t op, OpCode code) {
-  return static_cast<uint16_t>(code) != op;
-}
-static inline constexpr bool operator<(uint16_t op, OpCode code) {
-  return static_cast<OpCode>(op) < code;
-}
-static inline constexpr bool operator>(uint16_t op, OpCode code) {
-  return static_cast<OpCode>(op) > code;
-}
-static inline constexpr bool operator<=(uint16_t op, OpCode code) {
-  return static_cast<OpCode>(op) <= code;
-}
-static inline constexpr bool operator>=(uint16_t op, OpCode code) {
-  return static_cast<OpCode>(op) >= code;
-}
 static inline constexpr PERMISSION PermissionFrom(int code) {
   if (code == static_cast<int>(PERMISSION::kAdministrator))
     return PERMISSION::kAdministrator;
@@ -153,13 +135,18 @@ int VM_t::OpFuncBasic(uint16_t op, int argc, int32_t argv[]) {
 int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
   int value = 0;
 
+  /**
+   *! kKeyIdGlobalSECRET : 只允许 kWorldInitialize/kUpdateMasterSecret/kComputeSecretBytes 操作 ...
+   */
   if (op == OpCode::kDeleteDataFile) {
     cycles_ -= 1024;
     if (argc != 1) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      if (id == kKeyIdGlobalSECRET) {
+        zero_ = -EACCES;
+      } else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value = dongle_->DeleteFile(SECRET_STORAGE_TYPE::kData, id);
@@ -174,9 +161,6 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       PERMISSION rPerm = argc >= 3 ? PermissionFrom(argv[2]) : PERMISSION::kAnonymous;
       PERMISSION wPerm = argc >= 4 ? PermissionFrom(argv[3]) : PERMISSION::kAnonymous;
 
-      /**
-       *! kKeyIdGlobalSECRET : 只能由kWorldInitialize创建 ...
-       */
       if ((id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) || id == kKeyIdGlobalSECRET) {
         zero_ = -EACCES;
       } else {
@@ -190,7 +174,7 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0], offset = argv[1], addr = argv[2], size = argv[3];
-      if (id == kKeyIdGlobalSECRET && valid_permission_ != PERMISSION::kAdministrator) {
+      if (id == kKeyIdGlobalSECRET) {
         zero_ = -EACCES;
       } else {
         void* p = OpCheckMM(addr, size);
@@ -268,7 +252,9 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      if (id == kKeyIdGlobalRSA2048 && argc >= 3) {
+        zero_ = -EACCES;
+      } else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         value =
@@ -295,7 +281,9 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       const void* pubkey = OpCheckMM(argv[1], sizeof(pubk));
       const void* prikey = OpCheckMM(argv[2], 256);
 
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      if (id == kKeyIdGlobalRSA2048) {
+        zero_ = -EACCES;
+      } else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else if (pubkey && prikey) {
         memcpy(buffer, prikey, 256);
@@ -489,6 +477,8 @@ int VM_t::OpFuncP256(uint16_t op, int argc, int32_t argv[]) {
         zero_ = -EACCES;
       } else if (!pubk || (argc >= 3 && !(pkey = OpCheckMM(argv[2], 32)))) {
         zero_ = SIGSEGV;
+      } else if (id == kKeyIdGlobalP256ECDSA && pkey) {
+        zero_ = -EACCES;
       } else {
         value = dongle_->GenerateP256(id, &pubk[0], &pubk[32], static_cast<uint8_t*>(pkey));
       }
@@ -500,7 +490,9 @@ int VM_t::OpFuncP256(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      if (id == kKeyIdGlobalP256ECDSA) {
+        zero_ = -EACCES;
+      } else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         uint8_t* pkey = static_cast<uint8_t*>(OpCheckMM(argv[1], 32));
@@ -671,6 +663,8 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
         zero_ = -EACCES;
       } else if (!pubk || (argc >= 3 && !(pkey = OpCheckMM(argv[2], 32)))) {
         zero_ = SIGSEGV;
+      } else if (id == kKeyIdGlobalSM2ECDSA && pkey) {
+        zero_ = -EACCES;
       } else {
         value = dongle_->GenerateSM2(id, &pubk[0], &pubk[32], static_cast<uint8_t*>(pkey));
       }
@@ -682,7 +676,10 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      if(id == kKeyIdGlobalSM2ECDSA) {
+        zero_ = -EACCES;
+      }
+      else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         uint8_t* pkey = static_cast<uint8_t*>(OpCheckMM(argv[1], 32));
@@ -1567,13 +1564,8 @@ int VM_t::Execute() {
               zero_ = SIGILL;
             }
           } else /* 0x280 ... 0x2FF */ {
-            zero_ = SIGILL;
-
-            if (op == OpCode::kExecuteHelloWorld) {
-              zero_ = value = dongle_->RandBytes((uint8_t*)data_, kSizeData);
-            }
-
-            break;
+            value = OpExecute(op, argc_, argv_);
+            break; /* Exit */
           }
         } else {
           zero_ = SIGILL;

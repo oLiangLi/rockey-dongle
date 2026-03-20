@@ -169,6 +169,16 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
   return vm.Initialize(&v.text_.script_, sizeof(v.text_.script_), v.text_.size_public_);
 }
 
+int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
+  int value = 0;
+  if (op == OpCode::kExecuteHelloWorld) {
+    value = dongle_->RandBytes((uint8_t*)data_, 1024);
+  } else {
+    return zero_ = SIGILL;
+  }
+  return value;
+}
+
 }  // namespace script
 }  // namespace dongle
 

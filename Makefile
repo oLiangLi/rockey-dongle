@@ -70,11 +70,11 @@ clean-dongle:
 ##
 ##
 foobar:
-	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) prepare
-	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) optimize
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) prepare  R=0
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) optimize R=0
 
 clean-foobar:
-	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) clean-all
+	$(MAKE) -C $(wORLD_ROOT) X4C_BOARD=foobar wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) clean-all R=0
 
 ##
 ##

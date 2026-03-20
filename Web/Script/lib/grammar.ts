@@ -577,10 +577,46 @@ const AllFunc: TypeFuncCall[] = [
     op: OpCode.kExEd25519Verify,
   },
   {
-    name: "kExecuteCreateEnTrust",
+    name: "kWorldInitialize",
     min: 0,
     max: 0,
-    op: OpCode.kExecuteCreateEnTrust,
+    op: OpCode.kWorldInitialize,
+  },
+  {
+    name: "kVerifyWorldPublic",
+    min: 0,
+    max: 0,
+    op: OpCode.kVerifyWorldPublic,
+  },
+  {
+    name: "kUpdateSM2ECIESKey",
+    min: 1,
+    max: 2,
+    op: OpCode.kUpdateSM2ECIESKey
+  },
+  {
+    name: "kUpdateMasterSecret",
+    min: 0,
+    max: 0,
+    op: OpCode.kUpdateMasterSecret
+  },
+  {
+    name: "kComputeSecretBytes",
+    min: 1,
+    max: 1,
+    op: OpCode.kComputeSecretBytes
+  },
+  {
+    name: "kComputeEnTrustData",
+    min: 3,
+    max: 3,
+    op: OpCode.kComputeEnTrustData
+  },
+  {
+    name: "kExecuteHelloWorld",
+    min: 0,
+    max: 0,
+    op: OpCode.kExecuteHelloWorld,
   },
 ];
 

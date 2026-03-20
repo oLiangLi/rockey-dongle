@@ -95,6 +95,7 @@ struct VM_t {
   int OpCurve25519(uint16_t op, int argc, int32_t argv[]);
   int OpEd25519(uint16_t op, int argc, int32_t argv[]);
   int OpManager(uint16_t op, int argc, int32_t argv[]);
+  int OpExecute(uint16_t op, int argc, int32_t argv[]);
 
   static constexpr int kSizeData = 1024;
   static constexpr int kSizeCode = 100;
@@ -256,6 +257,14 @@ rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_Secp256r1 == offsetof(WorldPublic, don
 rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_SM2ECDSA == offsetof(WorldPublic, dongle_sm2ecdsa_sign_));
 rLANG_ABIREQUIRE(WorldPublic::kSizePublic == sizeof(WorldPublic) && 1024 == sizeof(WorldPublic));
 
+/**
+ *!
+ */
+rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf);
+
+/**
+ *!
+ */
 enum class OpCode : uint16_t {
   /**
    *! MASK: 0x0FFF
@@ -497,8 +506,8 @@ enum class OpCode : uint16_t {
    */
   kWorldInitialize = 0x270,  /// argc : 0, 清除SHM/Dashboard数据, 删除5个全局的 kKeyIdGlobal* 的私钥+数据文件 ...
   kVerifyWorldPublic,        /// argc : 0, 验证4组私钥, 1组数据文件的有效性, 并检查是否与 WorldPublic 信息相匹配 ...
-  kUpdateSM2ECIESKey,        /// argc : 2, ***警告***, 这将重新生成SM2ECIES密钥, 之前被此数据加密的文件将无法解密 ...
-  kUpdateMasterSecret,       /// argc : 0, ***警告***, 这将重新生成MASTER_SECRET,之前被此数据加密的文件将无法解密 ...
+  kUpdateSM2ECIESKey,        /// argc : 1/2, ***警告***, 这将重新生成SM2ECIES密钥, 之前被此密钥加密的文件将无法解密 ...
+  kUpdateMasterSecret,       /// argc : 0, ***警告***, 这将重新生成MASTER_SECRET,之前被此密钥加密的文件将无法解密 ...
   kComputeSecretBytes,       /// argc : 1, 参数为64字节的数据, 返回结果填充这64字节数据 ...
   kComputeEnTrustData,       /// argc : 3, value = ComputeEnTrustData(InOut:EnTrust, data, len) ...
 
@@ -511,6 +520,29 @@ enum class OpCode : uint16_t {
    *! [0x300, 0x3FF]的OpCode为以后的扩展所保留 ...
    */
 };
+
+
+/**
+ *!
+ */
+static inline constexpr bool operator==(uint16_t op, OpCode code) {
+  return static_cast<uint16_t>(code) == op;
+}
+static inline constexpr bool operator!=(uint16_t op, OpCode code) {
+  return static_cast<uint16_t>(code) != op;
+}
+static inline constexpr bool operator<(uint16_t op, OpCode code) {
+  return static_cast<OpCode>(op) < code;
+}
+static inline constexpr bool operator>(uint16_t op, OpCode code) {
+  return static_cast<OpCode>(op) > code;
+}
+static inline constexpr bool operator<=(uint16_t op, OpCode code) {
+  return static_cast<OpCode>(op) <= code;
+}
+static inline constexpr bool operator>=(uint16_t op, OpCode code) {
+  return static_cast<OpCode>(op) >= code;
+}
 
 }  // namespace script
 }  // namespace dongle
