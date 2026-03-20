@@ -1,4 +1,4 @@
-wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+﻿wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
 ##
 ##
@@ -33,6 +33,14 @@ install: ; $(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=linux install-platform
 wORLD_PLATFORM_CONFIG := linux
 endif
 endif
+
+##
+## 为程序注入一些外部的随机性 ...
+##
+rLANG_WORLD_SEED_0 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
+rLANG_WORLD_SEED_1 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
+rLANG_WORLD_SEED_2 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
+rLANG_WORLD_SEED_3 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
 
 ##
 ##

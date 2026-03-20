@@ -94,6 +94,7 @@ struct VM_t {
   int OpSecp256k1(uint16_t op, int argc, int32_t argv[]);
   int OpCurve25519(uint16_t op, int argc, int32_t argv[]);
   int OpEd25519(uint16_t op, int argc, int32_t argv[]);
+  int OpManager(uint16_t op, int argc, int32_t argv[]);
 
   static constexpr int kSizeData = 1024;
   static constexpr int kSizeCode = 100;
@@ -112,6 +113,11 @@ struct VM_t {
    *! KeyId == 4 的SM2密钥, 正常只能用于加解密, 只有管理员权限允许用于签名 ...
    */
   static constexpr int kKeyIdGlobalSM2ECIES = 4; /* SM2/PKI-Encrypt/Text-Verify */
+
+  /**
+   *! KeyId == 10 的数据文件, 保存着由SM2ECDSA加密的128字节主密钥 ...
+   */
+  static constexpr int kKeyIdGlobalSECRET = 10; /* SM2ECDSA.Encrypt(MASTER_SECRET[128])  */
 
   union {
     uint16_t text_[kSizeCode];
@@ -208,6 +214,7 @@ struct WorldPublic {
   static constexpr int kFileSECP256r1 = 2;
   static constexpr int kFileRSA2048 = 3;
   static constexpr int kFileSM2ECIES = 4;
+  static constexpr int kFileSECRET = 10;
 
   static constexpr size_t kOffsetPubkey_SM2ECDSA = 20;
   static constexpr size_t kOffsetPubkey_Secp256r1 = 84;
@@ -232,6 +239,7 @@ rLANG_ABIREQUIRE(WorldPublic::kFileSM2ECDSA == VM_t::kKeyIdGlobalSM2ECDSA);
 rLANG_ABIREQUIRE(WorldPublic::kFileSECP256r1 == VM_t::kKeyIdGlobalP256ECDSA);
 rLANG_ABIREQUIRE(WorldPublic::kFileRSA2048 == VM_t::kKeyIdGlobalRSA2048);
 rLANG_ABIREQUIRE(WorldPublic::kFileSM2ECIES == VM_t::kKeyIdGlobalSM2ECIES);
+rLANG_ABIREQUIRE(WorldPublic::kFileSECRET == VM_t::kKeyIdGlobalSECRET);
 
 rLANG_ABIREQUIRE(WorldPublic::kOffsetPubkey_SM2ECDSA == offsetof(WorldPublic, dongle_sm2ecdsa_pubkey_));
 rLANG_ABIREQUIRE(WorldPublic::kOffsetPubkey_Secp256r1 == offsetof(WorldPublic, dongle_secp256r1_pubkey_));
@@ -247,99 +255,6 @@ rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_RSA2048 == offsetof(WorldPublic, dongl
 rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_Secp256r1 == offsetof(WorldPublic, dongle_secp256r1_sign_));
 rLANG_ABIREQUIRE(WorldPublic::kOffsetSign_SM2ECDSA == offsetof(WorldPublic, dongle_sm2ecdsa_sign_));
 rLANG_ABIREQUIRE(WorldPublic::kSizePublic == sizeof(WorldPublic) && 1024 == sizeof(WorldPublic));
-
-struct EnTrustRequest {
-  static constexpr size_t kMaxKeys = 5;
-  static constexpr size_t kSizeEnTrustKey = 80;
-  static constexpr size_t kOffsetInOutBuffer = 256;
-  static constexpr size_t kSizeEnTrustRequest = 440;
-  static constexpr uint32_t kEnTrustRequestMagic = 0x532D73D3;
-
-  struct EnTrustKey {
-    /*  0 */ uint8_t hid_[12];   /* - */
-    /* 12 */ uint8_t kid_[3];    /* 用于 hid_ 索引 SM2 私钥文件, 默认使用 SM3(kFileSM2ECDSA.pubkey)[0,1,2] */
-    /* 15 */ uint8_t zero_;      /* 0 */
-    /* 16 */ uint8_t point_[64]; /* X[32], Y[32] */
-  };
-
-  /*    0 */ uint32_t kWorldMagic;  /// rLANG_WORLD_MAGIC
-  /*    4 */ uint32_t kTrustMagic;  /// kEnTrustRequestMagic
-  /*    8 */ uint8_t nonce_[32];
-  /*   40 */ EnTrustKey dongle_entrust_[kMaxKeys]; /* */
-
-  static constexpr size_t kOffsetWorldMagic = 0;
-  static constexpr size_t kOffsetTrustMagic = 4;
-  static constexpr size_t kOffsetNonce = 8;
-  static constexpr size_t kOffsetEnTrust = 40;
-};
-
-rLANG_ABIREQUIRE(256 == EnTrustRequest::kOffsetInOutBuffer);
-rLANG_ABIREQUIRE(EnTrustRequest::kMaxKeys == 5 && 440 == EnTrustRequest::kSizeEnTrustRequest);
-rLANG_ABIREQUIRE(EnTrustRequest::kSizeEnTrustRequest == sizeof(EnTrustRequest));
-rLANG_ABIREQUIRE(EnTrustRequest::kSizeEnTrustKey == sizeof(EnTrustRequest::EnTrustKey));
-rLANG_ABIREQUIRE(EnTrustRequest::kEnTrustRequestMagic == rLANG_DECLARE_MAGIC_Xs("Trust"));
-rLANG_ABIREQUIRE(EnTrustRequest::kOffsetWorldMagic == offsetof(EnTrustRequest, kWorldMagic));
-rLANG_ABIREQUIRE(EnTrustRequest::kOffsetTrustMagic == offsetof(EnTrustRequest, kTrustMagic));
-rLANG_ABIREQUIRE(EnTrustRequest::kOffsetNonce == offsetof(EnTrustRequest, nonce_));
-rLANG_ABIREQUIRE(EnTrustRequest::kOffsetEnTrust == offsetof(EnTrustRequest, dongle_entrust_));
-
-/**
- *! 全局的私钥(kFileSM2ECIES/ED25519/X25519)托管信息保存在数据文件偏移 6KB 的位置, 大小为1024 ...
- *! 1) 默认Ed25519/X25519的私钥是外部导入(且已泄露), **不应**用于重要信息的验证和加密 ...
- */
-struct WorldEnTrust {
-  static constexpr size_t kOffsetDataFile = 6 * 1024;
-  static constexpr size_t kSizeEnTrust = 1024;
-  static constexpr size_t kMaxKeys = 5; /* */
-
-  static constexpr uint32_t kEd25519Magic = 0x1642C41B;  /// EdKDF
-  static constexpr uint32_t kEx25519Magic = 0x1782C41B;  /// ExKDF
-
-  struct EnTrustKey {
-    /*  0 */ uint8_t hid_[12]; /* - */
-    /* 12 */ uint8_t kid_[3];  /* 用于 hid_ 索引 SM2 私钥文件, 默认使用 SM3(kFileSM2ECDSA.pubkey)[0,1,2] */
-    /* 15 */ uint8_t Yodd_;
-    /* 16 */ uint8_t cipher_[96]; /* 加密的kFileSM2ECIES私钥, Y[32]未保存, 奇偶性Yodd_ */
-  };
-
-  /*     0 */ WorldPublic::Header header_;
-  /*    20 */ uint8_t dongle_ed25519_pubkey_[32];   /* pkey: SM3(kEd25519Magic + nonce_ + MasterSecret[128]) */
-  /*    52 */ uint8_t dongle__x25519_pubkey_[32];   /* pkey: SM3(kEx25519Magic + nonce_ + MasterSecret[128]) */
-  /*    84 */ uint8_t dongle_master_secret__[224];  /* kFileSM2ECDSA.Encrypt(MasterSecret[128]) */
-  /*   308 */ EnTrustKey dongle_entrust_[kMaxKeys]; /* */
-  /*   868 */ uint8_t nonce_[28];                   /* */
-  /*   896 */ uint8_t dongle_ed25519_sign_[64];     /* ed25519.sign(SHA512(0...offset($$))) */
-  /*   960 */ uint8_t dongle_sm2ecdsa_sign_[64];    /* sm2(1).sign(SM3(0...offsetof($$))    */
-
-  static constexpr size_t kOffsetEd25519Pubkey_ = 20;
-  static constexpr size_t kOffset_X25519Pubkey_ = 52;
-  static constexpr size_t kOffset_MasterSecret_ = 84;
-  static constexpr size_t kOffset_DongleEnTrust_ = 308;
-  static constexpr size_t kOffset_Nonce_ = 868;
-  static constexpr size_t kOffset_Ed25519Signature_ = 896;
-  static constexpr size_t kOffset_SM2ECDSASignature_ = 960;
-};
-
-rLANG_ABIREQUIRE(WorldEnTrust::kMaxKeys == 5 && 0 == offsetof(WorldEnTrust, header_));
-rLANG_ABIREQUIRE(WorldEnTrust::kOffsetEd25519Pubkey_ == offsetof(WorldEnTrust, dongle_ed25519_pubkey_));
-rLANG_ABIREQUIRE(WorldEnTrust::kOffset_X25519Pubkey_ == offsetof(WorldEnTrust, dongle__x25519_pubkey_));
-rLANG_ABIREQUIRE(WorldEnTrust::kOffset_MasterSecret_ == offsetof(WorldEnTrust, dongle_master_secret__));
-rLANG_ABIREQUIRE(WorldEnTrust::kOffset_DongleEnTrust_ == offsetof(WorldEnTrust, dongle_entrust_));
-rLANG_ABIREQUIRE(WorldEnTrust::kOffset_Ed25519Signature_ == offsetof(WorldEnTrust, dongle_ed25519_sign_));
-rLANG_ABIREQUIRE(WorldEnTrust::kOffset_SM2ECDSASignature_ == offsetof(WorldEnTrust, dongle_sm2ecdsa_sign_));
-rLANG_ABIREQUIRE(WorldEnTrust::kSizeEnTrust == sizeof(WorldEnTrust) && 1024 == sizeof(WorldEnTrust));
-
-/**
- *!
- */
-rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf);
-rLANGEXPORT int rLANGAPI RockeyTrustExecuteCreateEnTrust(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf);
-
-/**
- *!
- */
-rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckMaster(Dongle* dongle, void* InOutBuf /* 1024 */, void* ExtendBuf);
-rLANGEXPORT int rLANGAPI RockeyTrustExecuteCheckEnTrust(Dongle* dongle, void* data, void* buffer, bool check_master);
 
 enum class OpCode : uint16_t {
   /**
@@ -578,9 +493,19 @@ enum class OpCode : uint16_t {
   kExEd25519Verify,                 // argc : 4, value = ExEd25519Verify(pubkey[32], sign[64], m[len], len)
 
   /**
+   *! 这组调用需要管理员权限, 为系统初始化做准备, 所有的操作如果失败, 程序直接异常退出 ...
+   */
+  kWorldInitialize = 0x270,  /// argc : 0, 清除SHM/Dashboard数据, 删除5个全局的 kKeyIdGlobal* 的私钥+数据文件 ...
+  kVerifyWorldPublic,        /// argc : 0, 验证4组私钥, 1组数据文件的有效性, 并检查是否与 WorldPublic 信息相匹配 ...
+  kUpdateSM2ECIESKey,        /// argc : 2, ***警告***, 这将重新生成SM2ECIES密钥, 之前被此数据加密的文件将无法解密 ...
+  kUpdateMasterSecret,       /// argc : 0, ***警告***, 这将重新生成MASTER_SECRET,之前被此数据加密的文件将无法解密 ...
+  kComputeSecretBytes,       /// argc : 1, 参数为64字节的数据, 返回结果填充这64字节数据 ...
+  kComputeEnTrustData,       /// argc : 3, value = ComputeEnTrustData(InOut:EnTrust, data, len) ...
+
+  /**
    *! [0x280, 0x2FF]的OpCode, 定义为功能性脚本, 调用后将自动Exit, 运行时可以将 VM.text, VM.stack 用作缓存使用 ...
    */
-  kExecuteCreateEnTrust = 0x280,  // argc : 0, Exit(ExecuteCreateEnTrust()) ...
+  kExecuteHelloWorld = 0x280,  // argc : 0, Exit(ExecuteHelloWorld()), 测试使用 ...
 
   /**
    *! [0x300, 0x3FF]的OpCode为以后的扩展所保留 ...

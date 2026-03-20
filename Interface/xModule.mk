@@ -1,4 +1,4 @@
-LOCAL_PATH := $(my-dir)
+﻿LOCAL_PATH := $(my-dir)
 
 $(call clear-local-vars)
 LOCAL_MODULE := rockey
@@ -34,7 +34,9 @@ ROCKEY_DECLARE_FILE ?= dongle.cc
 ##
 LOCAL_SRC_FILES := $(ROCKEY_DECLARE_FILE)
 LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc sha512.cc curve25519.cc
-LOCAL_SRC_FILES += execute.cc script.cc
+LOCAL_SRC_FILES += execute.cc script.cc master.cc
+
+$(eval $$(LOCAL_MODULE)-prepare: $$(LOCAL_PATH)/master.cc; touch $$< )
 
 $(call build-library)
 

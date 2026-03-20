@@ -9,6 +9,7 @@
 
 #ifndef X_BUILD_native
 #include <openssl/bn.h>
+#include <openssl/des.h>
 #include <openssl/ec.h>
 #include <openssl/err.h>
 #include <openssl/evp.h>
@@ -20,12 +21,11 @@
 #include <openssl/sm2.h>
 #include <openssl/sm3.h>
 #include <openssl/sm4.h>
-#include <openssl/des.h>
 #endif /* X_BUILD_native */
 
 #ifdef _WIN32
-#include <windows.h>
 #include <malloc.h>
+#include <windows.h>
 #else /* _WIN32 */
 #include <alloca.h>
 #endif /* _WIN32 */
@@ -33,8 +33,28 @@
 rLANG_DECLARE_MACHINE
 
 #ifndef SHA512_DIGEST_LENGTH
-#define SHA512_DIGEST_LENGTH  64
+#define SHA512_DIGEST_LENGTH 64
 #endif /* SHA512_DIGEST_LENGTH */
+
+#ifndef rLANG_WORLD_SEED_0
+#define rLANG_WORLD_SEED_0 0
+#endif /* rLANG_WORLD_SEED_0 */
+
+#ifndef rLANG_WORLD_SEED_1
+#define rLANG_WORLD_SEED_1 0
+#endif /* rLANG_WORLD_SEED_1 */
+
+#ifndef rLANG_WORLD_SEED_2
+#define rLANG_WORLD_SEED_2 0
+#endif /* rLANG_WORLD_SEED_2 */
+
+#ifndef rLANG_WORLD_SEED_3
+#define rLANG_WORLD_SEED_3 0
+#endif /* rLANG_WORLD_SEED_3 */
+
+#if 0 == rLANG_WORLD_SEED_0 || 0 == rLANG_WORLD_SEED_1 || 0 == rLANG_WORLD_SEED_2 || 0 == rLANG_WORLD_SEED_3
+#error "Configure rLANG_WORLD_SEED[0...3]"
+#endif /* Makefile */
 
 namespace dongle {
 

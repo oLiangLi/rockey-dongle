@@ -678,7 +678,34 @@ int Dongle::HwARandBytes(uint8_t* buffer, size_t size) {
 }
 
 int Dongle::SeedSecret(const void* input, size_t size, void* value) {
-  return DONGLE_CHECK(-ENOSYS);
+  union {
+    uint32_t v_i32_[8];
+    uint8_t sha256_[32];
+  };
+
+  DONGLE_INFO info;
+  int result = GetDongleInfo(&info);
+  if(0 != result)
+    return result;
+
+  memset(v_i32_, 0, sizeof(v_i32_));
+  v_i32_[0] = rLANG_WORLD_SEED_0;
+  v_i32_[1] = rLANG_WORLD_SEED_1;
+  v_i32_[2] = rLANG_WORLD_SEED_2;
+  v_i32_[3] = rLANG_WORLD_SEED_3;
+  Sha256Ctx()
+      .Init()
+      .Update(&v_i32_, sizeof(v_i32_))
+      .Update(&info, sizeof(info))
+      .Update(input, size)
+      .Final(sha256_)
+      .Clear();
+  for(int i = 0; i < 4; ++i) {
+    v_i32_[i] += v_i32_[i + 4];
+  }
+  memcpy(value, v_i32_, 16);
+  memset(v_i32_, 0, sizeof(v_i32_));
+  return 0;
 }
 
 int Dongle::GetRealTime(DWORD* time) {

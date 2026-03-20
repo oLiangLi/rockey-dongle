@@ -1,4 +1,4 @@
-.PHONY : optimize
+﻿.PHONY : optimize
 optimize : build-all
 all: optimize
 
@@ -98,6 +98,14 @@ ifeq ("$(X4C_BUILD)","emscripten")
 COMMON_CFLAGS		+= -D__EMULATOR__
 endif ## emscripten
 endif ## foobar
+
+##
+##
+##
+COMMON_CFLAGS += -DrLANG_WORLD_SEED_0=$(rLANG_WORLD_SEED_0)
+COMMON_CFLAGS += -DrLANG_WORLD_SEED_1=$(rLANG_WORLD_SEED_1)
+COMMON_CFLAGS += -DrLANG_WORLD_SEED_2=$(rLANG_WORLD_SEED_2)
+COMMON_CFLAGS += -DrLANG_WORLD_SEED_3=$(rLANG_WORLD_SEED_3)
 
 ##
 ##

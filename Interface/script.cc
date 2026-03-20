@@ -174,7 +174,10 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       PERMISSION rPerm = argc >= 3 ? PermissionFrom(argv[2]) : PERMISSION::kAnonymous;
       PERMISSION wPerm = argc >= 4 ? PermissionFrom(argv[3]) : PERMISSION::kAnonymous;
 
-      if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      /**
+       *! kKeyIdGlobalSECRET : 只能由kWorldInitialize创建 ...
+       */
+      if ((id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) || id == kKeyIdGlobalSECRET) {
         zero_ = -EACCES;
       } else {
         value = dongle_->CreateDataFile(id, size, rPerm, wPerm);
@@ -187,17 +190,21 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0], offset = argv[1], addr = argv[2], size = argv[3];
-      void* p = OpCheckMM(addr, size);
-      if (p) {
-        if (op == OpCode::kWriteDataFile) {
-          if ((id < kUserFileID || id == Dongle::kFactoryDataFileId) &&
-              valid_permission_ != PERMISSION::kAdministrator) {
-            zero_ = -EACCES;
+      if (id == kKeyIdGlobalSECRET && valid_permission_ != PERMISSION::kAdministrator) {
+        zero_ = -EACCES;
+      } else {
+        void* p = OpCheckMM(addr, size);
+        if (p) {
+          if (op == OpCode::kWriteDataFile) {
+            if ((id < kUserFileID || id == Dongle::kFactoryDataFileId) &&
+                valid_permission_ != PERMISSION::kAdministrator) {
+              zero_ = -EACCES;
+            } else {
+              value = dongle_->WriteDataFile(id, offset, p, size);
+            }
           } else {
-            value = dongle_->WriteDataFile(id, offset, p, size);
+            value = dongle_->ReadDataFile(id, offset, p, size);
           }
-        } else {
-          value = dongle_->ReadDataFile(id, offset, p, size);
         }
       }
     }
@@ -639,7 +646,15 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
           licence.SetGlobalDecrease(!!argv[3]);
         if (argc >= 5)
           licence.SetLogoutForce(!!argv[4]);
-        value = dongle_->CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, id, licence);
+
+        /**
+         *! 两个全局SM2密钥必须使用管理员权限操作 ...
+         */
+        if ((id == kKeyIdGlobalSM2ECDSA || id == kKeyIdGlobalSM2ECIES) &&
+            licence.permission_ != PERMISSION::kAdministrator)
+          zero_ = -EACCES;
+        else
+          value = dongle_->CreatePKEYFile(SECRET_STORAGE_TYPE::kSM2, 256, id, licence);
       }
     }
   } else if (op == OpCode::kGenerateSM2) {
@@ -1546,14 +1561,16 @@ int VM_t::Execute() {
               } else {
                 value = OpEd25519(op, argc_, argv_);
               }
-            } else /* 0x240 ... 0x27F */ {
+            } else if (op > 0x270) {
+              value = OpManager(op, argc_, argv_);
+            } else /* 0x240 ... 0x26F */ {
               zero_ = SIGILL;
             }
           } else /* 0x280 ... 0x2FF */ {
             zero_ = SIGILL;
 
-            if (op == OpCode::kExecuteCreateEnTrust) {
-              zero_ = RockeyTrustExecuteCreateEnTrust(*this, data_, buffer_);
+            if (op == OpCode::kExecuteHelloWorld) {
+              zero_ = value = dongle_->RandBytes((uint8_t*)data_, kSizeData);
             }
 
             break;
