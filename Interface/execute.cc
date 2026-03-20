@@ -170,13 +170,15 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
 }
 
 int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
-  int value = 0;
   if (op == OpCode::kExecuteHelloWorld) {
-    value = dongle_->RandBytes((uint8_t*)data_, 1024);
+    return OpExecute_HelloWorld(argc, argv);
   } else {
     return zero_ = SIGILL;
   }
-  return value;
+}
+
+int VM_t::OpExecute_HelloWorld(int argc, int32_t argv[]) {
+  return dongle_->RandBytes((uint8_t*)data_, 1024);
 }
 
 }  // namespace script

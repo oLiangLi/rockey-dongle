@@ -97,6 +97,15 @@ struct VM_t {
   int OpManager(uint16_t op, int argc, int32_t argv[]);
   int OpExecute(uint16_t op, int argc, int32_t argv[]);
 
+  int OpManager_WorldInitialize();
+  int OpManager_VerifyWorldPublic();
+  int OpManager_UpdateSM2ECIESKey(uint8_t public_[64], uint8_t* private_ = nullptr);
+  int OpManager_UpdateMasterSecret();
+  int OpManager_ComputeSecretBytes(uint8_t bytes_[64]);
+  int OpManager_ComputeEnTrustData(int argc, int32_t argv[]);
+
+  int OpExecute_HelloWorld(int argc, int32_t argv[]);
+
   static constexpr int kSizeData = 1024;
   static constexpr int kSizeCode = 100;
   static constexpr int kSizeStack = 16;
