@@ -556,7 +556,20 @@ static int RockeyCreateEnTrust(Dongle* dongle, void* data, void* buffer, uint8_t
   uint8_t* const cipher = &X_Y_K[32];
   memmove(K, &X_Y_K[64], 32);
 
-  dongle->RandBytes(entrust->nonce_, sizeof(entrust->nonce_));
+#if 1
+  result = dongle->RandBytes(&entrust->nonce_[0], sizeof(entrust->nonce_));
+  if (0 != result)
+    return result;
+#else
+  result = dongle->RandBytes((uint8_t*)&req, 8);
+  if(0 != result)
+    return result;
+  result = dongle->SM3(&req, sizeof(EnTrustRequest), &X_Y_K[32]);
+  if(0 != result)
+    return result;
+  memcpy(entrust->nonce_, &X_Y_K[32], 28);
+#endif
+
   for (int i = 0; i < 5; ++i) {
     WorldEnTrust::EnTrustKey& ekey = entrust->dongle_entrust_[i];
     EnTrustRequest::EnTrustKey& ckey = req.dongle_entrust_[i];
