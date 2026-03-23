@@ -176,8 +176,10 @@ struct ScriptText {
   uint8_t nonce_[16];
   uint8_t check_[16];                                      // ChaCha20Poly.Open(data + check) ...
   static constexpr uint32_t kAdminFileMagic = 0x0443493B;  // rLANG_DECLARE_MAGIC_Xs("ADMIN");
+  static constexpr uint32_t kLimitFileMagic = 0x30934953;  // rLANG_DECLARE_MAGIC_Xs("LIMIT");
 };
 rLANG_ABIREQUIRE(ScriptText::kAdminFileMagic == rLANG_DECLARE_MAGIC_Xs("ADMIN"));
+rLANG_ABIREQUIRE(ScriptText::kLimitFileMagic == rLANG_DECLARE_MAGIC_Xs("LIMIT"));
 rLANG_ABIREQUIRE(sizeof(WorldCreateHeader) == 16 && sizeof(ScriptText) == 240);
 
 /**

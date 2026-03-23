@@ -77,7 +77,6 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
 
   size_t size = sizeof(v);
   result = vm.dongle_->RSAPrivate(vm.kKeyIdGlobalRSA2048, v.data_, &size, false);
-
   if (result < 0) {
     if (vm.valid_permission_ != PERMISSION::kAdministrator) {
       rlLOGE(TAG, "EACCES: Adminstrator requirement, plain text script call!");
@@ -102,6 +101,43 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
   } else if (size != sizeof(ScriptText)) {
     rlLOGE(TAG, "Invalid ScriptText %zd", size);
     return -EBADMSG;
+  } else if (v.text_.file_magic_ == ScriptText::kLimitFileMagic) {
+    uint8_t sm3[32], sign[64];
+    uint8_t ecies_pubkey[64];
+    const uint8_t* input = (const uint8_t*)&v.text_;
+
+    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
+    if (0 != result)
+      return result;
+
+    constexpr int kSizeText = offsetof(ScriptText, nonce_) - 64;
+    memcpy(sign, &input[kSizeText], 64);
+    result = vm.dongle_->SM3(input, kSizeText, sm3);
+    if (0 != result)
+      return result;
+
+    if (vm.dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
+                                 WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECIES, &ecies_pubkey,
+                                 64) < 0)
+      return -EBADF;
+
+    result = vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]);
+    if (0 != result)
+      return result;
+
+    /**
+     *! kSign.fill(kInv)
+     */
+    memset(const_cast<uint8_t*>(input) + kSizeText, 0, 64);
+
+    /**
+     *! CHECK.SM2ECIES.Key ...
+     */
+    if (vm.dongle_->SM2Sign(WorldPublic::kFileSM2ECIES, sm3, &sign[0], &sign[32]) < 0) /* Check SM2.ecies key */
+      return -EBADF;
+    if (vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]) < 0)
+      return -EBADF;
+    vm.valid_permission_ = PERMISSION::kAdministrator; /* Granting privileges administrator */
   } else if (v.text_.file_magic_ == ScriptText::kAdminFileMagic) {
     uint8_t sm3[32], sign[64];
     uint8_t ecies_pubkey[64];
@@ -115,29 +151,25 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
     if (0 != result)
       return result;
 
+    if (vm.dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
+                                 WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECIES, &ecies_pubkey,
+                                 64) < 0)
+      return -EBADF;
+
+    if (vm.dongle_->SM3(vmdata + 256, 1024 - 256 - 64, sm3) < 0)
+      return -EBADF;
+
+    if (vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]) < 0)
+      return -EBADF;
+
     /**
-     *!
+     *! CHECK.SM2ECIES.Key ...
      */
-    if (vm.valid_permission_ != PERMISSION::kAdministrator) {
-      if (vm.dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
-                                   WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECIES, &ecies_pubkey,
-                                   64) < 0)
-        return -EBADF;
-
-      if (vm.dongle_->SM3(vmdata + 256, 1024 - 256 - 64, sm3) < 0)
-        return -EBADF;
-
-      if (vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]) < 0)
-        return -EBADF;
-
-      if (vm.dongle_->SM2Sign(WorldPublic::kFileSM2ECIES, sm3, &sign[0], &sign[32]) < 0) /* Check SM2.ecies key */
-        return -EBADF;
-
-      if (vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]) < 0)
-        return -EBADF;
-
-      vm.valid_permission_ = PERMISSION::kAdministrator; /* Granting privileges administrator */
-    }
+    if (vm.dongle_->SM2Sign(WorldPublic::kFileSM2ECIES, sm3, &sign[0], &sign[32]) < 0) /* Check SM2.ecies key */
+      return -EBADF;
+    if (vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]) < 0)
+      return -EBADF;
+    vm.valid_permission_ = PERMISSION::kAdministrator; /* Granting privileges administrator */
   } else {
     result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
     if (0 != result)
