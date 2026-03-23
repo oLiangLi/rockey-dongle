@@ -52,17 +52,7 @@ rLANGWASMEXPORT int EmuExecv(Dongle* dongle, uint8_t InOutBuf[1024]) {
   memset(ExtendBuf, 0, sizeof(ExtendBuf));
 
   if (0 == result && vm.kSizeOutput < 1024) {
-    uint8_t cipher[32];
-    rlCryptoChaCha20Ctx ctx;
-    uint8_t* data = (uint8_t*)InOutBuf + vm.kSizeOutput;
-    size_t size = 1024 - vm.kSizeOutput;
-
-    memset(data, 0, size);
-    dongle->RandBytes(cipher, sizeof(cipher));
-    rlCryptoChaCha20Init(&ctx);
-    rlCryptoChaCha20SetKey(&ctx, cipher);
-    rlCryptoChaCha20Update(&ctx, data, data, size);
-    memset(cipher, 0, sizeof(cipher));
+    dongle->RandBytes((uint8_t*)InOutBuf + vm.kSizeOutput, 1024 - vm.kSizeOutput);
   }
 
   if (0 != result) {

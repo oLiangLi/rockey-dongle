@@ -6,7 +6,7 @@ namespace dongle {
 namespace script {
 
 constexpr int kSizeDashboard = 8 * 1024;
-constexpr int kSize_MASTER_SECRET = 128;
+constexpr int kSize_MASTER_SECRET = 64;
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("k@mgr");
 
 int VM_t::OpManager_WorldInitialize() {
@@ -255,14 +255,18 @@ int VM_t::OpManager_UpdateSM2ECIESKey(uint8_t public_[64], uint8_t* private_) {
 }
 
 int VM_t::OpManager_UpdateMasterSecret() {
-  uint8_t MASTER_SECRET[kSize_MASTER_SECRET], ENCRYPT_MASTER_SECRET[kSize_MASTER_SECRET + 96];
-  int result = dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
-                                     WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECDSA,
-                                     ENCRYPT_MASTER_SECRET, 64);
+  uint8_t XY[64], MASTER_SECRET[kSize_MASTER_SECRET], ENCRYPT_MASTER_SECRET[kSize_MASTER_SECRET + 96];
+
+  /** 确保SM2ECDSA从未将私钥导出到uKey之外 ...  */
+  int result = dongle_->GenerateSM2(kKeyIdGlobalSM2ECDSA, &XY[0], &XY[32], nullptr);
+  if (0 != result)
+    return result;
+  result = dongle_->WriteDataFile(Dongle::kFactoryDataFileId,
+                                  WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECDSA, XY, 64);
   if (0 != result)
     return result;
 
-  result = dongle_->CheckPointOnCurveSM2(&ENCRYPT_MASTER_SECRET[0], &ENCRYPT_MASTER_SECRET[32]);
+  result = dongle_->CheckPointOnCurveSM2(&XY[0], &XY[32]);
   if (0 != result)
     return result;
 
@@ -276,8 +280,7 @@ int VM_t::OpManager_UpdateMasterSecret() {
   if (0 != result)
     return result;
 
-  result = dongle_->SM2Encrypt(&ENCRYPT_MASTER_SECRET[0], &ENCRYPT_MASTER_SECRET[32], ENCRYPT_MASTER_SECRET,
-                               sizeof(ENCRYPT_MASTER_SECRET), ENCRYPT_MASTER_SECRET);
+  result = dongle_->SM2Encrypt(&XY[0], &XY[32], MASTER_SECRET, sizeof(MASTER_SECRET), ENCRYPT_MASTER_SECRET);
   memset(MASTER_SECRET, 0, sizeof(MASTER_SECRET));
   if (0 != result)
     return result;

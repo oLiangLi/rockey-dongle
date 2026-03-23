@@ -451,8 +451,9 @@ int Dongle::SM2Verify(const uint8_t X[32],
 
 int Dongle::SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8_t text[], size_t* size_text) override {
   WORD sizeOut = *size_text;
-  if (0 != DONGLE_CHECK(sm2_decrypt(id, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut)))
-    return -1;
+  int result = DONGLE_CHECK(sm2_decrypt(id, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut));
+  if (0 != result)
+    return result;
   *size_text = sizeOut;
   return 0;
 }
@@ -465,8 +466,9 @@ int Dongle::SM2Decrypt(const uint8_t private_[32],
   SecretBuffer<1, ECCSM2_PRIVATE_KEY> pkey;
   pkey->bits = 0x8100;
   CopyReverse<32>(pkey->PrivateKey, private_);
-  if (0 != DONGLE_CHECK(sm2_decrypt_key(pkey, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut)))
-    return -1;
+  int result = DONGLE_CHECK(sm2_decrypt_key(pkey, const_cast<uint8_t*>(cipher), size_cipher, text, &sizeOut));
+  if(0 != result)
+    return result;
   *size_text = sizeOut;
   return 0;
 }
@@ -513,7 +515,7 @@ int Dongle::CheckError(DWORD error) {
   if (ERR_SUCCESS == error)
     return 0;
   last_error_ = error;
-  return -1;
+  return 0x80000000 | error;
 }
 
 }  // namespace dongle

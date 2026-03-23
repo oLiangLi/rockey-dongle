@@ -14,6 +14,7 @@ const {
   kFileSECP256r1 = 2;
   kFileRSA2048 = 3;
   kFileSM2ECIES = 4;
+  kFileSECRET = 10;
 
   kOffsetPubkey_SM2ECDSA = 20;
   kOffsetPubkey_Secp256r1 = 84;
@@ -108,18 +109,15 @@ rLANG_SM2ECIES_PERM @ kOff_SM2ECIESPermission [1] = { 2, 1, 0 };
 rLANG_CATEGORY @ kOff_Category [4] = { kCategory_MAGIC_Public, kCategory_MAGIC_Admin, ${CUSTOM}, ${CATEGORY} };
 rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };
 
-///
-/// 初始化脚本必须以管理员权限运行 ...
-///
-if(ValidPINState() < 2)
-  Exit(1);
+/**
+ *! WorldInitialize() 会检查管理员权限, 并删除必要的私钥和数据文件 ....
+ */
+WorldInitialize();
 
 ///
 /// 清除可能存在的本地私钥托管信息, 外部输入参数最小的偏移为 kOffsetDongleNonce2 .GT. 512 ...
 ///
 Memset(0, 0, 512);
-WriteDataFile(LoadI32(kOff_idPublic), LoadI32(kOff_EnTrust), 0, 512);
-
 ///
 /// Header[20]
 ///
@@ -143,14 +141,6 @@ RandBytes(kOffsetDongleNonce1, 32);
 ///RandBytes(kOffsetDongleNonce2, 32);
 
 ///
-/// 删除可能存在的私钥文件 ...
-///
-DeleteRSAFile(kFileRSA2048);
-DeleteP256File(kFileSECP256r1);
-DeleteSM2File(kFileSM2ECDSA);
-DeleteSM2File(kFileSM2ECIES);
-
-///
 /// 创建新的私钥文件 ...
 ///
 CreateRSAFile(kFileRSA2048, LoadU8(kOff_RSAPermission));
@@ -163,42 +153,42 @@ CreateSM2File(kFileSM2ECIES, LoadU8(kOff_SM2ECIESPermission), LoadI32(kOff_Decry
 ///
 GenerateRSA(kFileRSA2048, kOffsetPubkey_RSA2048);
 GenerateP256(kFileSECP256r1, kOffsetPubkey_Secp256r1);
-GenerateSM2(kFileSM2ECDSA, kOffsetPubkey_SM2ECDSA);
 
 ///
-/// 产生加密密钥(同时也是本地管理员签名密钥), 私钥未被导出, 确认是否要从外部导入加密密钥或者将密钥托管 ...
+/// kFileSM2ECDSA 由UpdateMasterSecret创建 ...
 ///
-///  *** 警告 ***: 如果不从外部导入加密密钥, 在uKey锁定后, 任何人都无法以管理员权限执行代码 ...
-///  *** 警告 ***: 如果不从外部导入加密密钥, 在uKey失效后, 任何加密的数据将***无法***解密 ...
-///  *** 警告 ***: 加密密钥***应该***从外部导入, 仅在设备内部生成加密密钥将导致数据丢失风险 ...
+///GenerateSM2(kFileSM2ECDSA, kOffsetPubkey_SM2ECDSA);
 ///
-GenerateSM2(kFileSM2ECIES, kOffsetPubkey_SM2ECIES);
+
+/**
+ *! 写入全部的除了有效签名外的公共信息 ...
+ */
+WriteDataFile(0xffff, kOffsetDonglePublic, 0, kOffsetSign_SM2ECIES);
+
+/**
+ *! 生成系统 MASTER_SECRET (kFileSM2ECDSA将同时被创建) ...
+ */
+UpdateMasterSecret();
 
 ///
-/// [Key=4, SM2ECIES]SM2.Sign ...
+/// 产生加密密钥(同时也是本地管理员签名密钥), 私钥未被导出, 确认是否需要将密钥托管(EnTrust) ...
+/// 1) UpdateSM2ECIESKey调用将自动对WorldPublic数据签名 ...
 ///
-DigestSM3(0, kOffsetSign_SM2ECIES, kOffsetSign_SM2ECIES);
-SM2Sign(kFileSM2ECIES, kOffsetSign_SM2ECIES, kOffsetSign_SM2ECIES);
+///  *** 警告 ***: 如果不将加密密钥托管或外部导入, 在uKey锁定后, 任何人都无法以管理员权限执行代码 ...
+///  *** 警告 ***: 如果不将加密密钥托管或外部导入, 在uKey失效后, 任何加密的数据将***无法***解密 ...
+///  *** 警告 ***: 加密密钥***应该***被正确的托管或导入, 仅在设备内部生成加密密钥将导致数据丢失的风险 ...
+///
+///
+/// *** 警告 ***: 确认UpdateSM2ECIESKey会发生大约128字节的越界, 编写脚本时需要注意不要由于越界导致泄露密钥(这些脚本只在系统初始化时使用, 应该问题不大) ...
+///
+UpdateSM2ECIESKey(512); /// 在初始化脚本中, 我们不会使用这个pubkey, 但在EnTrust的调用中需要, 我们这里验证下 UpdateSM2ECIESKey 不会发生大范围的越界 ...
 
-///
-/// [Key=3, RSA]RSA.Sign ...
-///
-ExDigestSHA256(0, kOffsetSign_RSA2048, kOffsetSign_RSA2048);
-RSAPrivateEncrypt(kFileRSA2048, kOffsetSign_RSA2048, 32);
+/**
+ *!
+ */
+Memset(0, 0, 1024);
 
-///
-/// [Key=2, Secp256r1]ECDSA.Sign ...
-///
-ExDigestSHA256(0, kOffsetSign_Secp256r1, kOffsetSign_Secp256r1);
-P256Sign(kFileSECP256r1, kOffsetSign_Secp256r1, kOffsetSign_Secp256r1);
-
-///
-/// [Key=1, SM2ECDSA]SM2.Sign ...
-///
-DigestSM3(0, kOffsetSign_SM2ECDSA, kOffsetSign_SM2ECDSA);
-SM2Sign(kFileSM2ECDSA, kOffsetSign_SM2ECDSA, kOffsetSign_SM2ECDSA);
-
-///
-/// 写入公共信息 ...
-///
-WriteDataFile(0xffff, kOffsetDonglePublic, 0, 1024);
+/**
+ *!
+ */
+ReadDataFile(0xffff, kOffsetDonglePublic, 0, 1024);

@@ -1558,7 +1558,7 @@ int VM_t::Execute() {
               } else {
                 value = OpEd25519(op, argc_, argv_);
               }
-            } else if (op > 0x270) {
+            } else if (op >= 0x270) {
               value = OpManager(op, argc_, argv_);
             } else /* 0x240 ... 0x26F */ {
               zero_ = SIGILL;
@@ -1584,7 +1584,7 @@ int VM_t::Execute() {
 
     rlLOGE(rLANG_ATOMC_WORLD_MAGIC, "Rockey.Execuite Error zero: %d, nstk: %d, pc: %d", zero_, nstk_, pc_);
 
-    zero_ = (zero_ & 0xFF) | ((nstk_ & 0xFF) << 8) | ((pc_ & 0xFF) << 16) | (1 << 30);
+    zero_ = (zero_ & 0xFFFF) | ((nstk_ & 0x01F) << 16) | ((pc_ & 0x7F) << 22) | (1 << 30);
 
   } else if (kSizeOutput < kSizeData) {
     memset(&static_cast<uint8_t*>(data_)[kSizeOutput], 0, kSizeData - kSizeOutput);
