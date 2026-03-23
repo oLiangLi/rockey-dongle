@@ -134,8 +134,8 @@ StoreI32(i, 0);
 StoreI32(dst, kOutputEnTrust0);
 StoreI32(src, kEnTrust0);
 while(LoadI32(i) < 5) {
-    Memcpy(dst, src, 80);
-    ComputeEnTrustData(dst, kOffsetSM2ECIES_pkey, 32);
+    Memcpy(LoadI32(dst), LoadI32(src), 80);
+    ComputeEnTrustData(LoadI32(dst), kOffsetSM2ECIES_pkey, 32);
     StoreI32(i, LoadI32(i) + 1);
     StoreI32(dst, LoadI32(dst) + 112);
     StoreI32(src, LoadI32(src) + 80);
