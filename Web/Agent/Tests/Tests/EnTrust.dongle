@@ -1,15 +1,89 @@
 ﻿public 1024;
 
+///
+/// struct EnTrustRequest {
+///   static constexpr size_t kMaxKeys = 5;
+///   static constexpr size_t kSizeEnTrustKey = 80;
+///   static constexpr size_t kOffsetInOutBuffer = 256;
+///   static constexpr size_t kSizeEnTrustRequest = 440;
+///   static constexpr uint32_t kEnTrustRequestMagic = 0x532D73D3;
+///
+///   struct EnTrustKey {
+///     /*  0 */ uint8_t hid_[12];   /* - */
+///     /* 12 */ uint8_t kid_[3];    /* 用于 hid_ 索引 SM2 私钥文件, 默认使用 SM3(kFileSM2ECDSA.pubkey)[0,1,2] */
+///     /* 15 */ uint8_t zero_;      /* 0 */
+///     /* 16 */ uint8_t point_[64]; /* X[32], Y[32] */
+///   };
+///
+///   /*    0 */ uint32_t kWorldMagic;  /// rLANG_WORLD_MAGIC
+///   /*    4 */ uint32_t kTrustMagic;  /// kEnTrustRequestMagic
+///   /*    8 */ uint8_t nonce_[32];
+///   /*   40 */ EnTrustKey dongle_entrust_[kMaxKeys]; /* */
+///
+///   static constexpr size_t kOffsetWorldMagic = 0;
+///   static constexpr size_t kOffsetTrustMagic = 4;
+///   static constexpr size_t kOffsetNonce = 8;
+///   static constexpr size_t kOffsetEnTrust = 40;
+/// };
+///
+
+///
+/// struct WorldEnTrust {
+///   static constexpr size_t kOffsetDataFile = 6 * 1024;
+///   static constexpr size_t kSizeEnTrust = 1024;
+///   static constexpr size_t kMaxKeys = 5; /* */
+///
+///   struct EnTrustKey {
+///     /*  0 */ uint8_t hid_[12]; /* - */
+///     /* 12 */ uint8_t kid_[3];  /* 用于 hid_ 索引 SM2 私钥文件, 默认使用 SM3(kFileSM2ECDSA.pubkey)[0,1,2] */
+///     /* 15 */ uint8_t Yodd_;
+///     /* 16 */ uint8_t cipher_[96]; /* 加密的kFileSM2ECIES私钥, Y[32]未保存, 奇偶性Yodd_ */
+///   };
+///
+///   /*     0 */ WorldPublic::Header header_;
+///   /*    20 */ uint8_t dongle_sm2ecdsa_pubkey_[64];
+///   /*    84 */ uint8_t dongle_sm2ecies_pubkey_[64];
+///   /*   148 */ uint8_t dongle_nonce_1_[32];          /* EnTrust.select nonce[32] */
+///   /*   180 */ EnTrustKey dongle_entrust_[kMaxKeys]; /* */
+///   /*   740 */ uint8_t nonce_[28];                   /* dongle.select nonce[28]  */
+///   /*   768 */ uint8_t reserved_zero_[128];          /* Reserved for future ... */
+///   /*   896 */ uint8_t dongle_sm2ecies_sign_[64];    /* sm2(4).sign(SHA512(0...offsetof($$))) */
+///   /*   960 */ uint8_t dongle_sm2ecdsa_sign_[64];    /* sm2(1).sign(SM3(0...offsetof($$))   */
+/// };
+///
+
 const {	
 	kWorldMagic = 0xC8C04E1F;
 	kTrustMagic = 0x532D73D3;
 
+	kFileSM2ECDSA = 1;
+    kFileSECP256r1 = 2;
+    kFileRSA2048 = 3;
+    kFileSM2ECIES = 4;
+    kFileSECRET = 10;
+
+    kOffsetDonglePublic = 7 * 1024;
 	kOffsetDataFile = 6 * 1024;
+	kVersionCurrent = 0x04000101;
 
 	/**
      *! Output Offset ...
 	 */
+	kOffsetSM2ECIES_pkey = 20; /// 首先托管 EnTrust, 然后读取WorldPublic[0, 84]覆盖 ...
+	kOffsetSM2ECDSA_pubkey = 20;
+	kOffsetSM2ECIES_pubkey = 84;
+	kOffsetEnTrust_nonce = 148;
 
+	kOutputEnTrust0 = 180;
+	kOutputEnTrust1 = kOutputEnTrust0 + 112;
+	kOutputEnTrust2 = kOutputEnTrust1 + 112;
+	kOutputEnTrust3 = kOutputEnTrust2 + 112;
+	kOutputEnTrust4 = kOutputEnTrust3 + 112;
+
+	kOffsetDongle_nonce = 740;
+	kOffsetZero_reserved = 768;
+	kOffsetSM2ECIES_sign = 896;
+	kOffsetSM2ECDSA_sign = 960;
 
     /**
      *! Input Offset ...
@@ -23,6 +97,12 @@ const {
 	kEnTrust2 = kEnTrust1 + 80;
 	kEnTrust3 = kEnTrust2 + 80;
 	kEnTrust4 = kEnTrust3 + 80;
+
+	i = 1024 - 32;
+	dst = 1024 - 16;
+	src = 1024 - 12;
+
+	kOff_Version = 1024 - 8;
 }
 
 rLANG_WORLD_MAGIC @ kOffsetWorldMagic [4] = { kWorldMagic };
@@ -35,5 +115,57 @@ rLANG_EnTRUST_2 @ kEnTrust2 [80];
 rLANG_EnTRUST_3 @ kEnTrust3 [80];
 rLANG_EnTRUST_4 @ kEnTrust4 [80];
 
+///
+/// 确认为 Bootstrap 脚本 ....
+///
+rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };
 
+///
+/// EnTrust.Nonce[0, 32] ...
+///
+Memcpy(kOffsetEnTrust_nonce, kOffsetNonce, 32);
 
+///
+/// 重新生成 SM2ECIES.PKEY ...
+///
+UpdateSM2ECIESKey(kOffsetSM2ECIES_pubkey, kOffsetSM2ECIES_pkey);
+
+StoreI32(i, 0);
+StoreI32(dst, kOutputEnTrust0);
+StoreI32(src, kEnTrust0);
+while(LoadI32(i) < 5) {
+    Memcpy(dst, src, 80);
+    ComputeEnTrustData(dst, kOffsetSM2ECIES_pkey, 32);
+    StoreI32(i, LoadI32(i) + 1);
+    StoreI32(dst, LoadI32(dst) + 112);
+    StoreI32(src, LoadI32(src) + 80);
+}
+
+/**
+ *! Header[20] + SM2ECDSA.pubkey[64]
+ */
+ReadDataFile(0xffff, kOffsetDonglePublic, 0, 84);
+StoreI32(4, LoadI32(kOffsetTrustMagic));
+
+/**
+ *!
+ */
+RandBytes(kOffsetDongle_nonce, 28);
+Memset(kOffsetZero_reserved, 0, 128);
+
+///
+/// [Key=4, SM2ECIES]SM2.Sign ...
+///
+DigestSM3(0, kOffsetSM2ECIES_sign, kOffsetSM2ECIES_sign);
+SM2Sign(kFileSM2ECIES, kOffsetSM2ECIES_sign, kOffsetSM2ECIES_sign);
+
+///
+/// [Key=1, SM2ECDSA]SM2.Sign ...
+///
+DigestSM3(0, kOffsetSM2ECDSA_sign, kOffsetSM2ECDSA_sign);
+SM2Sign(kFileSM2ECDSA, kOffsetSM2ECDSA_sign, kOffsetSM2ECDSA_sign);
+
+///
+/// 写入 EnTrust[1024] 信息 ...
+///
+WriteDataFile(0xffff, kOffsetDataFile, 0, 1024);
