@@ -307,7 +307,9 @@ int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64]) {
   };
 
   int error = 0;
-  Context MASTER_SECRET_CONTEXT;
+  Context* storage_master_secret = (Context*)buffer_;
+  Context& MASTER_SECRET_CONTEXT = *storage_master_secret;
+
   memset(&MASTER_SECRET_CONTEXT, 0, sizeof(MASTER_SECRET_CONTEXT));
   MASTER_SECRET_CONTEXT.world_seed_0_ = rLANG_WORLD_SEED_0;
   MASTER_SECRET_CONTEXT.world_seed_1_ = rLANG_WORLD_SEED_1;
