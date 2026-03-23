@@ -1,0 +1,5 @@
+public 1024;
+
+Memset(0, 0, 1024);
+VerifyWorldPublic();
+

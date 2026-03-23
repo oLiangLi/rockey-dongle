@@ -4,6 +4,16 @@ const {
 	kWorldMagic = 0xC8C04E1F;
 	kTrustMagic = 0x532D73D3;
 
+	kOffsetDataFile = 6 * 1024;
+
+	/**
+     *! Output Offset ...
+	 */
+
+
+    /**
+     *! Input Offset ...
+     */
 	kOffsetWorldMagic = 256;
 	kOffsetTrustMagic = kOffsetWorldMagic + 4;
 	kOffsetNonce = kOffsetTrustMagic + 4;
@@ -25,5 +35,5 @@ rLANG_EnTRUST_2 @ kEnTrust2 [80];
 rLANG_EnTRUST_3 @ kEnTrust3 [80];
 rLANG_EnTRUST_4 @ kEnTrust4 [80];
 
-ExecuteCreateEnTrust();
-Exit(42); /// ExecuteCreateEnTrust 会自动调用 Exit, 本语句会被忽略 ...
+
+

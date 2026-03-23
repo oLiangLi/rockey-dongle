@@ -358,11 +358,12 @@ int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64]) {
 }
 
 int VM_t::OpManager_ComputeEnTrustData(int argc, int32_t argv[]) {
+  constexpr int kSizeLimit = 64;
   if (argc != 3)
     return zero_ = -EINVAL;
 
   int input_length = argv[2];
-  if (input_length < 8 || input_length > 512)
+  if (input_length < 16 || input_length > kSizeLimit)
     return zero_ = -EINVAL;
   const uint8_t* input_bytes = (const uint8_t*)OpCheckMM(argv[1], input_length);
   if (!input_bytes)
@@ -381,23 +382,23 @@ int VM_t::OpManager_ComputeEnTrustData(int argc, int32_t argv[]) {
     if (0 == value)
       return 0;
     if (key[15] != 0)
-      return -EINVAL;
+      return 2;
     int result = dongle_->CheckPointOnCurveSM2(&key[16], &key[48]);
     if (0 != result)
-      return -EINVAL;
+      return 2;
     return 1;
   };
 
   int result = CheckHid(InOutBuff);
-  if (result < 0)
-    return zero_ = result;
+  if(result > 1)
+    return zero_ = -EINVAL;
 
   if (0 == result) {
     memset(InOutBuff, 0, output_length);
     return 0;
   }
 
-  auto* OutputBuffer = (uint8_t*)buffer_;
+  uint8_t OutputBuffer[kSizeLimit + 96];
   result = dongle_->SM2Encrypt(&InOutBuff[16], &InOutBuff[48], input_bytes, input_length, OutputBuffer);
   if (0 != result)
     return zero_ = result;
