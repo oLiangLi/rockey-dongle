@@ -389,7 +389,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
         value = -EINVAL;
       } else {
         const void* storage_pubkey = OpCheckMM(argv[0], sizeof(pubk));
-        void* iobuf = OpCheckMM(argv[2], 256);
+        void* iobuf = OpCheckMM(argv[1], 256);
 
         if (storage_pubkey && iobuf) {
           memcpy(buffer, iobuf, szbuf);
@@ -410,7 +410,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
     } else {
       size_t szbuf = 256;
       const void* storage_pubkey = OpCheckMM(argv[0], sizeof(pubk));
-      void* iobuf = OpCheckMM(argv[2], 256);
+      void* iobuf = OpCheckMM(argv[1], 256);
 
       if (storage_pubkey && iobuf) {
         memcpy(buffer, iobuf, 256);
