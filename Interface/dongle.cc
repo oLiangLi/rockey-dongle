@@ -38,8 +38,8 @@ rLANGEXPORT int rLANGAPI SM2Cipher_TextToASN1(const uint8_t* text_cipher, size_t
   BN_bin2bn(&text_cipher[32], 32, ciphertext->C1y);
 
   DONGLE_VERIFY(ciphertext->C1x && ciphertext->C1y && ciphertext->C3 && ciphertext->C2);
-  DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C3, &text_cipher[64], 32) > 0);
-  DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C2, &text_cipher[96], static_cast<int>(cipher_len - 96)) > 0);
+  DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C3, &text_cipher[cipher_len - 32], 32) > 0);
+  DONGLE_VERIFY(ASN1_OCTET_STRING_set(ciphertext->C2, &text_cipher[64], static_cast<int>(cipher_len - 96)) > 0);
 
   int result = i2d_rLANG_SM2_Ciphertext(ciphertext, &buffer);
   rLANG_SM2_Ciphertext_free(ciphertext);
@@ -56,8 +56,8 @@ rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t
   int result = -EINVAL;
   if ((size_t)(p - asn1_cipher) == cipher_len && ciphertext->C3->length == 32 && ciphertext->C2->length > 0) {
     if (BN_bn2binpad(ciphertext->C1x, &buffer[0], 32) > 0 && BN_bn2binpad(ciphertext->C1y, &buffer[32], 32) > 0) {
-      memcpy(&buffer[64], ciphertext->C3->data, 32);
-      memcpy(&buffer[96], ciphertext->C2->data, ciphertext->C2->length);
+      memcpy(&buffer[64 + ciphertext->C2->length], ciphertext->C3->data, 32);
+      memcpy(&buffer[64], ciphertext->C2->data, ciphertext->C2->length);
       result = 96 + ciphertext->C2->length;
     }
   }
