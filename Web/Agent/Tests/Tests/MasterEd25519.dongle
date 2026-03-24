@@ -1,0 +1,21 @@
+public 96;
+
+/**
+ *! INPUT[64] => Output[96] : || MASTER(0).ed25519.pubkey[32] | MASTER(0).ed25519.sign(SHA512(INPUT[64])) ||
+ */
+
+const {
+    kOffsetMessage = 256;
+    kOffsetSHA512  = 64;
+    kOffsetSecret  = 128;
+}
+
+rLANG_INPUT_MESSAGE @ kOffsetMessage [64];
+
+Memset(0, 0, 256);
+ExDigestSHA512(kOffsetMessage, 64, kOffsetSHA512);
+ComputeSecretBytes(kOffsetSecret);
+
+ExEd25519ComputePubkey(kOffsetSecret, 0);
+ExEd25519Sign(0, kOffsetSecret, kOffsetSHA512, 64, 32);
+Memset(kOffsetSecret, 0, 512);
