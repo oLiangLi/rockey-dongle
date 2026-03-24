@@ -292,68 +292,68 @@ int VM_t::OpManager_UpdateMasterSecret() {
   return 0;
 }
 
-int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64]) {
+int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64], int32_t type) {
   struct Context {
-    uint32_t world_seed_0_;
-    uint8_t secret_bytes_[16];
-    uint32_t world_seed_1_;
-    uint8_t input_bytes_[64];
-    uint32_t world_seed_2_;
-    rlCryptoShaCtx hash_context_;
-    uint8_t ENCRYPTO_MASTER_SECRET[kSize_MASTER_SECRET + 96];
+    uint8_t hid_[12];
+    uint32_t seed_0_;
+    uint8_t bytes_[64];
+    uint32_t seed_1_;
     uint8_t MASTER_SECRET[kSize_MASTER_SECRET];
-    uint8_t hash_value_[64];
-    uint32_t world_seed_3_;
+    uint32_t seed_2_;
+    uint32_t type_;
+    uint32_t seed_3_;
   };
 
-  int error = 0;
-  Context* storage_master_secret = (Context*)buffer_;
-  Context& MASTER_SECRET_CONTEXT = *storage_master_secret;
+  int result = 0, error = 0;
+  Context MASTER_SECRET_CONTEXT;
 
   memset(&MASTER_SECRET_CONTEXT, 0, sizeof(MASTER_SECRET_CONTEXT));
-  MASTER_SECRET_CONTEXT.world_seed_0_ = rLANG_WORLD_SEED_0;
-  MASTER_SECRET_CONTEXT.world_seed_1_ = rLANG_WORLD_SEED_1;
-  MASTER_SECRET_CONTEXT.world_seed_2_ = rLANG_WORLD_SEED_2;
-  MASTER_SECRET_CONTEXT.world_seed_3_ = rLANG_WORLD_SEED_3;
-  int result = dongle_->SeedSecret(bytes_, 64, MASTER_SECRET_CONTEXT.secret_bytes_);
-  if (0 != result)
-    return result;
 
-  memcpy(MASTER_SECRET_CONTEXT.input_bytes_, bytes_, 64);
-  result = dongle_->ReadDataFile(kKeyIdGlobalSECRET, 0, MASTER_SECRET_CONTEXT.ENCRYPTO_MASTER_SECRET,
-                                 kSize_MASTER_SECRET + 96);
-  if (0 != result)
-    return result;
+  /**
+   *!
+   */
+  MASTER_SECRET_CONTEXT.type_ = type;
+  memcpy(MASTER_SECRET_CONTEXT.bytes_, bytes_, 64);
 
-  size_t size = kSize_MASTER_SECRET + 96;
-  result = dongle_->SM2Decrypt(kKeyIdGlobalSM2ECDSA, MASTER_SECRET_CONTEXT.ENCRYPTO_MASTER_SECRET, size,
-                               MASTER_SECRET_CONTEXT.MASTER_SECRET, &size);
-  if (0 != result)
+  {
+    uint8_t storage_master_secret[kSize_MASTER_SECRET + 96];
+
+    size_t size = sizeof(storage_master_secret);
+    result = dongle_->ReadDataFile(kKeyIdGlobalSECRET, 0, storage_master_secret, size);
+    if (0 != result)
+      return result;
+
+    result = dongle_->SM2Decrypt(kKeyIdGlobalSM2ECDSA, storage_master_secret, size, storage_master_secret, &size);
+    memcpy(MASTER_SECRET_CONTEXT.MASTER_SECRET, storage_master_secret, 64);
+    memset(storage_master_secret, 0, sizeof(storage_master_secret));
+    if (0 != result)
+      ++error;
+  }
+
+  if (0 == type) {
+    MASTER_SECRET_CONTEXT.seed_0_ = rLANG_WORLD_SEED_0;
+    MASTER_SECRET_CONTEXT.seed_1_ = rLANG_WORLD_SEED_1;
+    MASTER_SECRET_CONTEXT.seed_2_ = rLANG_WORLD_SEED_2;
+    MASTER_SECRET_CONTEXT.seed_3_ = rLANG_WORLD_SEED_3;
+
+    DONGLE_INFO info;
+    result = dongle_->GetDongleInfo(&info);
+    if (0 != result)
+      ++error;
+    memcpy(MASTER_SECRET_CONTEXT.hid_, info.hid_, 12);
+  } else {
+    MASTER_SECRET_CONTEXT.seed_0_ = rLANG_WORLD_MAGIC;
+    MASTER_SECRET_CONTEXT.seed_1_ = rLANG_DECLARE_MAGIC_Xs("SECRT");
+    MASTER_SECRET_CONTEXT.seed_2_ = rLANG_DECLARE_MAGIC_Xs("BYTES");
+    MASTER_SECRET_CONTEXT.seed_3_ = rLANG_COSMO_WORLD_MAGIC;
+  }
+
+  if (0 != dongle_->SHA512(&MASTER_SECRET_CONTEXT, sizeof(MASTER_SECRET_CONTEXT), bytes_))
     ++error;
-
-  ((Sha256Ctx*)&MASTER_SECRET_CONTEXT.hash_context_)
-      ->Init()
-      .Update(&MASTER_SECRET_CONTEXT, sizeof(MASTER_SECRET_CONTEXT))
-      .Final(&MASTER_SECRET_CONTEXT.hash_value_[32]);
-
-  MASTER_SECRET_CONTEXT.world_seed_0_ += rLANG_WORLD_SEED_2;
-  MASTER_SECRET_CONTEXT.world_seed_3_ += rLANG_WORLD_SEED_1;
-
-  result = dongle_->SM3(&MASTER_SECRET_CONTEXT, sizeof(MASTER_SECRET_CONTEXT), &MASTER_SECRET_CONTEXT.hash_value_[0]);
-  if (0 != result)
-    ++error;
-
-  MASTER_SECRET_CONTEXT.world_seed_2_ += rLANG_WORLD_SEED_3;
-  MASTER_SECRET_CONTEXT.world_seed_1_ += rLANG_WORLD_SEED_0;
-
-  ((Sha512Ctx*)&MASTER_SECRET_CONTEXT.hash_context_)
-      ->Init()
-      .Update(&MASTER_SECRET_CONTEXT, sizeof(MASTER_SECRET_CONTEXT))
-      .Final(bytes_);
   memset(&MASTER_SECRET_CONTEXT, 0, sizeof(MASTER_SECRET_CONTEXT));
-  if (error)
+
+  if (0 != result || 0 != error)
     return -EFAULT;
-
   return 0;
 }
 
@@ -390,7 +390,7 @@ int VM_t::OpManager_ComputeEnTrustData(int argc, int32_t argv[]) {
   };
 
   int result = CheckHid(InOutBuff);
-  if(result > 1)
+  if (result > 1)
     return zero_ = -EINVAL;
 
   if (0 == result) {
@@ -443,12 +443,13 @@ int VM_t::OpManager(uint16_t op, int argc, int32_t argv[]) {
       return zero_ = -EINVAL;
     return zero_ = OpManager_UpdateMasterSecret();
   } else if (op == OpCode::kComputeSecretBytes) {
-    if (1 != argc)
+    if (1 != argc && 2 != argc)
       return zero_ = -EINVAL;
+    int32_t type = argv[1];
     uint8_t* bytes_ = (uint8_t*)OpCheckMM(argv[0], 64);
     if (!bytes_)
       return zero_ = SIGSEGV;
-    return zero_ = OpManager_ComputeSecretBytes(bytes_);
+    return zero_ = OpManager_ComputeSecretBytes(bytes_, type);
   } else if (op == OpCode::kComputeEnTrustData) {
     return zero_ = OpManager_ComputeEnTrustData(argc, argv);
   } else {

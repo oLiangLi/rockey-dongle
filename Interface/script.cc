@@ -392,10 +392,13 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
         void* iobuf = OpCheckMM(argv[2], 256);
 
         if (storage_pubkey && iobuf) {
+          memcpy(buffer, iobuf, szbuf);
           memcpy(&pubk, storage_pubkey, sizeof(pubk));
-          value = dongle_->RSAPublic(2048, pubk.modulus_, pubk.pubkey_, static_cast<uint8_t*>(iobuf), &szbuf, true);
-          if (value >= 0)
+          value = dongle_->RSAPublic(2048, pubk.modulus_, pubk.pubkey_, buffer, &szbuf, true);
+          if (value >= 0) {
+            memcpy(iobuf, buffer, szbuf);
             value = static_cast<int>(szbuf);
+          }
         }
       }
     }
@@ -410,10 +413,13 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
       void* iobuf = OpCheckMM(argv[2], 256);
 
       if (storage_pubkey && iobuf) {
+        memcpy(buffer, iobuf, 256);
         memcpy(&pubk, storage_pubkey, sizeof(pubk));
-        value = dongle_->RSAPublic(2048, pubk.modulus_, pubk.pubkey_, static_cast<uint8_t*>(iobuf), &szbuf, false);
-        if (value >= 0)
+        value = dongle_->RSAPublic(2048, pubk.modulus_, pubk.pubkey_, buffer, &szbuf, false);
+        if (value >= 0) {
+          memcpy(iobuf, buffer, szbuf);
           value = static_cast<int>(szbuf);
+        }
       }
     }
   } else {
@@ -712,10 +718,10 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
     } else {
       int id = argv[0];
       size_t size = argv[2];
-      if (size <= 96 || size > 512) {
+      if (size <= 96 || size > 256) {
         value = -E2BIG;
       } else {
-        Dongle::SecretBuffer<512> copy;
+        Dongle::SecretBuffer<256> copy;
         auto* data = static_cast<uint8_t*>(OpCheckMM(argv[1], (int)size));
         if (data) {
           value = dongle_->SM2Decrypt(id, data, size, copy, &size);

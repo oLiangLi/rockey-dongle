@@ -1,0 +1,26 @@
+public 1024;
+
+const {
+    kOffVerify  = 0;
+    kOffDecrypt = 64;
+    kOffPublic = kOffDecrypt + 256;
+}
+
+DeleteRSAFile(10000);
+CreateRSAFile(10000, 0);
+GenerateRSA(10000, kOffPublic);
+
+RandBytes(kOffVerify, 64);
+Memcpy(kOffDecrypt, kOffVerify, 64);
+if(256 != ExRSAPublicEncrypt(kOffPublic, kOffDecrypt, 64))
+    Exit(100);
+if(64 != RSAPrivateDecrypt(10000, kOffDecrypt))
+    Exit(1);
+if(0 != Memcmp(kOffVerify, kOffDecrypt, 64))
+    Exit(2);
+if(256 != RSAPrivateEncrypt(10000, kOffDecrypt, 64))
+    Exit(3);
+if(64 != ExRSAPublicDecrypt(kOffPublic, kOffDecrypt))
+    Exit(4);
+if(0 != Memcmp(kOffVerify, kOffDecrypt, 64))
+    Exit(5);

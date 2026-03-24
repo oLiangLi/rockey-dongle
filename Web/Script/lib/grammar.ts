@@ -603,7 +603,7 @@ const AllFunc: TypeFuncCall[] = [
   {
     name: "kComputeSecretBytes",
     min: 1,
-    max: 1,
+    max: 2,
     op: OpCode.kComputeSecretBytes
   },
   {

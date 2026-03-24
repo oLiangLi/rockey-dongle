@@ -1,0 +1,20 @@
+public 256;
+
+/**
+ *! INPUT: || RSA_PUBKEY[260] | X25519_PUBKEY[32] ||  => RSA.Encrypt(|| X25519_PUBKEY | Master(-1).X25519(X25519_PUBKEY) ||)
+ */
+const {
+    kOffset_RSAPubkey = 256;
+    kOffset_X25519Pubkey = kOffset_RSAPubkey + 260;
+    kOffsetSecret  = 128;
+}
+
+rLANG_RSA2048_PUBKEY @ kOffset_RSAPubkey [260];
+rLANG_X25519_PUBKEY @ kOffset_X25519Pubkey[32];
+
+Memset(0, -1, 256);
+ComputeSecretBytes(kOffsetSecret);
+ExCurve25519ComputePubkey(kOffsetSecret + 32, 0);
+ExCurve25519ComputeSecret(kOffsetSecret + 32, kOffset_X25519Pubkey, 32);
+ExRSAPublicEncrypt(kOffset_RSAPubkey, 0, 64);
+

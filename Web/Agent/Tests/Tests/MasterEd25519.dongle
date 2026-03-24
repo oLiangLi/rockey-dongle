@@ -1,4 +1,4 @@
-public 96;
+public 1024;
 
 /**
  *! INPUT[64] => Output[96] : || MASTER(0).ed25519.pubkey[32] | MASTER(0).ed25519.sign(SHA512(INPUT[64])) ||
@@ -8,14 +8,16 @@ const {
     kOffsetMessage = 256;
     kOffsetSHA512  = 64;
     kOffsetSecret  = 128;
+    kOffsetType = kOffsetMessage + 64;
 }
 
 rLANG_INPUT_MESSAGE @ kOffsetMessage [64];
+rLANG_SECRET_TYPE   @ kOffsetType [4] = { 0, 0xC8C04E1F, 0x0543CD0F, ${CUSTOM}, ${TYPE} };
 
 Memset(0, 0, 256);
 ExDigestSHA512(kOffsetMessage, 64, kOffsetSHA512);
-ComputeSecretBytes(kOffsetSecret);
+ComputeSecretBytes(kOffsetSecret, LoadI32(kOffsetType));
 
 ExEd25519ComputePubkey(kOffsetSecret, 0);
 ExEd25519Sign(0, kOffsetSecret, kOffsetSHA512, 64, 32);
-Memset(kOffsetSecret, 0, 512);
+Memset(96, 0, 1024 - 96);
