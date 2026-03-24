@@ -1561,7 +1561,45 @@
       };
 
       jsCheckEnTrust = (master, info) => {
-        throw jsCipher.Annihilus_(`ENOTIMPL`);
+        if (
+                0xc8c04e1f !== info.readUInt32LE(0) ||
+                0x532D73D3 !== info.readUInt32LE(4) ||
+                0 !== info.readUInt32LE(8) ||
+                0 !== info.readUInt32LE(12) ||
+                0x04000101 !== info.readUInt32LE(16)
+        )
+          throw jsCipher.Annihilus_(`EINVAL Invalid Header!`);
+
+        if(0 !== Buffer.compare(Buffer.from(master.SM2ECDSA, 'base64'), info.subarray(20, 84)))
+          throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECDSA.pubkey!`);
+
+        if(0 !== Buffer.compare(Buffer.from(master.SM2ECIES, 'base64'), info.subarray(84, 148)))
+          throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECIES.pubkey!`);
+
+        if(true !== jsEmulator.SM2Verify(info.subarray(84, 148), jsEmulator.SM3(info.subarray(0, 896)), info.subarray(896, 960)))
+          throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECIES.signature!`);
+        if(true !== jsEmulator.SM2Verify(info.subarray(20, 84), jsEmulator.SM3(info.subarray(0, 960)), info.subarray(960)))
+          throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECDSA.signature!`);
+
+        const result = [];
+        for(let i = 0; i < 5; ++i) {
+          const entrust = info.subarray(180 + i * 112, 180 + i * 112 + 112);
+          if(entrust.readUInt32LE(0) === 0 && entrust.readUInt32LE(4) === 0 && entrust.readUInt32LE(8) === 0) {
+            result.push(null);
+          } else {
+            const Y = jsEmulator.EmuDecompressPointSM2(entrust.subarray(16, 48), (entrust[15] & 1) === 1);
+            const cipher = Buffer.concat([
+              entrust.subarray(16, 48), Y, entrust.subarray(48),
+            ]).toString('base64');
+            result.push({
+              hid : `${entrust.subarray(0, 4).toString('hex')}-${entrust.subarray(4, 12).toString('hex')}`,
+              kid : `${entrust.subarray(12, 15).toString('hex')}`,
+              cipher
+            });
+          }
+        }
+
+        return result;
       };
     </script>
     <script>
@@ -1579,7 +1617,21 @@
 
         console.log(`Master(${id}): ${JSON.stringify(master, null, 2)}`);
       }
-      function HandleCheckEnTrust() {}
+      function HandleCheckEnTrust() {
+        const id = document.getElementById("keys").value;
+        if (!id) throw Error(`HandleCheckEnTrust: Select RockeyARM device!`);
+
+        const dashboard = prev_dashboard_value.get(id);
+        if (!dashboard)
+          throw Error(`HandleCheckEnTrust ${id}: Dashboard Info NOT_FOUND!`);
+
+        const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+        if (master.dongle.id !== id)
+          throw Error(`HandleCheckEnTrust Error ${id}, ${master.dongle.id}!`);
+
+        const entrust = jsCheckEnTrust(master, dashboard.subarray(6 * 1024, 7 * 1024));
+        console.log(`EnTrust(${id}: ${JSON.stringify(entrust, null, 2)})`);
+      }
     </script>
   </head>
   <body>

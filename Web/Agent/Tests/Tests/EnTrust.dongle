@@ -135,17 +135,24 @@ StoreI32(dst, kOutputEnTrust0);
 StoreI32(src, kEnTrust0);
 while(LoadI32(i) < 5) {
     Memcpy(LoadI32(dst), LoadI32(src), 80);
-    ComputeEnTrustData(LoadI32(dst), kOffsetSM2ECIES_pkey, 32);
     StoreI32(i, LoadI32(i) + 1);
     StoreI32(dst, LoadI32(dst) + 112);
     StoreI32(src, LoadI32(src) + 80);
+}
+
+StoreI32(i, 0);
+StoreI32(dst, kOutputEnTrust0);
+while(LoadI32(i) < 5) {
+    ComputeEnTrustData(LoadI32(dst), kOffsetSM2ECIES_pkey, 32);
+    StoreI32(i, LoadI32(i) + 1);
+    StoreI32(dst, LoadI32(dst) + 112);
 }
 
 /**
  *! Header[20] + SM2ECDSA.pubkey[64]
  */
 ReadDataFile(0xffff, kOffsetDonglePublic, 0, 84);
-StoreI32(4, LoadI32(kOffsetTrustMagic));
+StoreI32(4, kTrustMagic);
 
 /**
  *!

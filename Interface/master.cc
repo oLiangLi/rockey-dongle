@@ -408,10 +408,10 @@ int VM_t::OpManager_ComputeEnTrustData(int argc, int32_t argv[]) {
   memcpy(&InOutBuff[16], &OutputBuffer[0], 32);
   memcpy(&InOutBuff[48], &OutputBuffer[64], 32 + input_length);
 
-  result = dongle_->DecompressPointSM2(OutputBuffer, OutputBuffer, InOutBuff[15]);
+  result = dongle_->DecompressPointSM2(&OutputBuffer[64], &InOutBuff[16], InOutBuff[15]);
   if (0 != result)
     return zero_ = result;
-  if (0 != memcmp(&OutputBuffer[0], &OutputBuffer[32], 32))
+  if (0 != memcmp(&OutputBuffer[64], &OutputBuffer[32], 32))
     return zero_ = -EFAULT;
   return 0;
 }
