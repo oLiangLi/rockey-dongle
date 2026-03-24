@@ -42,6 +42,12 @@ const {
   /**!! 外部输入参数 */
   kOff_WorldMagic = 1024 - 64;
 
+  kOff_RSA2048Count = 1024 - 128;
+  kOff_RSA2048Global = 1024 - 124;
+
+  kOff_P256Count = 1024 - 120;
+  kOff_P256Global = 1024 - 116;
+
   kOff_DecryptCount = 1024 - 60;
   kOff_DecryptGlobal = 1024 - 56;
 
@@ -68,32 +74,18 @@ rLANG_WORLD_MAGIC @ kOff_WorldMagic [4] = {  rLANG_WORLD_MAGIC };
 ///
 /// 当设置了解密密钥的使用次数时, 记得初始化需要额外的几次私钥操作, 应该增加部分的额外计数 ...
 ///
+rLANG_RSA2048_COUNT @ kOff_RSA2048Count [4] = { -1, 10, 20, 50, 100, 1000, ${CUSTOM}, ${COUNT} };
+rLANG_PRIME256V1_COUNT @ kOff_P256Count [4] = { -1, 10, 20, 50, 100, 1000, ${CUSTOM}, ${COUNT} };
 rLANG_DECRYPT_COUNT @ kOff_DecryptCount [4] = { -1, 10, 20, 50, 100, 1000, ${CUSTOM}, ${COUNT} };
-
-///
-/// 是否全局的减少私钥使用次数计数, 0 : 缺省的只在内存中减小计数, 当计数为0时, 可用重新插拔uKey, 1 : 全局减少使用计数 ...
-///
-rLANG_DECRYPT_GLOBAL @ kOff_DecryptGlobal [1] = { 0, 1 };
-
-///
-/// 当设置了签名密钥的使用次数时, 记得初始化需要额外的几次私钥操作, 应该增加部分的额外计数 ...
-///
 rLANG_SM2ECDSA_COUNT @ kOff_SignCount [4] = { -1, 10, 20, 50, 100, 1000, ${CUSTOM}, ${COUNT} };
 
 ///
 /// 是否全局的减少私钥使用次数计数, 0 : 缺省的只在内存中减小计数, 当计数为0时, 可用重新插拔uKey, 1 : 全局减少使用计数 ...
 ///
+rLANG_RSA2048_GLOBAL @ kOff_RSA2048Global[1] = { 0, 1 };
+rLANG_PRIME256V1_GLOBAL @ kOff_P256Global[1] = { 0, 1 };
 rLANG_SM2ECDSA_GLOBAL @ kOff_SignGlobal[1] = { 0, 1 };
-
-///
-///
-///
-rLANG_DASHBOARD_File @ kOff_idPublic [4] = { 0xffff };
-
-///
-///
-///
-rLANG_ENTRUST_Offset @ kOff_EnTrust[4] = { kOffsetDongleTrust };
+rLANG_DECRYPT_GLOBAL @ kOff_DecryptGlobal[1] = { 0, 1 };
 
 ///
 /// 2: kAdministrator, 1: kNormal, 0: kAnonymous ...
@@ -143,8 +135,8 @@ RandBytes(kOffsetDongleNonce1, 32);
 ///
 /// 创建新的私钥文件 ...
 ///
-CreateRSAFile(kFileRSA2048, LoadU8(kOff_RSAPermission));
-CreateP256File(kFileSECP256r1, LoadU8(kOff_P256Permission));
+CreateRSAFile(kFileRSA2048, LoadU8(kOff_RSAPermission), LoadI32(kOff_RSA2048Count), LoadU8(kOff_RSA2048Global));
+CreateP256File(kFileSECP256r1, LoadU8(kOff_P256Permission), LoadI32(kOff_P256Count), LoadU8(kOff_P256Global));
 CreateSM2File(kFileSM2ECDSA, LoadU8(kOff_SM2ECDSAPermission), LoadI32(kOff_SignCount), LoadU8(kOff_SignGlobal));
 CreateSM2File(kFileSM2ECIES, LoadU8(kOff_SM2ECIESPermission), LoadI32(kOff_DecryptCount), LoadU8(kOff_DecryptGlobal));
 
