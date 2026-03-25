@@ -101,7 +101,7 @@ struct VM_t {
   int OpManager_VerifyWorldPublic();
   int OpManager_UpdateSM2ECIESKey(uint8_t public_[64], uint8_t* private_ = nullptr);
   int OpManager_UpdateMasterSecret();
-  int OpManager_ComputeSecretBytes(uint8_t bytes_[64], int32_t type);
+  int OpManager_ComputeSecretBytes(uint8_t* bytes_, int32_t type);
   int OpManager_ComputeEnTrustData(int argc, int32_t argv[]);
 
   int OpExecute_HelloWorld(int argc, int32_t argv[]);
@@ -133,7 +133,7 @@ struct VM_t {
   /**
    *! KeyId == 10 的数据文件, 保存着由SM2ECDSA加密的64字节主密钥(由管理员使用ComputeSecretBytes操作) ...
    */
-  static constexpr int kKeyIdGlobalSECRET = 10; /* SM2ECDSA.Encrypt(MASTER_SECRET[128])  */
+  static constexpr int kKeyIdGlobalSECRET = 10; /* RSA2048.Encrypt(MASTER_SECRET)  */
 
   union {
     uint16_t text_[kSizeCode];
@@ -151,6 +151,13 @@ struct VM_t {
   uint16_t kSizeOutput = 0;
   uint8_t nstk_ = 0;
   uint8_t pc_ = 0;
+
+  /**
+   *!
+   */
+ private:
+  int READ_MASTER_SECRET(uint8_t MASTER_SECRET[64]);
+  int WRITE_MASTER_SECRET(const uint8_t MASTER_SECRET[64]);
 };
 
 /**

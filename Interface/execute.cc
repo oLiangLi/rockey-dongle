@@ -213,6 +213,80 @@ int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
   }
 }
 
+int VM_t::READ_MASTER_SECRET(uint8_t MASTER_SECRET[64]) {
+  uint8_t ENCRYPT_MASTER_SECRET[256];
+  int result = dongle_->ReadDataFile(kKeyIdGlobalSECRET, 0, ENCRYPT_MASTER_SECRET, sizeof(ENCRYPT_MASTER_SECRET));
+  if (0 != result) {
+    rlLOGE(TAG, "kFactoryDataFileId.Read Failed %d!", result);
+    return result;
+  }
+
+  size_t size = 256;
+  result = dongle_->RSAPrivate(kKeyIdGlobalRSA2048, ENCRYPT_MASTER_SECRET, &size, false);
+  if (0 != result || size != kSize_MASTER_SECRET) {
+    rlLOGE(TAG, "kKeyIdGlobalRSA2048.Decrypt Failed %d/%zd!", result, size);
+    return -EFAULT;
+  }
+
+  memcpy(MASTER_SECRET, ENCRYPT_MASTER_SECRET, kSize_MASTER_SECRET);
+  memset(ENCRYPT_MASTER_SECRET, 0, sizeof(ENCRYPT_MASTER_SECRET));
+  return 0;
+}
+
+int VM_t::WRITE_MASTER_SECRET(const uint8_t MASTER_SECRET[64]) {
+  struct {
+    uint32_t modulus_;
+    uint8_t pubkey_[256];
+  } pubk;
+  uint8_t ENCRYPT_MASTER_SECRET[256];
+
+  int result =
+      dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
+                            WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_RSA2048, &pubk, sizeof(pubk));
+  if (0 != result) {
+    rlLOGE(TAG, "Read RSA2048.pubkey Failed %d!", result);
+    return result;
+  }
+
+  if (pubk.modulus_ == 0 || pubk.modulus_ == 0xFFFFFFFF || *(int32_t*)pubk.pubkey_ == 0) {
+    rlLOGXE(TAG, &pubk, sizeof(pubk), "INVALID RSA2048.pubkey!");
+    return -EFAULT;
+  }
+
+  size_t size = 64;
+  memcpy(&ENCRYPT_MASTER_SECRET[0], MASTER_SECRET, 64);
+  result = dongle_->RSAPublic(2048, pubk.modulus_, pubk.pubkey_, &ENCRYPT_MASTER_SECRET[0], &size, true);
+  if (0 != result) {
+    rlLOGE(TAG, "RSA.Encrypt Failed %d!", result);
+    return result;
+  }
+
+  size = 256;
+  memcpy(pubk.pubkey_, &ENCRYPT_MASTER_SECRET[0], 256);
+  result = dongle_->RSAPrivate(kKeyIdGlobalRSA2048, pubk.pubkey_, &size, false);
+  memset(pubk.pubkey_, 0, 256);
+  if (0 != result) {
+    rlLOGE(TAG, "kKeyIdGlobalRSA2048.Verify Failed %d!", result);
+    return result;
+  }
+
+  dongle_->DeleteFile(SECRET_STORAGE_TYPE::kData, kKeyIdGlobalSECRET);
+  result = dongle_->CreateDataFile(kKeyIdGlobalSECRET, 256, PERMISSION::kAdministrator, PERMISSION::kAdministrator);
+  if (0 != result) {
+    rlLOGE(TAG, "kKeyIdGlobalSECRET.Create Failed %d!", result);
+    return result;
+  }
+
+  result = dongle_->WriteDataFile(kKeyIdGlobalSECRET, 0, &ENCRYPT_MASTER_SECRET[0], 256);
+  if (0 != result) {
+    rlLOGE(TAG, "kKeyIdGlobalSECRET.Write Failed %d!", result);
+    dongle_->DeleteFile(SECRET_STORAGE_TYPE::kData, kKeyIdGlobalSECRET);
+    return result;
+  }
+
+  return result;
+}
+
 int VM_t::OpExecute_HelloWorld(int argc, int32_t argv[]) {
   return dongle_->RandBytes((uint8_t*)data_, 1024);
 }
@@ -243,7 +317,6 @@ int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
     ~SECRET_CONTEXT() { memset(PREV_MASTER_SECRET, 0, sizeof(PREV_MASTER_SECRET)); }
 
     uint8_t PREV_MASTER_SECRET[6][32];
-    uint8_t ENCRYPT_MASTER_SECRET[kSize_MASTER_SECRET + 96];
     uint8_t MASTER_SECRET[kSize_MASTER_SECRET];
   };
 
@@ -255,6 +328,7 @@ int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
    */
   memset(data_, 0, 256);  // Header[6]
   Header* const output_header = (Header*)data_;
+  uint8_t* const output_fingerprint = (uint8_t*)data_ + 96;
 
   auto Decrypt = [&](void* cipher) {
     size_t size = 256;
@@ -296,52 +370,13 @@ int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
   };
 
   auto Import = [&] {
-    uint8_t XY[64];
-    int result =
-        dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
-                              WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECDSA, &XY, sizeof(XY));
-    if (0 != result) {
-      rlLOGE(TAG, "Read SM2DCDSA.pubkey Failed %d!", result);
-      return result;
-    }
-
-    result = dongle_->CheckPointOnCurveSM2(&XY[0], &XY[32]);
-    if (0 != result) {
-      rlLOGE(TAG, "SM2DCDSA.CheckPointOnCurve Failed %d!", result);
-      return result;
-    }
-
-    result = dongle_->SHA512(V.PREV_MASTER_SECRET, sizeof(V.PREV_MASTER_SECRET), V.MASTER_SECRET);
+    int result = dongle_->SHA512(V.PREV_MASTER_SECRET, sizeof(V.PREV_MASTER_SECRET), V.MASTER_SECRET);
     DONGLE_VERIFY(0 == result);
 
-    result = dongle_->SM2Encrypt(&XY[0], &XY[32], V.MASTER_SECRET, sizeof(V.MASTER_SECRET), V.ENCRYPT_MASTER_SECRET);
-    if (0 != result) {
-      rlLOGE(TAG, "SM2DCDSA.Encrypt Failed %d!", result);
-      return result;
-    }
+    dongle_->SHA256(V.MASTER_SECRET, sizeof(V.MASTER_SECRET), output_fingerprint);
+    rlLOGXI(TAG, output_fingerprint, 8, "SHA256(MASTER_SECRET)[0...7]:");
 
-    dongle_->DeleteFile(SECRET_STORAGE_TYPE::kData, kKeyIdGlobalSECRET);
-    result = dongle_->CreateDataFile(kKeyIdGlobalSECRET, sizeof(V.ENCRYPT_MASTER_SECRET), PERMISSION::kAdministrator,
-                                     PERMISSION::kAdministrator);
-    if (0 != result) {
-      rlLOGE(TAG, "CreateDataFile.kKeyIdGlobalSECRET Failed %d!", result);
-      return result;
-    }
-
-    result = dongle_->WriteDataFile(kKeyIdGlobalSECRET, 0, V.ENCRYPT_MASTER_SECRET, sizeof(V.ENCRYPT_MASTER_SECRET));
-    if (0 != result) {
-      rlLOGE(TAG, "WriteDataFile.kKeyIdGlobalSECRET Failed %d!", result);
-      return result;
-    }
-
-    size_t size = sizeof(V.ENCRYPT_MASTER_SECRET);
-    result = dongle_->SM2Decrypt(kKeyIdGlobalSM2ECDSA, V.ENCRYPT_MASTER_SECRET, size, V.ENCRYPT_MASTER_SECRET, &size);
-    if (0 != result) {
-      rlLOGE(TAG, "SM2Decrypt.kKeyIdGlobalSM2ECDSA Failed %d!", result);
-      return result;
-    }
-
-    return 0;
+    return WRITE_MASTER_SECRET(V.MASTER_SECRET);
   };
 
   /**
@@ -359,10 +394,12 @@ int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
   if (0 == error)
     error = Import();
 
-  if(0 == error)
+  if (0 == error)
     rlLOGXI(TAG, output_header, sizeof(Header) * 6, "Import MASTER_SECRET OK!");
+  else
+    rlLOGE(TAG, "Import MASTER_SECRET Error: %d!", error);
 
-  memset((uint8_t*)data_ + 96, 0, 1024 - 96);
+  memset((uint8_t*)data_ + 96 + 8, 0, 1024 - 96 - 8);
   return error ? -EFAULT : 0;
 }
 

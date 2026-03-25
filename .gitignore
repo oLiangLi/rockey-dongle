@@ -12,6 +12,8 @@ node_modules
 
 ## webpack 打包出该文件 (Emulator, SSL, X509) ...
 /Web/Agent/Tests/js/jsCrypto.js
+## packScript.cjs 打包出该文件
+/Web/Agent/Tests/js/jsScriptBundled.js
 
 ## 日志和备份
 *.log

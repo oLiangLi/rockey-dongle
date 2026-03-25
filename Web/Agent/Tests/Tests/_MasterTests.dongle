@@ -1,0 +1,22 @@
+public 1024;
+
+@ (0 * 64) [64] : rLANG_SECRET_0;
+@ (1 * 64) [64] : rLANG_SECRET_1;
+@ (2 * 64) [64] : rLANG_SECRET_2;
+@ (3 * 64) [64] : rLANG_SECRET_3;
+@ (4 * 64) [64] : rLANG_SECRET_4;
+@ (5 * 64) [64] : rLANG_SECRET_5;
+
+Memset(0, 0, 1024);
+Memset(128, -1, 128);
+Memset(256, -1, 128);
+
+ComputeSecretBytes(0 * 64, 1);
+ComputeSecretBytes(1 * 64, 1);
+
+ComputeSecretBytes(2 * 64, 2);
+ComputeSecretBytes(3 * 64, 2);
+
+ComputeSecretBytes(4 * 64, 0);
+ComputeSecretBytes(5 * 64, 0);
+

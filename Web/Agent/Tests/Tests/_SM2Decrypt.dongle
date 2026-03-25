@@ -1,0 +1,26 @@
+public 1024;
+
+const {
+    kOffset_INPUT = 256;
+    kOffset_SM2Pubkey = kOffset_INPUT + 64;
+    kOffset_OutputOrigin = 0;
+    kOffset_OutputCheck = 64;
+    kOffset_CheckValue = kOffset_OutputCheck + 64;
+}
+
+@ kOffset_OutputOrigin [64] : rLANG_OUTPUT_ORIGIN;
+@ kOffset_OutputCheck [64] : rLANG_OUTPUT_CHECK;
+@ kOffset_CheckValue i[4] : rLANG_CHECK_VALUE;
+
+rLANG_INPUT_BYTES @ kOffset_INPUT [64];
+
+Memset(0, 0, 256);
+Memcpy(0, kOffset_INPUT, 64);
+
+DeleteSM2File(10000);
+CreateSM2File(10000);
+GenerateSM2(10000, kOffset_SM2Pubkey);
+
+ExSM2Encrypt(kOffset_SM2Pubkey, kOffset_INPUT, 64);
+SM2Decrypt(10000, kOffset_INPUT, 64 + 96);
+Memcpy(kOffset_OutputCheck, kOffset_INPUT, 64);
