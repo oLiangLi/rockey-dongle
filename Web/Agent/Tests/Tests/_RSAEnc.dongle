@@ -6,6 +6,8 @@ const {
     kOffPublic = kOffDecrypt + 256;
 }
 
+@ 0 [1024] : rLANG_RSA_Tests;
+
 DeleteRSAFile(10000);
 CreateRSAFile(10000, 0);
 GenerateRSA(10000, kOffPublic);

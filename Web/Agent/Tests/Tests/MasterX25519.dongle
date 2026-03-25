@@ -6,14 +6,18 @@ public 256;
 const {
     kOffset_RSAPubkey = 256;
     kOffset_X25519Pubkey = kOffset_RSAPubkey + 260;
+    kOffsetType = kOffset_X25519Pubkey + 32;
     kOffsetSecret  = 128;
 }
 
 rLANG_RSA2048_PUBKEY @ kOffset_RSAPubkey [260];
 rLANG_X25519_PUBKEY @ kOffset_X25519Pubkey[32];
+rLANG_SECRET_TYPE   @ kOffsetType [4] = { 0, 0xC8C04E1F, 0x0543CD0F, ${CUSTOM}, ${TYPE} };
+
+@ 0 [256] : rLANG_ENCRYPT_X25519;
 
 Memset(0, -1, 256);
-ComputeSecretBytes(kOffsetSecret);
+ComputeSecretBytes(kOffsetSecret, LoadI32(kOffsetType));
 ExCurve25519ComputePubkey(kOffsetSecret + 32, 0);
 ExCurve25519ComputeSecret(kOffsetSecret + 32, kOffset_X25519Pubkey, 32);
 ExRSAPublicEncrypt(kOffset_RSAPubkey, 0, 64);

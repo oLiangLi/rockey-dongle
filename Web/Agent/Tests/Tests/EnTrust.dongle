@@ -116,6 +116,28 @@ rLANG_EnTRUST_3 @ kEnTrust3 [80];
 rLANG_EnTRUST_4 @ kEnTrust4 [80];
 
 ///
+/// WorldEnTrust[1024]
+///
+@ 0 i[4] : rLANG_WorldMagic;
+@ 4 i[4] : rLANG_Category;
+@ 16 i[2] : rLANG_Version;
+@ 18 i[2] : rLANG_Size;
+@ 0 [20] : rLANG_Header;
+
+@ kOffsetSM2ECDSA_pubkey [64] : rLANG_SM2ECDSA_Pubkey;
+@ kOffsetSM2ECIES_pubkey [64] : rLANG_SM2ECIES_Pubkey;
+@ kOffsetEnTrust_nonce [32] : rLANG_ENTRUST_NONCE_1;
+@ kOutputEnTrust0 [112] : rLANG_ENTRUST_0;
+@ kOutputEnTrust1 [112] : rLANG_ENTRUST_1;
+@ kOutputEnTrust2 [112] : rLANG_ENTRUST_2;
+@ kOutputEnTrust3 [112] : rLANG_ENTRUST_3;
+@ kOutputEnTrust4 [112] : rLANG_ENTRUST_4;
+@ kOffsetDongle_nonce [28] : rLANG_ENTRUST_NONCE_2;
+@ kOffsetZero_reserved [128] : rLANG_RESERVED_Zero;
+@ kOffsetSM2ECIES_sign [64] : rLANG_SM2ECIES_Signature;
+@ kOffsetSM2ECDSA_sign [64] : rLANG_SM2ECDSA_Signature;
+
+///
 /// 确认为 Bootstrap 脚本 ....
 ///
 rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };

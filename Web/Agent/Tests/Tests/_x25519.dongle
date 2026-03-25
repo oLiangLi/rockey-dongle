@@ -11,6 +11,8 @@ const {
 	i = kOff_X25519_secret2 + 32;
 }
 
+@ 0 [1024] : rLANG_X25519_Tests;
+
 Memset(0, 0, 1024);
 
 while(LoadI8(i) < 64) {

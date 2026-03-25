@@ -84,6 +84,8 @@ statement:
     block_statement
     |
     input_statement
+    |
+    output_statement
     ;
 
 empty_statement:
@@ -240,5 +242,23 @@ input_decl:
     expr                        { /**@ AC_INPUT_EXPR */ }
     |
     '$' '{' TK_IDEN '}'         { /**@ AC_INPUT_EXTERN */ }
+    ;
+
+output_statement:
+    output_offset output_type output_size ':' TK_IDEN ';'           { /**@ AC_OUTPUT_STMT */ }
+    ;
+
+output_offset:
+    '@' expr                    { /**@ AC_OUTPUT_OFFSET */ }
+    ;
+
+output_type:
+    /* null */                  { /**@ AC_OUTPUT_TYPE_BUFFER */ }
+    |
+    TK_IDEN                     { /**@ AC_OUTPUT_TYPE_INTEGER */ }
+    ;
+
+output_size:
+    '[' expr ']'                { /**@ AC_OUTPUT_SIZE */ }
     ;
 

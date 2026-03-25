@@ -8,6 +8,8 @@ const {
 
 rLANG_SCRIPT_CODE @ kOffset_Input [200];
 
+@ 0 [200] : rLANG_SCRIPT_CODE_SIGNED;
+
 Memcpy(0, kOffset_Input, 200);
 
 StoreI32(i, 200 - 64);

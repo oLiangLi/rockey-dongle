@@ -101,6 +101,27 @@ rLANG_SM2ECIES_PERM @ kOff_SM2ECIESPermission [1] = { 2, 1, 0 };
 rLANG_CATEGORY @ kOff_Category [4] = { kCategory_MAGIC_Public, kCategory_MAGIC_Admin, ${CUSTOM}, ${CATEGORY} };
 rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };
 
+///
+/// WorldPublic[1024]
+///
+@ 0 i[4] : rLANG_WorldMagic;
+@ 4 i[4] : rLANG_Category;
+@ 16 i[2] : rLANG_Version;
+@ 18 i[2] : rLANG_Size;
+@ 0 [20] : rLANG_Header;
+
+@ kOffsetPubkey_SM2ECDSA [64] : rLANG_SM2ECDSA_Pubkey;
+@ kOffsetPubkey_Secp256r1 [ 64 ] : rLANG_PRIME256V1_Pubkey;
+@ kOffsetPubkey_RSA2048 [260] : rLANG_RSA2048_Pubkey;
+@ kOffsetPubkey_SM2ECIES [64] : rLANG_SM2ECIES_Pubkey;
+@ kOffsetDongleNonce1 [32] : rLANG_DONGLE_NONCE_1;
+@ kOffsetDongleInfo [40] : rLANG_DONGLE_INFO;
+@ kOffsetDongleNonce2 [32] : rLANG_DONGLE_NONCE_2;
+@ kOffsetSign_SM2ECIES [64] : rLANG_SM2ECIES_Signature;
+@ kOffsetSign_RSA2048 [256] : rLANG_RSA2048_Signature;
+@ kOffsetSign_Secp256r1 [64] : rLANG_PRIME256V1_Signature;
+@ kOffsetSign_SM2ECDSA [64] : rLANG_SM2ECDSA_Signature;
+
 /**
  *! WorldInitialize() 会检查管理员权限, 并删除必要的私钥和数据文件 ....
  */

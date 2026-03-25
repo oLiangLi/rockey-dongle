@@ -1,5 +1,7 @@
 public 1024;
 
+@ 0 i[4] : rLANG_VERIFY_RESULT;
+
 Memset(0, 0, 1024);
 VerifyWorldPublic();
-
+StoreI32(0, 42);

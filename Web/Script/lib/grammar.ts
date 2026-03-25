@@ -592,25 +592,25 @@ const AllFunc: TypeFuncCall[] = [
     name: "kUpdateSM2ECIESKey",
     min: 1,
     max: 2,
-    op: OpCode.kUpdateSM2ECIESKey
+    op: OpCode.kUpdateSM2ECIESKey,
   },
   {
     name: "kUpdateMasterSecret",
     min: 0,
     max: 0,
-    op: OpCode.kUpdateMasterSecret
+    op: OpCode.kUpdateMasterSecret,
   },
   {
     name: "kComputeSecretBytes",
     min: 1,
     max: 2,
-    op: OpCode.kComputeSecretBytes
+    op: OpCode.kComputeSecretBytes,
   },
   {
     name: "kComputeEnTrustData",
     min: 3,
     max: 3,
-    op: OpCode.kComputeEnTrustData
+    op: OpCode.kComputeEnTrustData,
   },
   {
     name: "kExecuteHelloWorld",
@@ -622,8 +622,8 @@ const AllFunc: TypeFuncCall[] = [
     name: "kExecuteImportMasterSecret",
     min: 0,
     max: 0,
-    op: OpCode.kExecuteImportMasterSecret
-  }
+    op: OpCode.kExecuteImportMasterSecret,
+  },
 ];
 
 const table_memory_op = new Map<string, TypeMemoryOp>();
@@ -1113,6 +1113,13 @@ type DataValue = {
   sizeMin: integer;
   sizeMax: integer;
   options: Array<string | integer>;
+};
+
+type OutputValue = {
+  name: string;
+  offset: integer;
+  size: integer;
+  intType: boolean;
 };
 
 export type TypeGrammar =
@@ -1812,6 +1819,85 @@ export class Context {
         this.data_curr_!.options.push(<string>$(3));
         break;
 
+      case Action.AC_OUTPUT_STMT:
+        {
+          $$ = new Statement();
+          const offset = <integer>$(1);
+          const intType = $(2) === true;
+          const size = <integer>$(3);
+          const name = <string>$(5);
+
+          if(offset < 0 || offset >= this.public_size_) {
+            throw Error(
+                `Line ${this.yyline_}: Output(${this.public_size_}) offset Out-of-Range ${offset}`,
+            );
+          }
+
+          if(size < 1 || size > this.public_size_ || offset + size > this.public_size_) {
+            throw Error(
+                `Line ${this.yyline_}: Output(${this.public_size_}) offset/size Out-of-Range ${offset}/${size}`,
+            );
+          }
+
+          if(intType && size !== 1 && size !== 2 && size !== 4) {
+            throw Error(
+                `Line ${this.yyline_}: Output size ${size} must be 1, 2 or 4.`,
+            );
+          }
+
+          if(this.output_.has(name)) {
+            throw Error(`Line ${this.yyline_}: Duplicate output ${name}`);
+          }
+
+          this.output_.set(name, {
+            name, offset, size, intType
+          });
+        }
+        break;
+      case Action.AC_OUTPUT_OFFSET:
+        {
+          const offset = $(2);
+          if (offset instanceof ConstExpr) {
+            $$ = offset.value_;
+          } else {
+            throw Error(
+              `Line ${this.yyline_}: Output offset must be a constant`,
+            );
+          }
+        }
+        break;
+      case Action.AC_OUTPUT_TYPE_BUFFER:
+        {
+          $$ = false;
+        }
+        break;
+      case Action.AC_OUTPUT_TYPE_INTEGER:
+        {
+          switch($(1)) {
+            case 'i':
+              $$ = true;
+              break;
+            case 'x':
+              $$ = false;
+              break;
+            default:
+              throw Error(`Line ${this.yyline_} Output type ${$(1)} must be 'i' or 'x'`);
+          }
+        }
+        break;
+      case Action.AC_OUTPUT_SIZE:
+        {
+          const size = $(2);
+          if(size instanceof ConstExpr) {
+            $$ = size.value_;
+          } else {
+            throw Error(
+                `Line ${this.yyline_}: Output size must be a constant`,
+            );
+          }
+        }
+        break;
+
       default:
         break;
     }
@@ -2054,6 +2140,14 @@ export class Context {
     return result;
   }
 
+  output() {
+    const result = [];
+    for (const [, value] of this.output_) {
+      result.push(value);
+    }
+    return result;
+  }
+
   private static wasmModule_?: WebAssembly.Module;
   private readonly yyvsa_: TypeGrammar[];
   private readonly native_: Native_;
@@ -2066,5 +2160,6 @@ export class Context {
   private named_const_value_ = new Map<string, integer>();
   private statements_ = <Statement[]>[];
   private readonly data_ = new Map<string, DataValue>();
+  private readonly output_ = new Map<string, OutputValue>();
   private data_curr_: null | DataValue = null;
 }

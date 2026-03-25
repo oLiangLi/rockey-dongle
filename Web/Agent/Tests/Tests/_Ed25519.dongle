@@ -10,6 +10,8 @@ const {
 	i  = v2 + 4;
 }
 
+@ 0 [1024] : rLANG_Ed25519_Tests;
+
 Memset(0, 0, 1024);
 
 while(LoadI8(i) < 32) {

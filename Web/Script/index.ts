@@ -7,6 +7,7 @@ export async function Parse(script: string) {
   return {
     size_public : ctx.size_public(),
     code: ctx.code().toString("base64"),
+    output: ctx.output(),
     data: ctx.data(),
   };
 }
