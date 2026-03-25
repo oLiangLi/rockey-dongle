@@ -105,6 +105,12 @@ struct VM_t {
   int OpManager_ComputeEnTrustData(int argc, int32_t argv[]);
 
   int OpExecute_HelloWorld(int argc, int32_t argv[]);
+  int OpExecute_ImportMasterSecret(int argc, int32_t argv[]);
+
+  /**
+   *!
+   */
+  static constexpr int kSize_MASTER_SECRET = 64;
 
   static constexpr int kSizeData = 1024;
   static constexpr int kSizeCode = 100;
@@ -526,6 +532,7 @@ enum class OpCode : uint16_t {
    *! [0x280, 0x2FF]的OpCode, 定义为功能性脚本, 调用后将自动Exit, 运行时可以将 VM.text, VM.stack 用作缓存使用 ...
    */
   kExecuteHelloWorld = 0x280,  // argc : 0, Exit(ExecuteHelloWorld()), 测试使用 ...
+  kExecuteImportMasterSecret,  // argc : 0, Exit(ExecuteImportMasterSecret())  ...
 
   /**
    *! [0x300, 0x3FF]的OpCode为以后的扩展所保留 ...

@@ -4,6 +4,7 @@
     <meta charset="utf-8" />
     <script src="js/jsWorld.js"></script>
     <script src="js/jsCrypto.js"></script>
+    <script src="js/jsScriptBundled.js"></script>
     <title>RockeyARM Tests</title>
     <script>
       const prev_dashboard_value = new Map();
@@ -42,6 +43,11 @@
        * @type {(master: object, info: Buffer) => object}
        */
       var jsCheckEnTrust;
+
+      /**
+       * @type {Map<string,string>}
+       */
+      const jsScriptBundled = jsWorld.jsScriptBundled;
 
       window.onload = async function () {
         jsCipher = await jsWorld.CipherLoader();
@@ -1632,6 +1638,16 @@
         const entrust = jsCheckEnTrust(master, dashboard.subarray(6 * 1024, 7 * 1024));
         console.log(`EnTrust(${id}: ${JSON.stringify(entrust, null, 2)})`);
       }
+
+      function HandleScriptLimitSign() {
+
+      }
+
+      function HandleScriptLimitExport() {
+
+      }
+
+
     </script>
   </head>
   <body>
@@ -1702,6 +1718,13 @@
       <button id="ScriptExecv">ScriptExecv</button
       ><button id="ScriptExport">ScriptExport</button
       ><button id="ScriptParse">ScriptParse</button>
+    </p>
+
+    <p>
+      <label for="check_LimitScriptExecv">Limit:</label><input type="checkbox" id="check_LimitScriptExecv" checked disabled />
+      <label for="limitFile"></label><input type="file" id="limitFile" />
+      <button onclick="HandleScriptLimitSign()">ScriptLimitSign</button>
+      <button onclick="HandleScriptLimitExport()">ScriptLimitExport</button>
     </p>
 
     <p>

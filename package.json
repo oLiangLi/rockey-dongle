@@ -1,8 +1,8 @@
 {
   "type": "commonjs",
   "scripts": {
-    "build": "tsc && webpack -c Web/Emulator/lib/webpack.cjs --mode development",
-    "release": "tsc && webpack -c Web/Emulator/lib/webpack.cjs --mode production"
+    "build": "tsc && node Web/Emulator/lib/packScript.cjs && webpack -c Web/Emulator/lib/webpack.cjs --mode development",
+    "release": "tsc && node Web/Emulator/lib/packScript.cjs && webpack -c Web/Emulator/lib/webpack.cjs --mode production"
   },
   "devDependencies": {
     "@types/node": "^25.3.3"

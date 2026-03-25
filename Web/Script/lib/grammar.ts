@@ -618,6 +618,12 @@ const AllFunc: TypeFuncCall[] = [
     max: 0,
     op: OpCode.kExecuteHelloWorld,
   },
+  {
+    name: "kExecuteImportMasterSecret",
+    min: 0,
+    max: 0,
+    op: OpCode.kExecuteImportMasterSecret
+  }
 ];
 
 const table_memory_op = new Map<string, TypeMemoryOp>();

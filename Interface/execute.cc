@@ -204,6 +204,10 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
 int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
   if (op == OpCode::kExecuteHelloWorld) {
     return OpExecute_HelloWorld(argc, argv);
+  } else if (op == OpCode::kExecuteImportMasterSecret) {
+    if (valid_permission_ != PERMISSION::kAdministrator)
+      return zero_ = -EACCES;
+    return zero_ = OpExecute_ImportMasterSecret(argc, argv);
   } else {
     return zero_ = SIGILL;
   }
@@ -211,6 +215,155 @@ int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
 
 int VM_t::OpExecute_HelloWorld(int argc, int32_t argv[]) {
   return dongle_->RandBytes((uint8_t*)data_, 1024);
+}
+
+/**
+ *! K0: A B C
+ *! K1: A D E
+ *! K2: B D F
+ *! K3: C E F
+ */
+int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
+  int error = 0;
+  uint32_t key_mask = 0;
+
+  struct Header {
+    uint8_t hid_[12];
+    uint8_t kid_[3];
+    uint8_t index_;
+  };
+
+  struct Key {
+    Header header_;
+    uint8_t PREV_MASTER_SECRET[32];
+  };
+
+  union SECRET_CONTEXT {
+    SECRET_CONTEXT() { memset(PREV_MASTER_SECRET, 0, sizeof(PREV_MASTER_SECRET)); }
+    ~SECRET_CONTEXT() { memset(PREV_MASTER_SECRET, 0, sizeof(PREV_MASTER_SECRET)); }
+
+    uint8_t PREV_MASTER_SECRET[6][32];
+    uint8_t ENCRYPT_MASTER_SECRET[kSize_MASTER_SECRET + 96];
+    uint8_t MASTER_SECRET[kSize_MASTER_SECRET];
+  };
+
+  SECRET_CONTEXT V;
+  rLANG_ABIREQUIRE(16 == sizeof(Header));
+
+  /**
+   *!
+   */
+  memset(data_, 0, 256);  // Header[6]
+  Header* const output_header = (Header*)data_;
+
+  auto Decrypt = [&](void* cipher) {
+    size_t size = 256;
+    int result = dongle_->RSAPrivate(kKeyIdGlobalRSA2048, (uint8_t*)cipher, &size, false);
+    if (0 == result && size % sizeof(Key) == 0) {
+      const int kCount = (int)(size / sizeof(Key));
+      Key* const keys = (Key*)cipher;
+      rlLOGI(TAG, "==== Decrypt PREV_MASTER_SECRET Count: %d ====", kCount);
+
+      for (int i = 0; i < kCount; ++i) {
+        Key& key = keys[i];
+
+        const int index = key.header_.index_;
+        if (index >= 0 && index < 6) {
+          if (0 != (key_mask & (1 << index))) {
+            if (0 != memcmp(&V.PREV_MASTER_SECRET[index][0], key.PREV_MASTER_SECRET, 32)) {
+              rlLOGE(TAG, "Key[%d] mismatch!", index);
+              ++error;
+            } else {
+              rlLOGI(TAG, "Key[%d] check OK!", index);
+            }
+          } else {
+            key_mask |= 1 << index;
+            memcpy(&V.PREV_MASTER_SECRET[index][0], key.PREV_MASTER_SECRET, 32);
+            memcpy(&output_header[index], &key.header_, sizeof(Header));
+            rlLOGI(TAG, "Key[%d] imported!", index);
+          }
+        } else {
+          rlLOGE(TAG, "Invalid Key index: %d", index);
+          ++error;
+        }
+      }
+    } else {
+      rlLOGE(TAG, "RSA.decrypt Error %d, size: %zd", result, size);
+      ++error;
+    }
+
+    memset(cipher, 0, 256);
+  };
+
+  auto Import = [&] {
+    uint8_t XY[64];
+    int result =
+        dongle_->ReadDataFile(Dongle::kFactoryDataFileId,
+                              WorldPublic::kOffsetDataFile + WorldPublic::kOffsetPubkey_SM2ECDSA, &XY, sizeof(XY));
+    if (0 != result) {
+      rlLOGE(TAG, "Read SM2DCDSA.pubkey Failed %d!", result);
+      return result;
+    }
+
+    result = dongle_->CheckPointOnCurveSM2(&XY[0], &XY[32]);
+    if (0 != result) {
+      rlLOGE(TAG, "SM2DCDSA.CheckPointOnCurve Failed %d!", result);
+      return result;
+    }
+
+    result = dongle_->SHA512(V.PREV_MASTER_SECRET, sizeof(V.PREV_MASTER_SECRET), V.MASTER_SECRET);
+    DONGLE_VERIFY(0 == result);
+
+    result = dongle_->SM2Encrypt(&XY[0], &XY[32], V.MASTER_SECRET, sizeof(V.MASTER_SECRET), V.ENCRYPT_MASTER_SECRET);
+    if (0 != result) {
+      rlLOGE(TAG, "SM2DCDSA.Encrypt Failed %d!", result);
+      return result;
+    }
+
+    dongle_->DeleteFile(SECRET_STORAGE_TYPE::kData, kKeyIdGlobalSECRET);
+    result = dongle_->CreateDataFile(kKeyIdGlobalSECRET, sizeof(V.ENCRYPT_MASTER_SECRET), PERMISSION::kAdministrator,
+                                     PERMISSION::kAdministrator);
+    if (0 != result) {
+      rlLOGE(TAG, "CreateDataFile.kKeyIdGlobalSECRET Failed %d!", result);
+      return result;
+    }
+
+    result = dongle_->WriteDataFile(kKeyIdGlobalSECRET, 0, V.ENCRYPT_MASTER_SECRET, sizeof(V.ENCRYPT_MASTER_SECRET));
+    if (0 != result) {
+      rlLOGE(TAG, "WriteDataFile.kKeyIdGlobalSECRET Failed %d!", result);
+      return result;
+    }
+
+    size_t size = sizeof(V.ENCRYPT_MASTER_SECRET);
+    result = dongle_->SM2Decrypt(kKeyIdGlobalSM2ECDSA, V.ENCRYPT_MASTER_SECRET, size, V.ENCRYPT_MASTER_SECRET, &size);
+    if (0 != result) {
+      rlLOGE(TAG, "SM2Decrypt.kKeyIdGlobalSM2ECDSA Failed %d!", result);
+      return result;
+    }
+
+    return 0;
+  };
+
+  /**
+   *!
+   */
+  Decrypt((uint8_t*)data_ + 256 * 1);
+  Decrypt((uint8_t*)data_ + 256 * 2);
+  Decrypt((uint8_t*)data_ + 256 * 3);
+
+  if (key_mask != 0x3F) {
+    rlLOGE(TAG, "Invalid Key.mask 0x%02X != 0x3F", key_mask);
+    ++error;
+  }
+
+  if (0 == error)
+    error = Import();
+
+  if(0 == error)
+    rlLOGXI(TAG, output_header, sizeof(Header) * 6, "Import MASTER_SECRET OK!");
+
+  memset((uint8_t*)data_ + 96, 0, 1024 - 96);
+  return error ? -EFAULT : 0;
 }
 
 }  // namespace script

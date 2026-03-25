@@ -6,7 +6,6 @@ namespace dongle {
 namespace script {
 
 constexpr int kSizeDashboard = 8 * 1024;
-constexpr int kSize_MASTER_SECRET = 64;
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("k@mgr");
 
 int VM_t::OpManager_WorldInitialize() {
@@ -294,7 +293,7 @@ int VM_t::OpManager_UpdateMasterSecret() {
 
 int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64], int32_t type) {
   struct Context {
-    uint8_t hid_[12];
+    DONGLE_INFO info_;
     uint32_t seed_0_;
     uint8_t bytes_[64];
     uint32_t seed_1_;
@@ -324,7 +323,7 @@ int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64], int32_t type) {
       return result;
 
     result = dongle_->SM2Decrypt(kKeyIdGlobalSM2ECDSA, storage_master_secret, size, storage_master_secret, &size);
-    memcpy(MASTER_SECRET_CONTEXT.MASTER_SECRET, storage_master_secret, 64);
+    memcpy(MASTER_SECRET_CONTEXT.MASTER_SECRET, storage_master_secret, kSize_MASTER_SECRET);
     memset(storage_master_secret, 0, sizeof(storage_master_secret));
     if (0 != result)
       ++error;
@@ -336,15 +335,13 @@ int VM_t::OpManager_ComputeSecretBytes(uint8_t bytes_[64], int32_t type) {
     MASTER_SECRET_CONTEXT.seed_2_ = rLANG_WORLD_SEED_2;
     MASTER_SECRET_CONTEXT.seed_3_ = rLANG_WORLD_SEED_3;
 
-    DONGLE_INFO info;
-    result = dongle_->GetDongleInfo(&info);
+    result = dongle_->GetDongleInfo(&MASTER_SECRET_CONTEXT.info_);
     if (0 != result)
       ++error;
-    memcpy(MASTER_SECRET_CONTEXT.hid_, info.hid_, 12);
   } else {
-    MASTER_SECRET_CONTEXT.seed_0_ = rLANG_WORLD_MAGIC;
-    MASTER_SECRET_CONTEXT.seed_1_ = rLANG_DECLARE_MAGIC_Xs("SECRT");
-    MASTER_SECRET_CONTEXT.seed_2_ = rLANG_DECLARE_MAGIC_Xs("BYTES");
+    MASTER_SECRET_CONTEXT.seed_0_ = 0;
+    MASTER_SECRET_CONTEXT.seed_1_ = rLANG_WORLD_MAGIC;
+    MASTER_SECRET_CONTEXT.seed_2_ = rLANG_ATOMC_WORLD_MAGIC;
     MASTER_SECRET_CONTEXT.seed_3_ = rLANG_COSMO_WORLD_MAGIC;
   }
 
