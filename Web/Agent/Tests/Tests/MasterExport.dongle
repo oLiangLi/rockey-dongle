@@ -1,0 +1,33 @@
+public 128;
+
+@ 0  [32] : rLANG_Ed25519_Pubkey;
+@ 32 [32] : rLANG__X25519_Pubkey;
+@ 64 [64] : rLANG_Ed25519_SIGN(0,64);
+
+/**
+ *!
+ */
+Memset(0, 0, 1024);
+
+/**
+ *! Ed25519.pkey: Master(0)[0...31]
+ */
+ComputeSecretBytes(128, 0);
+ExEd25519ComputePubkey(128, 0);
+
+/**
+ *! X25519.pkey: Master(-1)[32...63]
+ */
+Memset(256, -1, 64);
+ComputeSecretBytes(256, 0);
+ExCurve25519ComputePubkey(256 + 32, 32);
+
+/**
+ *! Ed25519.sign(||Ed25519.pubkey|X25519.pubkey||)
+ */
+ExEd25519Sign(0, 128, 0, 64, 64);
+
+/**
+ *!
+ */
+Memset(128, 0, 1024 - 128);

@@ -208,6 +208,10 @@ int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
     if (valid_permission_ != PERMISSION::kAdministrator)
       return zero_ = -EACCES;
     return zero_ = OpExecute_ImportMasterSecret(argc, argv);
+  } else if (op == OpCode::kExecuteExchangeMasterSecret) {
+    if (valid_permission_ != PERMISSION::kAdministrator)
+      return zero_ = -EACCES;
+    return zero_ = OpExecute_ExchangeMasterSecret(argc, argv);
   } else {
     return zero_ = SIGILL;
   }
@@ -297,20 +301,121 @@ int VM_t::OpExecute_HelloWorld(int argc, int32_t argv[]) {
  *! K2: B D F
  *! K3: C E F
  */
+struct MASTER_SECRET_Header {
+  uint8_t hid_[12];
+  uint8_t kid_[3];
+  uint8_t index_;
+};
+
+struct MASTER_SECRET_Key {
+  MASTER_SECRET_Header header_;
+  uint8_t PREV_MASTER_SECRET[32];
+};
+
+int VM_t::OpExecute_ExchangeMasterSecret(int argc, int32_t argv[]) {
+  uint8_t pkey[64];
+  struct {
+    uint8_t x25519_pubkey[4][32];
+    uint32_t rsa_modulus_;
+    uint8_t rsa_pubkey_[256];
+  } Context;
+  enum class Name : uint8_t { A, B, C, D, E, F };
+  enum Index { K0, K1, K2, K3 };
+
+  using Key = MASTER_SECRET_Key;
+  memcpy(&Context, (uint8_t*)data_ + 256, sizeof(Context));
+  memset(data_, 0, 1024);
+
+  if (Context.rsa_modulus_ == 0 || Context.rsa_modulus_ + 1 == 0 || *(int32_t*)Context.rsa_pubkey_ == 0) {
+    rlLOGXE(TAG, Context.rsa_pubkey_, 256, "INVALID RSA.Pubkey %d", (int)Context.rsa_modulus_);
+    return -EINVAL;
+  }
+
+  memset(pkey, -1, sizeof(pkey));
+  int result = OpManager_ComputeSecretBytes(pkey, 0);
+  if (0 != result)
+    return result;
+
+  result = dongle_->ComputePubkeyCurve25519(&pkey[0], &pkey[32]);
+  if (0 != result)
+    return result;
+
+  auto Exchange = [&](const Index index) {
+    DONGLE_INFO info;
+    Name KeyIndex[3];
+    Key* const keys = (Key*)data_;
+    int result = dongle_->GetDongleInfo(&info);
+    if (0 != result)
+      return result;
+
+    switch (index) {
+      default:
+      case Index::K0:  // A B C
+        KeyIndex[0] = Name::A;
+        KeyIndex[1] = Name::B;
+        KeyIndex[2] = Name::C;
+        break;
+
+      case Index::K1:  // A D E
+        KeyIndex[0] = Name::A;
+        KeyIndex[1] = Name::D;
+        KeyIndex[2] = Name::E;
+        break;
+
+      case Index::K2:  // B D F
+        KeyIndex[0] = Name::B;
+        KeyIndex[1] = Name::D;
+        KeyIndex[2] = Name::F;
+        break;
+
+      case Index::K3:  // C E F
+        KeyIndex[0] = Name::C;
+        KeyIndex[1] = Name::E;
+        KeyIndex[2] = Name::F;
+        break;
+    }
+
+    for (int ii = 0, i = 0; ii < 4; ++ii) {
+      if (i == (int)index)
+        continue;
+
+      memcpy(&keys[i].header_.hid_[0], &info.hid_[0], 12);
+      memset(&keys[i].header_.kid_[0], 0xff, 3);
+      keys[i].header_.index_ = (uint8_t)KeyIndex[i];
+
+      /**
+       *!
+       */
+      dongle_->ComputeSecretCurve25519(&keys[i].PREV_MASTER_SECRET[0], &pkey[32], &Context.x25519_pubkey[ii][0]);
+
+      /**
+       *!
+       */
+      ++i;
+    }
+
+    size_t size = sizeof(Key) * 3;
+    return dongle_->RSAPublic(2048, Context.rsa_modulus_, Context.rsa_pubkey_, (uint8_t*)data_, &size, true);
+  };
+
+  for (int i = 0; i < 4; ++i) {
+    if (0 != memcmp(&Context.x25519_pubkey[i][0], pkey, 32))
+      continue;
+    result = Exchange((Index)i);
+    memset(&pkey[0], 0, sizeof(pkey));
+    return result;
+  }
+
+  rlLOGE(TAG, "[ENOENT]X25519.pubkey 404 Not Found!");
+  return -ENOENT;
+}
+
 int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
   int error = 0;
   uint32_t key_mask = 0;
 
-  struct Header {
-    uint8_t hid_[12];
-    uint8_t kid_[3];
-    uint8_t index_;
-  };
-
-  struct Key {
-    Header header_;
-    uint8_t PREV_MASTER_SECRET[32];
-  };
+  using Key = MASTER_SECRET_Key;
+  using Header = MASTER_SECRET_Header;
 
   union SECRET_CONTEXT {
     SECRET_CONTEXT() { memset(PREV_MASTER_SECRET, 0, sizeof(PREV_MASTER_SECRET)); }
