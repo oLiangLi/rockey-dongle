@@ -781,7 +781,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
   } else if (op == OpCode::kExSM2Decrypt) {
     cycles_ -= kCyclesInternal;
 
-    if (argc != 4) {
+    if (argc != 3) {
       zero_ = SIGILL;
     } else {
       Dongle::SecretBuffer<32> pkey;
@@ -810,23 +810,27 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
   } else if (op == OpCode::kExSM2Encrypt) {
     cycles_ -= kCyclesInternal;
 
-    uint8_t pubk[64];
-    uint8_t cipher[256];
-    size_t size = argv[2];
-
-    if (size < 1) {
-      value = -EINVAL;
-    } else if (size > 256 - 96) {
-      value = -E2BIG;
+    if(argc != 3) {
+      zero_ = SIGILL;
     } else {
-      const void* cK = OpCheckMM(argv[0], 64);
-      uint8_t* data = static_cast<uint8_t*>(OpCheckMM(argv[1], (int)size + 96));
-      if (cK && data) {
-        memcpy(pubk, cK, 64);
-        value = dongle_->SM2Encrypt(&pubk[0], &pubk[32], data, size, cipher);
-        if (value >= 0) {
-          value = static_cast<int>(96 + size);
-          memcpy(data, cipher, value);
+      uint8_t pubk[64];
+      uint8_t cipher[256];
+      size_t size = argv[2];
+
+      if (size < 1) {
+        value = -EINVAL;
+      } else if (size > 256 - 96) {
+        value = -E2BIG;
+      } else {
+        const void* cK = OpCheckMM(argv[0], 64);
+        uint8_t* data = static_cast<uint8_t*>(OpCheckMM(argv[1], (int)size + 96));
+        if (cK && data) {
+          memcpy(pubk, cK, 64);
+          value = dongle_->SM2Encrypt(&pubk[0], &pubk[32], data, size, cipher);
+          if (value >= 0) {
+            value = static_cast<int>(96 + size);
+            memcpy(data, cipher, value);
+          }
         }
       }
     }

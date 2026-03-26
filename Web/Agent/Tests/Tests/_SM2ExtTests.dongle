@@ -1,0 +1,30 @@
+public 1024;
+
+@ 0   [32]  : rLANG_OUTPUT_PKEY;
+@ 32  [32]  : rLANG_OUTPUT_HASH;
+@ 64  [64]  : rLANG_OUTPUT_PUBKEY;
+@ 128 [128] : rLANG_OUTPUT_ENCRYPT_PKEY;
+@ 256 [32]  : rLANG_OUTPUT_VERIFY_PKEY;
+@ (256 + 32) [64] : rLANG_OUTPUT_SIGN;
+
+Memset(0, 0, 1024);
+RandBytes(32, 32);
+
+DeleteSM2File(10000);
+CreateSM2File(10000);
+GenerateSM2(10000, 64, 0);
+
+Memcpy(128, 0, 32);
+if(128 != ExSM2Encrypt(64, 128, 32))
+    Exit(0x10);
+Memcpy(256, 128, 128);
+if(32 != ExSM2Decrypt(0, 256, 128))
+    Exit(0x20);
+if(0 != ExSM2Sign(0, 32, 256 + 32))
+    Exit(0x30);
+if(0 != SM2Sign(10000, 32, 256 + 32))
+    Exit(0x31);
+if(0 != ExSM2Verify(32, 64, 256 + 32))
+    Exit(0x40);
+DeleteSM2File(10000);
+
