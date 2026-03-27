@@ -67,6 +67,17 @@ window.onload = async function () {
     },
   });
   jsEmulator.Create("1234567812345678", 0x100, 256);
+  {
+    /**
+     * @type {HTMLSelectElement}
+     */
+    const eleScripts = document.getElementById("scripts");
+    for(const [name, value] of jsScriptBundled) {
+      const option = document.createElement("option");
+      option.text = option.value = name;
+      eleScripts.appendChild(option);
+    }
+  }
 
   jsScriptParser = async (script) => {
     return await jsCryptoFactory.ParseScript(script);
@@ -1128,6 +1139,12 @@ async function UserConfirmParamImpl(div, program) {
             /// ZERO[Min] ...
             SetOK(true);
             PARAM_RESULT[name] = Buffer.alloc(arg.sizeMin);
+          } else if(value === 'f') {
+            /// FFFF[Max] ...
+            SetOK(true);
+            const value = Buffer.alloc(arg.sizeMax);
+            value.fill(0xff);
+            PARAM_RESULT[name] = value;
           }
         }
         select.onchange = select_onchange;
@@ -1158,6 +1175,13 @@ async function UserConfirmParamImpl(div, program) {
             const option = document.createElement("option");
             option.value = "z"; /// ZERO[Min] ...
             option.text = `ZERO[${arg.sizeMin}]`;
+            select.appendChild(option);
+          }
+
+          {
+            const option = document.createElement("option");
+            option.value = "f";
+            option.text = `FFFF[${arg.sizeMax}]`;
             select.appendChild(option);
           }
 
@@ -1704,6 +1728,12 @@ function HandleCheckEnTrust() {
     dashboard.subarray(6 * 1024, 7 * 1024),
   );
   console.log(`EnTrust(${id}: ${JSON.stringify(entrust, null, 2)})`);
+}
+
+function HandleLoadScript() {
+  const script = document.getElementById('scripts').value;
+  if(jsScriptBundled.has(script))
+    document.getElementById('dongle_script').value = jsScriptBundled.get(script);
 }
 
 function HandleScriptLimitSign() {}

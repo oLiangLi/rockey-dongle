@@ -55,9 +55,9 @@
     <p>
       初始化RockeyARM设备:
       <label for="uid">UID:</label
-      ><input type="text" id="uid" maxlength="20" value="0x10086" />
-      <label for="secret">SECRET:</label><input type="file" id="secret" />
-      <label for="main">MAIN:</label><input type="file" id="main" />
+      ><input type="text" id="uid" maxlength="10" value="0x10086" style="width: 100px" />
+      <label for="secret">SECRET:</label><input type="file" id="secret" style="width: 200px" />
+      <label for="main">MAIN:</label><input type="file" id="main" style="width: 200px" />
       <button id="factory">factory</button>
     </p>
 
@@ -81,6 +81,8 @@
     <p>
       <label for="check_LimitScriptExecv">Limit:</label
       ><input type="checkbox" id="check_LimitScriptExecv" checked disabled />
+      <label for="scripts">Script:</label><select id="scripts" style="width: 200px"></select>
+      <button onclick="HandleLoadScript()">LoadScript</button>
       <label for="limitFile"></label><input type="file" id="limitFile" />
       <button onclick="HandleScriptLimitSign()">ScriptLimitSign</button>
       <button onclick="HandleScriptLimitExport()">ScriptLimitExport</button>

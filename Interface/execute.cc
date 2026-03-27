@@ -375,23 +375,31 @@ int VM_t::OpExecute_ExchangeMasterSecret(int argc, int32_t argv[]) {
         break;
     }
 
-    for (int ii = 0, i = 0; ii < 4; ++ii) {
-      if (i == (int)index)
+    int Z_count = 0;
+    for (int ii = 0; ii < 4; ++ii) {
+      if (ii == (int)index)
         continue;
 
-      memcpy(&keys[i].header_.hid_[0], &info.hid_[0], 12);
-      memset(&keys[i].header_.kid_[0], 0xff, 3);
-      keys[i].header_.index_ = (uint8_t)KeyIndex[i];
+      memcpy(&keys[Z_count].header_.hid_[0], &info.hid_[0], 12);
+      memset(&keys[Z_count].header_.kid_[0], 0xff, 3);
+      keys[Z_count].header_.index_ = (uint8_t)KeyIndex[Z_count];
 
       /**
        *!
        */
-      dongle_->ComputeSecretCurve25519(&keys[i].PREV_MASTER_SECRET[0], &pkey[32], &Context.x25519_pubkey[ii][0]);
+      dongle_->ComputeSecretCurve25519(&keys[Z_count].PREV_MASTER_SECRET[0], &pkey[32], &Context.x25519_pubkey[ii][0]);
 
       /**
        *!
        */
-      ++i;
+      ++Z_count;
+    }
+
+    if (Z_count != 3) {
+      rlLOGE(TAG, "Exchange[%d].count %d != 3!!", (int)index, Z_count);
+      dongle_->Abort();
+    } else {
+      rlLOGI(TAG, "Exchange[%d] OK!", (int)index);
     }
 
     size_t size = sizeof(Key) * 3;

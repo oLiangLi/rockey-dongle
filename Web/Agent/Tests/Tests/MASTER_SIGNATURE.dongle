@@ -1,0 +1,37 @@
+/**
+ *!
+ */
+public 112;
+
+const {
+    kOff_INPUT = 256;
+    kOff_SEEDS = kOff_INPUT + 64;
+    kOff_TYPES = kOff_SEEDS + 64;
+
+    kOff_OUT_Pubkey = 0;
+    kOff_OUT_SeedsHash = 32;
+    kOff_OUT_InputHash = 40;
+    kOff_OUT_Signature = 48;
+}
+
+@ kOff_OUT_Pubkey    [32] : rLANG_ED25519_Pubkey;
+@ kOff_OUT_SeedsHash [8]  : rLANG_SEEDS_HASH; /// SM3(SEEDS)[0...7]
+@ kOff_OUT_InputHash [8]  : rLANG_INPUT_HASH; /// SM3(INPUT)[0...7]
+@ kOff_OUT_Signature [64] : rLANG_SIGNATURE;
+
+rLANG_INPUT @ kOff_INPUT [64];
+rLANG_SEEDS @ kOff_SEEDS [64];
+rLANG_TYPES @ kOff_TYPES [4] = { 0, 0xC8C04E1F, 0x0543CD0F, ${CUSTOM}, ${TYPE} };
+
+if(ValidPINState() < 2)
+    Exit(13);
+
+Memset(0, 0, 256);
+DigestSM3(kOff_SEEDS, 64, kOff_OUT_SeedsHash);
+DigestSM3(kOff_INPUT, 64, kOff_OUT_InputHash);
+ExDigestSHA512(kOff_INPUT, 64, kOff_INPUT);             /// Ed25519.Sign(SHA512(INPUT)) ...
+ComputeSecretBytes(kOff_SEEDS, LoadI32(kOff_TYPES));
+ExEd25519ComputePubkey(kOff_SEEDS,  kOff_OUT_Pubkey);
+ExEd25519Sign(kOff_OUT_Pubkey, kOff_SEEDS, kOff_INPUT, 64, kOff_OUT_Signature);
+Memset(112, 0, 1024-112);
+
