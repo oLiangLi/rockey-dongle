@@ -164,14 +164,9 @@ CreateSM2File(kFileSM2ECIES, LoadU8(kOff_SM2ECIESPermission), LoadI32(kOff_Decry
 ///
 /// 产生三个用于签名的私钥文件, 这些私钥从未被导出, 也永远不应该导出 ...
 ///
-GenerateRSA(kFileRSA2048, kOffsetPubkey_RSA2048);
+GenerateSM2(kFileSM2ECDSA, kOffsetPubkey_SM2ECDSA);
 GenerateP256(kFileSECP256r1, kOffsetPubkey_Secp256r1);
-
-///
-/// kFileSM2ECDSA 由UpdateMasterSecret创建 ...
-///
-///GenerateSM2(kFileSM2ECDSA, kOffsetPubkey_SM2ECDSA);
-///
+GenerateRSA(kFileRSA2048, kOffsetPubkey_RSA2048);
 
 /**
  *! 写入全部的除了有效签名外的公共信息 ...

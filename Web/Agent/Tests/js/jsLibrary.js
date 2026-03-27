@@ -1,0 +1,1711 @@
+const prev_dashboard_value = new Map();
+
+/**
+ * @type {RockeyEmulator}
+ */
+var jsEmulator;
+
+/**
+ * @type {CipherSuiteV0}
+ */
+var jsCipher;
+
+/**
+    * @type {(script : string)=>Promise<{
+    size_public : integer;
+    code : Buffer;
+    output: Array<{
+        name: string;
+        offset : number;
+        size : number;
+        intType: boolean;
+    }>;
+    data : Array<{
+        name: string;
+        offset : number;
+        sizeMin : number;
+        sizeMax : number ;
+        options : Array<string|number>
+    }>}>}
+    */
+var jsScriptParser;
+
+/**
+ * @type {(id : string , InOutBuffer : Buffer, admin ?: boolean)=>Promise<void>}
+ */
+var jsDongleExecv;
+
+/**
+ * @type { (info: Buffer, online ?: boolean)=>void }
+ */
+var jsAddDevice;
+
+/**
+ * @type {(info: Buffer) => object }
+ */
+var jsCheckMaster;
+
+/**
+ * @type {(master: object, info: Buffer) => object}
+ */
+var jsCheckEnTrust;
+
+/**
+ * @type {Map<string,string>}
+ */
+const jsScriptBundled = jsWorld.jsScriptBundled;
+
+window.onload = async function () {
+  jsCipher = await jsWorld.CipherLoader();
+
+  const jsCryptoFactory = (globalThis.jsCryptoFactory =
+    await jsWorld.CryptoLoader(jsCipher));
+
+  jsEmulator = await jsCryptoFactory.CreateEmulator({
+    UpdateLEDState: (led) => {
+      console.info(`TODO: UpdateLEDState(${led})`);
+    },
+  });
+  jsEmulator.Create("1234567812345678", 0x100, 256);
+
+  jsScriptParser = async (script) => {
+    return await jsCryptoFactory.ParseScript(script);
+  };
+
+  /**
+   * @type {BufferConstructor}
+   */
+  const Buffer = jsCipher.Buffer_();
+  const kPowMask = (1 << 18) - 1; /// 网页速度太慢了, 就平均做2**18次SHA256运算吧, 或者用几个WebWorker一起跑 ...
+
+  let pow = false;
+  const tick0 = Date.UTC(2020, 0, 1);
+
+  async function Sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  async function POW(md) {
+    if (pow) throw jsCipher.Annihilus_("EALREADY");
+    console.assert(md instanceof Buffer && md.length === 32);
+    const PSK = Buffer.from(document.getElementById("PSK").value, "base64");
+    const start = Date.now();
+
+    pow = true;
+    const message = Buffer.alloc(80); /// || TICK[4], NONCE[12], MD[32], SHA256(PSK) ||
+
+    message.writeInt32LE(((start - tick0) / 1000) | 0, 0);
+    jsCipher.RandBytes(message.subarray(4, 16));
+    message[15] &= 0x3f;
+    md.copy(message, 16);
+    const sha256 = jsCipher.Digest("SHA256");
+    sha256.Init().Update(PSK).Final().copy(message, 48);
+
+    for (let loop = 1; ; ++loop) {
+      const check = sha256.Init().Update(message).Final().readUInt32LE(0);
+      if (0 === (check & kPowMask)) {
+        pow = false;
+        console.log(
+          `POW ${loop} ${message.subarray(48, 52).toString("hex")} ${md.subarray(0, 4).toString("hex")} ${("00000000" + check.toString(16)).slice(-8)} in ${Date.now() - start} ms`,
+        );
+        return [
+          message.subarray(0, 48),
+          jsCipher.Digest("SHA512").Init().Update(message).Final(),
+        ];
+      }
+      if (loop % (64 * 1024) === 0) await Sleep(2);
+      for (let i = 4; i < 16; ++i) {
+        ++message[i];
+        if (0 !== message[i]) break;
+      }
+    }
+  }
+
+  function Seal(pow, cipher, payload) {
+    console.assert(pow instanceof Buffer && pow.length === 48);
+    console.assert(cipher instanceof Buffer && cipher.length === 64);
+    console.assert(
+      payload instanceof Buffer &&
+        payload.length > 0 &&
+        payload.length < 512 * 1024,
+    );
+
+    const value = jsCipher
+      .ChaChaPoly(cipher.subarray(0, 32))
+      .Seal(payload, cipher.subarray(32, 32 + 12), cipher.subarray(32 + 12));
+    return {
+      token: pow.toString("base64"),
+      payload: value.toString("base64"),
+    };
+  }
+
+  function Open(cipher, payload) {
+    console.assert(cipher instanceof Buffer && cipher.length === 64);
+    console.assert(
+      payload instanceof Buffer &&
+        payload.length > 0 &&
+        payload.length < 512 * 1024,
+    );
+    return jsCipher
+      .ChaChaPoly(cipher.subarray(0, 32))
+      .Open(payload, cipher.subarray(32, 32 + 12), cipher.subarray(32 + 12));
+  }
+
+  async function Ajax(json, cipher) {
+    const api = document.getElementById("url").value.trim();
+    const res = await fetch(api, {
+      method: "POST",
+      body: JSON.stringify(json),
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+
+    if (res.status !== 200) throw jsCipher.Annihilus_(`Error: ${res.status}`);
+    const reply = await res.json();
+    if (typeof reply !== "object" || typeof reply.payload !== "string")
+      throw jsCipher.Annihilus_(`Error: invalid reply!`);
+    return JSON.parse(
+      Open(cipher, Buffer.from(reply.payload, "base64")).toString(),
+    );
+  }
+
+  jsAddDevice = function (info, online) {
+    /**
+     * @type {HTMLSelectElement}
+     */
+    const keys = document.getElementById("keys");
+    const json = DongleDisplayValue(info);
+    json.online = !!online;
+
+    const text = JSON.stringify(json);
+    for (const opt of keys.options) {
+      if (opt.value === json.id) {
+        if (opt.text !== text) opt.text = text;
+        return /**/;
+      }
+    }
+
+    const option = document.createElement("option");
+    option.value = json.id;
+    option.text = text;
+    keys.add(option);
+  };
+
+  function UpdateEmulatorInfo() {
+    if (!jsEmulator) return;
+
+    const json = DongleDisplayValue(jsEmulator.GetDongleInfo());
+    json.online = true;
+    const text = JSON.stringify(json);
+
+    /**
+     * @type {HTMLSelectElement}
+     */
+    const keys = document.getElementById("keys");
+
+    for (const opt of keys.options) {
+      if (opt.value.slice(0, 2) === "ff") {
+        opt.value = json.id;
+        opt.text = text;
+        return;
+      }
+    }
+
+    const option = document.createElement("option");
+    option.value = json.id;
+    option.text = text;
+    keys.add(option);
+  }
+
+  function UpdateDeviceList(buffer) {
+    function CheckBuffer() {
+      if (!buffer || buffer.length < 72 || (buffer.length - 32) % 40 !== 0)
+        return 0;
+      const sha256_check = buffer.subarray(buffer.length - 32);
+      const sha256_verify = jsCipher
+        .Digest("SHA256")
+        .Init()
+        .Update(buffer.subarray(0, buffer.length - 32))
+        .Final();
+
+      if (Buffer.compare(sha256_check, sha256_verify) !== 0)
+        throw Error(`SHA256.Check Error!`);
+      return (buffer.length - 32) / 40;
+    }
+    const count = CheckBuffer();
+    for (let i = 0; i < count; ++i) {
+      jsAddDevice(buffer.subarray(i * 40, (i + 1) * 40), true);
+    }
+    UpdateEmulatorInfo();
+  }
+
+  function StdoutLine0(stdout) {
+    const size = stdout.length;
+    for (let i = 0; i < size; ++i) {
+      const code = stdout.charCodeAt(i);
+      if (code === 13 || code === 10) return stdout.slice(0, i);
+    }
+    return stdout;
+  }
+
+  jsDongleExecv = async (id, file, admin) => {
+    console.log(`#### jsDongleExecv(${id}) ####`);
+
+    if (file.length !== 1024)
+      return Promise.reject(
+        Error(`Invalid program length ${file.length} !== 1024`),
+      );
+
+    if (id.slice(0, 2) === "ff") {
+      const emu = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+      if (id !== emu)
+        return Promise.reject(Error(`Invalid jsEmulator.id ${id} !== ${emu}`));
+
+      jsEmulator.Execv(file);
+    } else {
+      const start = Date.now();
+      const json_request = {
+        cmd: "execv",
+        nonce: jsCipher.RandBytes(12).toString("base64"),
+        admin: !!admin,
+        id,
+      };
+
+      const output_request = JSON.stringify(json_request);
+
+      json_request.stdin = file.toString("base64");
+      const payload = Buffer.from(JSON.stringify(json_request));
+      const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+      const [pow, cipher] = await POW(md);
+
+      const json = Seal(pow, cipher, payload);
+      console.log(
+        `#### jsDongleExecv::Ajax::REQ(${Date.now() - start} ms) ${output_request}`,
+      );
+      const reply = await Ajax(json, cipher);
+      const stdout = Buffer.from(StdoutLine0(reply.stdout), "base64");
+      delete reply.stdout;
+
+      console.log(
+        `#### jsDongleExecv::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+      );
+
+      if (stdout.length !== 1024 + 32)
+        return Promise.reject(
+          Error(`Invalid result size ${stdout.length} !== 1024 + 32`),
+        );
+
+      const verify = jsCipher
+        .Digest("SHA256")
+        .Init()
+        .Update(stdout.subarray(0, 1024))
+        .Final();
+      if (Buffer.compare(verify, stdout.subarray(1024)) !== 0)
+        return Promise.reject(Error(`Verify result failed!`));
+      stdout.copy(file);
+      stdout.fill(0);
+    }
+  };
+
+  async function List() {
+    const start = Date.now();
+    console.log(`#### List() ####`);
+    const payload = Buffer.from(
+      JSON.stringify({
+        cmd: "list",
+        nonce: jsCipher.RandBytes(12).toString("base64"),
+      }),
+    );
+    const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+    const [pow, cipher] = await POW(md);
+
+    const json = Seal(pow, cipher, payload);
+    console.log(
+      `#### List::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+    );
+    const reply = await Ajax(json, cipher);
+    console.log(
+      `#### List::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+    );
+
+    UpdateDeviceList(Buffer.from(StdoutLine0(reply.stdout), "base64"));
+    for (const option of document.getElementById("keys").options) {
+      if (option?.value?.slice(0, 2) === "ff") continue;
+      try {
+        await Dashboard(option?.value, true, false);
+      } catch (err) {
+        console.log(`[IGNORE]Error ${err}`);
+      }
+    }
+
+    if (jsEmulator) {
+      await Dashboard(
+        DongleDisplayValue(jsEmulator.GetDongleInfo()).id,
+        true,
+      ).catch((err) => {
+        console.error(`jsEmulator.Dashboard Error ${err}`);
+      });
+    }
+    console.log(`List OK (${Date.now() - start} ms)!`);
+  }
+
+  async function Dashboard(query_id, query_only, admin_mode) {
+    const id = query_id || document.getElementById("keys").value;
+    if (!id) throw Error(`Dashboard: Select RockeyARM device!`);
+    const admin =
+      admin_mode === true || admin_mode === false
+        ? admin_mode
+        : document.getElementById("admin").checked;
+
+    let buffer;
+    console.log(`#### Dashboard() ####`);
+    if (id.slice(0, 2) === "ff") {
+      const v = jsEmulator.ReadDataFile(0xffff, 0, 8192);
+      const verify = jsCipher.Digest("SHA256").Init().Update(v).Final();
+      buffer = Buffer.concat([v, verify]);
+
+      try {
+        const master = jsCheckMaster(v.subarray(7 * 1024));
+        if (master.dongle.id !== id) {
+          console.error(`jsEmulator id mismatch!`);
+        } else {
+          prev_dashboard_value.set(id, buffer);
+          console.info(`jsEmulator.Master ${JSON.stringify(master, null, 2)}`);
+        }
+      } catch (err) {
+        console.error(`[IGNORE]Error ${err}`);
+      }
+    } else {
+      const start = Date.now();
+      const payload = Buffer.from(
+        JSON.stringify({
+          cmd: "dashboard",
+          nonce: jsCipher.RandBytes(12).toString("base64"),
+          admin,
+          id,
+        }),
+      );
+
+      const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+      const [pow, cipher] = await POW(md);
+
+      const json = Seal(pow, cipher, payload);
+      console.log(
+        `#### Dashboard::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+      );
+
+      const reply = await Ajax(json, cipher);
+      const stdout = StdoutLine0(reply.stdout);
+      delete reply.stdout;
+
+      console.log(
+        `#### Dashboard::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+      );
+
+      buffer = Buffer.from(stdout, "base64");
+      if (buffer.length !== 8192 + 32) throw Error(`Invalid dashboard value!`);
+
+      const verify = jsCipher
+        .Digest("SHA256")
+        .Init()
+        .Update(buffer.subarray(0, 8192))
+        .Final();
+      if (Buffer.compare(verify, buffer.subarray(8192)) !== 0)
+        throw Error(`Invalid SHA256(dashboard) value!`);
+    }
+
+    if (id.slice(0, 2) !== "ff") prev_dashboard_value.set(id, buffer);
+    if (query_only === true) return;
+
+    const blob = new Blob([buffer], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = `dashboard-${id}.bin`;
+    a.href = url;
+    a.download = name;
+    a.innerText = `${name}`;
+
+    const li = document.createElement("li");
+    li.appendChild(a);
+
+    document.getElementById("m").appendChild(li);
+  }
+
+  async function ReadFileContent(id, min, max) {
+    return new Promise((resolve, reject) => {
+      const inputElement = document.getElementById(id);
+      const file = inputElement.files?.[0];
+
+      max |= 0;
+      if (max < min) max = min;
+
+      if (!file)
+        return reject(Error(`Select File id ${id} size ${min}/${max}`));
+
+      if (file.size < min || file.size > max)
+        return reject(Error(`Invalid file size ${file.size} ${min}/${max}`));
+
+      const reader = new FileReader();
+      reader.onloadend = function () {
+        console.assert(reader.result instanceof ArrayBuffer);
+        const result = Buffer.from(reader.result);
+        if (result.length < min || result.length > max)
+          return reject(
+            Error(`Invalid file size ${result.length} ${min}/${max}`),
+          );
+        resolve(result);
+      };
+      reader.onerror = function () {
+        reject(Error(`Load file ${file.name} Error!`));
+      };
+      reader.readAsArrayBuffer(file);
+    });
+  }
+
+  async function Factory() {
+    const id = document.getElementById("keys").value;
+    if (!id) throw Error(`Factory: Select RockeyARM device!`);
+
+    if (id.slice(0, 2) === "ff")
+      throw new Error("Factory: 好像选中的是模拟设备!");
+
+    const start = Date.now();
+    console.log(`#### Factory() ####`);
+    ///
+    /// stdin: || UID[4] | SEED[64] | TRUST[65520] | SHA256[32] ||
+    ///
+    const uid = (function () {
+      const s_uid = document.getElementById("uid").value;
+      if (!s_uid.match(/^0x[0-9a-f]{1,8}$/i))
+        throw Error(`Invalid uid Value /^0x[0-9a-f]{1,8}$/i`);
+      return parseInt(s_uid.slice(2), 16);
+    })();
+
+    const payload_value = {
+      cmd: "factory",
+      nonce: jsCipher.RandBytes(12).toString("base64"),
+      id,
+      uid,
+    };
+    const payload_minimal = JSON.stringify(payload_value);
+
+    const [secret, main] = await Promise.all([
+      ReadFileContent("secret", 64),
+      ReadFileContent("main", 65520),
+    ]);
+
+    const kOff = 4 + 64 + 65520;
+    const stdin = Buffer.alloc(kOff + 32);
+    stdin.writeInt32BE(uid | 0, 0);
+    secret.copy(stdin, 4);
+    main.copy(stdin, 4 + 64);
+    jsCipher
+      .Digest("SHA256")
+      .Init()
+      .Update(stdin.subarray(0, kOff))
+      .Final()
+      .copy(stdin, kOff);
+
+    delete payload_value.uid;
+    payload_value.stdin = stdin.toString("base64");
+    const payload = Buffer.from(JSON.stringify(payload_value));
+
+    const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+    const [pow, cipher] = await POW(md);
+
+    const json = Seal(pow, cipher, payload);
+    console.log(
+      `#### Factory::Ajax::REQ(${Date.now() - start} ms) ${payload_minimal}`,
+    );
+
+    const reply = await Ajax(json, cipher);
+
+    console.log(
+      `#### Factory::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+    );
+  }
+
+  async function Lock() {
+    const id = document.getElementById("keys").value;
+    if (!id) throw Error(`Lock: Select RockeyARM device!`);
+
+    if (id.slice(0, 2) === "ff") throw new Error("Lock: 好像选中的是模拟设备!");
+
+    console.log(`#### Lock() ####`);
+
+    const start = Date.now();
+    const payload = Buffer.from(
+      JSON.stringify({
+        cmd: "lock",
+        nonce: jsCipher.RandBytes(12).toString("base64"),
+        id,
+      }),
+    );
+
+    const md = jsCipher.Digest("SHA256").Init().Update(payload).Final();
+    const [pow, cipher] = await POW(md);
+
+    const json = Seal(pow, cipher, payload);
+    console.log(
+      `#### Lock::Ajax::REQ(${Date.now() - start} ms) ${payload.toString()}`,
+    );
+
+    const reply = await Ajax(json, cipher);
+    console.log(
+      `#### Lock::Ajax::RES(${Date.now() - start} ms) ${JSON.stringify(reply, null, 2)}`,
+    );
+  }
+
+  /**
+   * @arg {string} id
+   * @arg {Buffer} InOutBuffer
+   * @arg {Array<{ name: string; offset : number;  size : number; intType: boolean; }>} output
+   */
+  async function OutputExecvResult(id, InOutBuffer, output) {
+    output = output || [];
+
+    function ReadIntValue(offset, size) {
+      if (
+        (size !== 1 && size !== 2 && size !== 4) ||
+        offset < 0 ||
+        offset > 1024 ||
+        offset + size > 1024
+      )
+        throw Error(`Invalid intType value ${offset}/${size}`);
+
+      if (size === 1) return InOutBuffer[offset];
+      else if (size === 2) return InOutBuffer.readUInt16LE(offset);
+      else return InOutBuffer.readUInt32LE(offset);
+    }
+
+    function ReadBufferValue(offset, size) {
+      if (
+        offset < 0 ||
+        offset > 1024 ||
+        size < 1 ||
+        size > 1024 ||
+        offset + size > 1024
+      )
+        throw Error(`Invalid Buffer value ${offset}/${size}`);
+      return InOutBuffer.subarray(offset, size + offset).toString("base64");
+    }
+
+    const result = {};
+    for (const out of output) {
+      result[out.name] = out.intType
+        ? ReadIntValue(out.offset, out.size)
+        : ReadBufferValue(out.offset, out.size);
+    }
+
+    const json = {
+      buffer: InOutBuffer.toString("base64"),
+      result,
+    };
+
+    if (output.length) {
+      console.log(`Execv(${id}).Output: ${JSON.stringify(result, null, 2)}`);
+    }
+
+    const blob = new Blob([Buffer.from(JSON.stringify(json, null, 2))], {
+      type: "application/json",
+    });
+
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = `ExecvOutput-${id}-${new Date().toISOString()}.json`;
+    a.href = url;
+    a.download = name;
+    a.innerText = name;
+
+    const li = document.createElement("li");
+    li.appendChild(a); /**! */
+    document.getElementById("m").appendChild(li);
+  }
+
+  async function Execv() {
+    const id = document.getElementById("keys").value;
+    if (!id) throw Error(`Execv: Select RockeyARM device!`);
+    const admin = document.getElementById("admin").checked;
+
+    const program = await ReadFileContent("program", 1024, 64 * 1024);
+    if (program.length === 1024) {
+      await jsDongleExecv(id, program, admin);
+      await OutputExecvResult(id, program, []);
+    } else {
+      const json = JSON.parse(program.toString());
+      if (typeof json?.code !== "string" || typeof json?.output !== "object") {
+        throw Error("Invalid program!");
+      }
+      const InOutBuffer = Buffer.from(json.code, "base64");
+      if (InOutBuffer.length !== 1024) {
+        throw Error(
+          `Invalid program, code.size ${InOutBuffer.length} !== 1024!`,
+        );
+      }
+
+      await jsDongleExecv(id, InOutBuffer, admin);
+      await OutputExecvResult(id, InOutBuffer, json.output);
+    }
+  }
+
+  async function ScriptParse() {
+    const script = document.getElementById("dongle_script").value;
+    const result = await jsScriptParser(script);
+    console.log(JSON.stringify(result, null, 2));
+  }
+  async function ScriptExecv(flag) {
+    const id = document.getElementById("keys").value;
+    const bootstrap = document.getElementById("bootstrap").checked;
+    const admin = document.getElementById("admin").checked;
+
+    if (flag === true && id.slice(0, 2) !== "ff")
+      throw jsCipher.Annihilus_(`ScriptExecv: jsEmulator Only!`);
+
+    const script = document.getElementById("dongle_script").value;
+    const result = await jsScriptParser(script);
+
+    const cb =
+      flag !== true
+        ? void 0
+        : async (InOutBuffer) => {
+            await jsDongleExecv(id, InOutBuffer, admin);
+            await OutputExecvResult(id, InOutBuffer, result.output);
+          };
+
+    await ScriptExportHelper(result, id, bootstrap, admin, cb);
+  }
+
+  async function CreateEmulator() {
+    console.log(`#### CreateEmulator ####`);
+    const secret = document.getElementById("EmuSecret").value;
+    const loop = document.getElementById("EmuLoop").value | 0;
+    const uid = (function () {
+      const s_uid = document.getElementById("uid").value;
+      if (!s_uid.match(/^0x[0-9a-f]{1,8}$/i))
+        throw Error(`Invalid uid Value /^0x[0-9a-f]{1,8}$/i`);
+      return parseInt(s_uid.slice(2), 16);
+    })();
+
+    if (secret.length < 16)
+      throw jsCipher.Annihilus_(`Weak SECRET.Size ${secret.length}`);
+
+    if (loop < 256 || loop > 65536)
+      throw jsCipher.Annihilus_(`Invalid Loop ${loop}`);
+
+    jsEmulator = null;
+    jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
+    jsEmulator.Create(secret, uid, loop);
+    UpdateEmulatorInfo();
+  }
+
+  async function ExportEmulator() {
+    console.log(`#### ExportEmulator ####`);
+    const id = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+    const buffer = jsEmulator.Export();
+
+    const blob = new Blob([buffer], { type: "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    const name = `jsEmulator-${id}.dongle`;
+    a.href = url;
+    a.download = name;
+    a.innerText = `${name}`;
+
+    const li = document.createElement("li");
+    li.appendChild(a);
+
+    document.getElementById("m").appendChild(li);
+  }
+
+  async function ImportEmulator() {
+    console.log(`#### ImportEmulator ####`);
+    const secret = document.getElementById("EmuSecret").value;
+    const loop = document.getElementById("EmuLoop").value | 0;
+    const admin = document.getElementById("admin").checked;
+
+    if (loop < 256 || loop > 65536)
+      throw jsCipher.Annihilus_(`Invalid Loop ${loop}`);
+
+    const storage = await ReadFileContent("emuFile", 8192, 65536);
+    jsEmulator = null;
+    jsEmulator = await jsCryptoFactory.CreateEmulator(jsCipher);
+    jsEmulator.Open(admin ? 2 : 0, storage, secret, loop);
+    UpdateEmulatorInfo();
+
+    await Dashboard(
+      DongleDisplayValue(jsEmulator.GetDongleInfo()).id,
+      true,
+    ).catch((err) => {
+      console.error(`jsEmulator.Dashboard Error ${err}`);
+    });
+  }
+
+  const Test = async function (cb) {
+    try {
+      await cb();
+      return true;
+    } catch (err) {
+      console.error(err);
+      return false;
+    }
+  };
+
+  async function EmuTests() {
+    ///
+    /// TODO: LiangLI, More Tests, 当前只用于保护 RockeyARM::(kKeyIdGlobalSM2ECIES[加密密钥/管理员签名密钥] == 4), 暂时只测试 SM2 相关操作 ...
+    ///
+
+    jsEmulator.SetLEDState(2);
+
+    await Test(async () => {
+      jsEmulator.DeleteFile(3, 100);
+      jsEmulator.DeleteFile(3, 110);
+      jsEmulator.DeleteFile(3, 120);
+
+      jsEmulator.CreatePKEYFile(3, 256, 100);
+      jsEmulator.CreatePKEYFile(3, 256, 110);
+      jsEmulator.CreatePKEYFile(3, 256, 120);
+    });
+
+    await Test(async () => {
+      const pkey1 = jsEmulator.GenerateSM2(100, true);
+      const pkey2 = jsEmulator.GenerateSM2(110, true);
+      const pkey3 = jsEmulator.GenerateSM2(120, true);
+
+      const Y = jsEmulator.EmuDecompressPointSM2(
+        pkey1.subarray(0, 32),
+        pkey1[63] % 2 !== 0,
+      );
+      console.assert(Buffer.compare(Y, pkey1.subarray(32, 64)) === 0);
+
+      console.log(`pkey1: ${pkey1.toString("hex")}`);
+      console.log(`pkey2: ${pkey2.toString("hex")}`);
+      console.log(`pkey3: ${pkey3.toString("hex")}`);
+
+      const hash = jsCipher.RandBytes(32);
+      const sign = jsEmulator.SM2Sign(100, hash);
+      console.log(
+        `hash: ${hash.toString("hex")} sign: ${sign.toString("hex")}`,
+      );
+
+      sign[10] ^= 0x20;
+      const V1 = jsEmulator.SM2Verify(pkey1.subarray(0, 64), hash, sign);
+      sign[10] ^= 0x20;
+      const V2 = jsEmulator.SM2Verify(pkey1.subarray(0, 64), hash, sign);
+      if (V1 !== false || V2 !== true) {
+        console.error(`SM2Sign/SM2Verify Test Failed ${V1} ${V2}!`);
+      } else {
+        console.log(`SM2Sign/SM2Verify Test OK  ${V1} ${V2}!`);
+      }
+
+      pkey1[10] ^= 0x10;
+      console.assert(
+        jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === false,
+      );
+      pkey1[10] ^= 0x10;
+      console.assert(
+        jsEmulator.CheckPointOnCurveSM2(pkey1.subarray(0, 64)) === true,
+      );
+
+      const text = jsCipher.RandBytes(32);
+      console.log(
+        `text: ${text.toString("hex")}  sm3: ${jsEmulator.SM3(text).toString("hex")}`,
+      );
+
+      const cipher1 = jsEmulator.SM2Encrypt(pkey1.subarray(0, 64), text);
+      const cipher2 = jsEmulator.SM2Encrypt(pkey2.subarray(0, 64), text);
+      const cipher3 = jsEmulator.SM2Encrypt(pkey3.subarray(0, 64), text);
+
+      console.log(`cipher1: ${cipher1.toString("hex")}`);
+      console.log(`cipher2: ${cipher2.toString("hex")}`);
+      console.log(`cipher3: ${cipher3.toString("hex")}`);
+
+      const verify1 = jsEmulator.SM2Decrypt(pkey1, cipher1);
+      const verify2 = jsEmulator.SM2Decrypt(110, cipher2);
+      const verify3 = jsEmulator.SM2Decrypt(120, cipher3);
+
+      console.log(`verify1: ${verify1.toString("hex")}`);
+      console.log(`verify2: ${verify2.toString("hex")}`);
+      console.log(`verify3: ${verify3.toString("hex")}`);
+
+      console.assert(Buffer.compare(text, verify1) === 0);
+      console.assert(Buffer.compare(text, verify2) === 0);
+      console.assert(Buffer.compare(text, verify3) === 0);
+    });
+  }
+
+  document.getElementById("list").onclick = List;
+  document.getElementById("factory").onclick = Factory;
+  document.getElementById("lock").onclick = Lock;
+  document.getElementById("dashboard").onclick = () => {
+    Dashboard(null, false);
+  };
+  document.getElementById("execv").onclick = Execv;
+  document.getElementById("EmuCreate").onclick = CreateEmulator;
+  document.getElementById("EmuExport").onclick = ExportEmulator;
+  document.getElementById("EmuImport").onclick = ImportEmulator;
+  document.getElementById("EmuTests").onclick = EmuTests;
+
+  document.getElementById("ScriptExecv").onclick = async () => {
+    await ScriptExecv(true);
+  };
+  document.getElementById("ScriptExport").onclick = async () => {
+    await ScriptExecv(false);
+  };
+  document.getElementById("ScriptParse").onclick = ScriptParse;
+  document.getElementById("ExportAllDashboard").onclick = ExportAllDashboard;
+  document.getElementById("ImportAllDashboard").onclick = ImportAllDashboard;
+  document.getElementById("keys").onchange = () => {
+    const id = document.getElementById("keys").value;
+    document.getElementById("ScriptExecv").disabled = id.slice(0, 2) !== "ff";
+  };
+  UpdateDeviceList(null);
+};
+
+function CreateDataSegment(program, param, size) {
+  const result = jsCipher.RandBytes(256 + size);
+  for (const arg of program.data) {
+    const off = arg.offset;
+    let count_words = 0;
+    let count_integer = 0;
+    for (const opt of arg.options) {
+      if (typeof opt === "string") {
+        ++count_words;
+      } else {
+        ++count_integer;
+      }
+    }
+
+    const value =
+      0 === count_words && 1 === count_integer
+        ? arg.options[0]
+        : param[arg.name];
+    if (typeof value === "number") {
+      if (
+        arg.sizeMin !== arg.sizeMax ||
+        (arg.sizeMax !== 1 && arg.sizeMax !== 2 && arg.sizeMax !== 4)
+      )
+        throw jsCipher.Annihilus_(
+          `integer value: param ${arg.name} size [${arg.sizeMin} ${arg.sizeMax}], mismatching!`,
+        );
+
+      result[off + 0] = 0xff & (value >>> 0);
+      if (arg.sizeMax > 1) {
+        result[off + 1] = 0xff & (value >>> 8);
+        if (arg.sizeMax > 2) {
+          result[off + 2] = 0xff & (value >>> 16);
+          result[off + 3] = 0xff & (value >>> 24);
+        }
+      }
+    } else if (value instanceof Buffer) {
+      if (value.length < arg.sizeMin || value.length > arg.sizeMax)
+        throw jsCipher.Annihilus_(
+          `param ${arg.name} [${(arg.sizeMin, arg.sizeMax)}], value.size : ${value.length}`,
+        );
+      value.copy(result, off);
+    } else {
+      throw jsCipher.Annihilus_(`param ${arg.name} undefined!`);
+    }
+  }
+
+  return result.subarray(256);
+}
+
+async function UserConfirmParamImpl(div, program) {
+  return new Promise((resolve, reject) => {
+    const PARAM_RESULT = {};
+    div.innerHTML = ``;
+
+    const table = document.createElement("table");
+    const tbody = document.createElement("tbody");
+    table.setAttribute("border", "2");
+
+    const items = [
+      ["Name", 100],
+      ["Offset", 50],
+      ["SizMin", 50],
+      ["SizMax", 50],
+      ["Select", 120],
+      ["Input", 200],
+      ["File", 200],
+    ];
+
+    const tr = document.createElement("tr");
+    for (const item of items) {
+      const td = document.createElement("td");
+      td.appendChild(document.createTextNode(item[0]));
+      td.style.width = `${item[1]}px`;
+      td.style.textAlign = "center";
+      tr.appendChild(td);
+    }
+    tbody.appendChild(tr);
+
+    for (const arg of program.data) {
+      const name = arg.name;
+      const i_values = [];
+      const s_values = [];
+
+      for (const opt of arg.options) {
+        if (typeof opt === "number") {
+          i_values.push(opt);
+        } else {
+          s_values.push(opt);
+        }
+      }
+
+      if (i_values.length === 0 && s_values.length === 0) s_values.push(name);
+      const prompt = s_values.length > 0 ? s_values.join(" ") : "";
+      const rodata = i_values.length === 1 && s_values.length === 0;
+      if (rodata) PARAM_RESULT[name] = i_values[0];
+
+      const tr = document.createElement("tr");
+
+      const input = document.createElement("input");
+      const file = document.createElement("input");
+      const select = document.createElement("select");
+      const span = document.createElement("span");
+
+      function SetOK(ok) {
+        span.style.color = ok ? "green" : "red";
+      }
+
+      /// Name ...
+      {
+        const td = document.createElement("td");
+        const textNode = document.createTextNode(name);
+        span.appendChild(textNode);
+        td.append(span);
+        td.style.textAlign = "left";
+        tr.appendChild(td);
+      }
+
+      /// Offset ...
+      {
+        const td = document.createElement("td");
+        td.append(document.createTextNode(`${arg.offset}`));
+        td.style.textAlign = "right";
+        tr.appendChild(td);
+      }
+
+      /// SizeMin ...
+      {
+        const td = document.createElement("td");
+        td.append(document.createTextNode(`${arg.sizeMin}`));
+        td.style.textAlign = "right";
+        tr.appendChild(td);
+      }
+
+      /// SizeMax ...
+      {
+        const td = document.createElement("td");
+        td.append(document.createTextNode(`${arg.sizeMax}`));
+        td.style.textAlign = "right";
+        tr.appendChild(td);
+      }
+
+      /// Select ...
+      {
+        input.type = "text";
+        file.type = "file";
+        select.style.width = input.style.width = file.style.width = "95%";
+
+        function check_int_value() {
+          delete PARAM_RESULT[name];
+          if (input.value.match(/^[0-9a-f]+$/i)) {
+            PARAM_RESULT[name] = parseInt(input.value, 16);
+            SetOK(true);
+          } else {
+            SetOK(false);
+          }
+        }
+
+        function check_b64_value() {
+          delete PARAM_RESULT[name];
+          if (input.value.match(/^[0-9a-z+\/]+={0,2}$/i)) {
+            const buf = Buffer.from(input.value, "base64");
+            if (buf.length >= arg.sizeMin && buf.length <= arg.sizeMax) {
+              PARAM_RESULT[name] = buf;
+              SetOK(true);
+            } else {
+              SetOK(false);
+            }
+          }
+        }
+
+        function check_file_value() {
+          SetOK(false);
+          delete PARAM_RESULT[name];
+          const f = file.files[0];
+
+          if (!f) return;
+          if (f.size < arg.sizeMin || f.size > arg.sizeMax) {
+            console.error(
+              `Invalid file size ${f.size} / [${arg.sizeMin}, ${arg.sizeMax}]`,
+            );
+            file.value = null;
+            return;
+          }
+
+          const reader = new FileReader();
+          reader.onload = function () {
+            const result = Buffer.from(reader.result);
+            if (
+              select.value !== "@" ||
+              result.length < arg.sizeMin ||
+              result.length > arg.sizeMax
+            ) {
+              file.value = null;
+            } else {
+              PARAM_RESULT[name] = result;
+              SetOK(true);
+            }
+          };
+          reader.readAsArrayBuffer(f);
+        }
+
+        if (i_values.length > 0) {
+          input.maxLength = 2 * arg.sizeMax; /// HEX Encode, 不允许输入空白字符 ...
+          input.onchange = check_int_value;
+        } else {
+          input.maxLength = (((arg.sizeMax + 2) / 3) | 0) * 4; /// BASE64 Encode, 不允许输入非法字符(即使这些字符在解码时会被忽略) ...
+          input.onchange = check_b64_value;
+        }
+
+        function i2s(val) {
+          if (arg.sizeMax === 1) {
+            val &= 0xff;
+            return `0x${("00" + val.toString(16)).slice(-2).toUpperCase()}`;
+          } else if (arg.sizeMax === 2) {
+            val &= 0xffff;
+            return `0x${("0000" + val.toString(16)).slice(-4).toUpperCase()}`;
+          } else {
+            val &= 0xffffffff;
+            if (val < 0) val += 2 ** 32;
+            return `0x${("00000000" + val.toString(16)).slice(-8).toUpperCase()}`;
+          }
+        }
+
+        const td = document.createElement("td");
+        td.style.textAlign = "center";
+        td.appendChild(select);
+
+        file.onchange = check_file_value;
+        input.disabled = true;
+        file.disabled = true;
+
+        if (prompt !== "") {
+          input.placeholder = prompt;
+        }
+
+        function select_onchange() {
+          SetOK(false);
+          input.disabled = true;
+          file.disabled = true;
+          delete PARAM_RESULT[name];
+
+          const value = select.value;
+          if (value.slice(0, 1) === "+") {
+            SetOK(true);
+            PARAM_RESULT[name] = value.slice(1) | 0;
+          } else if (value === "#") {
+            /// Hex ...
+            input.disabled = false;
+            check_int_value();
+          } else if (value === "$") {
+            /// Base64 ...
+            input.disabled = false;
+            check_b64_value();
+          } else if (value === "@") {
+            /// File ...
+            file.disabled = false;
+            check_file_value();
+          } else if (value === "r") {
+            /// RandBytes[Max] ...
+            SetOK(true);
+            PARAM_RESULT[name] = jsCipher.RandBytes(arg.sizeMax);
+          } else if (value === "z") {
+            /// ZERO[Min] ...
+            SetOK(true);
+            PARAM_RESULT[name] = Buffer.alloc(arg.sizeMin);
+          }
+        }
+        select.onchange = select_onchange;
+
+        if (i_values.length > 0) {
+          for (const val of i_values) {
+            const option = document.createElement("option");
+            option.value = `+${val}`;
+            option.text = i2s(val);
+            select.appendChild(option);
+          }
+          if (s_values.length > 0) {
+            const option = document.createElement("option");
+            option.value = "#";
+            option.text = "INPUT(HEX)";
+            select.appendChild(option);
+          }
+          select.value = `+${i_values[0]}`;
+        } else {
+          {
+            const option = document.createElement("option");
+            option.value = "r"; /// TRNG[Max] ...
+            option.text = `TRNG[${arg.sizeMax}]`;
+            select.appendChild(option);
+          }
+
+          {
+            const option = document.createElement("option");
+            option.value = "z"; /// ZERO[Min] ...
+            option.text = `ZERO[${arg.sizeMin}]`;
+            select.appendChild(option);
+          }
+
+          {
+            const option = document.createElement("option");
+            option.value = "$"; /// Base64 ...
+            option.text = "INPUT(BASE64)";
+            select.appendChild(option);
+          }
+          {
+            const option = document.createElement("option");
+            option.value = "@"; /// File ...
+            option.text = "INPUT(FILE)";
+            select.appendChild(option);
+          }
+          select.value = "r"; /// default RandBytes ...
+        }
+        select_onchange();
+        tr.appendChild(td);
+      }
+
+      /// Input ...
+      {
+        const td = document.createElement("td");
+        td.style.textAlign = "center";
+        td.append(input);
+        tr.appendChild(td);
+      }
+
+      /// File ...
+      {
+        const td = document.createElement("td");
+        td.style.textAlign = "center";
+        td.append(file);
+        tr.appendChild(td);
+      }
+
+      tbody.appendChild(tr);
+    }
+
+    {
+      const tr = document.createElement("tr");
+      const td = document.createElement("td");
+      td.style.textAlign = "center";
+      td.colSpan = items.length;
+
+      const submit = document.createElement("button");
+      const cancel = document.createElement("button");
+
+      submit.innerText = "OK";
+      submit.style.width = "40%";
+
+      cancel.innerText = "CANCEL";
+      cancel.style.width = "40%";
+
+      td.appendChild(submit);
+      td.appendChild(cancel);
+
+      submit.addEventListener("click", () => {
+        let error = 0;
+        for (const arg of program.data) {
+          if (!PARAM_RESULT.hasOwnProperty(arg.name)) {
+            console.error(`Configure ${arg.name} please!`);
+            ++error;
+          }
+        }
+        if (0 === error) return resolve(PARAM_RESULT);
+      });
+
+      cancel.addEventListener("click", () => {
+        return reject(Error("User Cancelled"));
+      });
+
+      tr.appendChild(td);
+      tbody.appendChild(tr);
+    }
+
+    table.appendChild(tbody);
+    div.appendChild(table);
+    div.style.display = "block";
+  });
+}
+
+let flags_UserConfirmParam_ = false;
+async function UserConfirmParam(program) {
+  const div = document.getElementById("infoScriptExport");
+  if (flags_UserConfirmParam_) return Promise.reject(Error(`Wait ...`));
+
+  flags_UserConfirmParam_ = true;
+  try {
+    return await UserConfirmParamImpl(div, program);
+  } finally {
+    flags_UserConfirmParam_ = false;
+    div.style.display = "none";
+    div.innerHTML = "";
+  }
+}
+
+async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
+  console.log(`id: ${id}, bootstrap: ${bootstrap}, admin: ${admin}`);
+  console.log(JSON.stringify(program, null, 2));
+  const code = Buffer.from(program.code, "base64");
+  const size_public = program.size_public;
+
+  ///
+  /// Bootstrap 模式隐含以Admin权限登录运行, 以普通程序方式打包数据, 无数据签名, 脚本直接获得管理员权限执行程序 ...
+  /// Admin模式以匿名方式运行脚本, 最后64字节为SM2ECIES密钥对数据的签名, 当验签通过后, 脚本内部提权为Admin权限 ...
+  ///
+  if (bootstrap === true) admin = false;
+  console.assert(code.length === 200);
+
+  const size_data = admin === true ? 1024 - 256 - 64 : 1024 - 256;
+  const off_limit = 256 + size_data;
+
+  let argc = 0,
+    confirm = 0;
+  for (const arg of program.data) {
+    ++argc;
+
+    const offset = arg.offset;
+    const sizeMin = arg.sizeMin;
+    const sizeMax = arg.sizeMax;
+
+    if (
+      Math.floor(offset) !== offset ||
+      Math.floor(sizeMin) !== sizeMin ||
+      Math.floor(sizeMax) !== sizeMax
+    )
+      throw jsCipher.Annihilus_(
+        `PARAM ${arg.name} INVALID Configure ${offset} ${sizeMin} ${sizeMax}`,
+      );
+    if (offset < 256 || offset >= 1024)
+      throw jsCipher.Annihilus_(`PARAM ${arg.name} INVALID Offset ${offset}`);
+    if (
+      sizeMin < 0 ||
+      sizeMax < sizeMin ||
+      sizeMax < 1 ||
+      sizeMax > size_data ||
+      offset + sizeMax > off_limit
+    )
+      throw jsCipher.Annihilus_(
+        `PARAM ${arg.name} INVALID SIZE offset: ${offset}, size: [${sizeMin}, ${sizeMax}], limit: ${off_limit}`,
+      );
+
+    let count_words = 0;
+    let count_integer = 0;
+    for (const opt of arg.options) {
+      if (typeof opt === "string") {
+        ++count_words;
+      } else {
+        ++count_integer;
+      }
+    }
+    if (
+      count_integer > 0 &&
+      (arg.sizeMin !== arg.sizeMax ||
+        (arg.sizeMax !== 1 && arg.sizeMax !== 2 && arg.sizeMax !== 4))
+    )
+      throw jsCipher.Annihilus_(
+        `integer value: param ${arg.name} size [${arg.sizeMin} ${arg.sizeMax}], mismatching!`,
+      );
+
+    if (0 === count_words && 1 === count_integer) {
+      /* rodata  */
+    } else {
+      ++confirm;
+    }
+  }
+  console.log(
+    `size: ${size_public}, argc : ${argc}, confirm : ${confirm}, code: ${code.length}`,
+  );
+
+  let program_name = "";
+  let program_binary = Buffer.alloc(1024);
+  const param = await UserConfirmParam(program);
+  const data = CreateDataSegment(program, param, size_data);
+
+  if (bootstrap) {
+    program_binary.writeUInt32LE(0, 0); // Zero ...
+    program_binary.writeUInt32LE(0xc8c04e1f, 4); /// 'rLANG'
+    program_binary.writeUInt32LE(0x0d214153, 8); /// 'CREAT'
+    program_binary.writeUInt32LE(0x5cf48c13, 12); /// 'WORLD'
+
+    program_binary.writeUInt32LE(0x0443493b, 16); /// 'ADMIN'
+    program_binary[20] = 1; /// Version 1.1
+    program_binary[21] = 1;
+    program_binary.writeUInt16LE(program.size_public, 22); /// Size.Export ...
+    code.copy(program_binary, 24); /// .text ...
+    jsCipher.RandBytes(program_binary.subarray(224, 240)); /// Nonce ...
+
+    const cipher = jsEmulator.SM3(program_binary.subarray(16, 240));
+
+    const aead = jsCipher.ChaChaPoly(cipher);
+    const encrypt_data = aead.Seal(data, program_binary.subarray(224, 236));
+    console.assert(encrypt_data.length === size_data + 16);
+    cipher.fill(0);
+    aead.Clear();
+
+    encrypt_data.subarray(size_data).copy(program_binary, 240);
+    encrypt_data.subarray(0, size_data).copy(program_binary, 256);
+    const hashId = jsCipher
+      .Digest("SHA256")
+      .Init()
+      .Update(code)
+      .Final()
+      .subarray(0, 6)
+      .toString("hex");
+
+    program_name = `Bootstrap-${hashId}-${new Date().toISOString()}.dongle.program`;
+  } else {
+    throw jsCipher.Annihilus_(`Not implemented`);
+  }
+
+  if (cb) return await cb(program_binary);
+  const output_program = {};
+
+  output_program.code = program_binary.toString("base64");
+  output_program.output = program.output;
+
+  const blob = new Blob(
+    [Buffer.from(JSON.stringify(output_program, null, 2))],
+    {
+      type: "application/json",
+    },
+  );
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const name = program_name;
+  a.href = url;
+  a.download = name;
+  a.innerText = `${name}`;
+
+  const li = document.createElement("li");
+  li.appendChild(a);
+
+  document.getElementById("m").appendChild(li);
+}
+
+async function ExportAllDashboard() {
+  const all = {};
+  const admin = document.getElementById("admin").checked;
+
+  for (const [id, value] of prev_dashboard_value) {
+    const info = DongleDisplayValue(value.subarray(504, 544));
+    if (admin || info.id === id) all[id] = value.toString("base64");
+  }
+
+  if (jsEmulator) {
+    const v = jsEmulator.ReadDataFile(0xffff, 0, 8192);
+    const verify = jsCipher.Digest("SHA256").Init().Update(v).Final();
+    const buffer = Buffer.concat([v, verify]);
+    const info = jsEmulator.GetDongleInfo();
+    if (admin || Buffer.compare(info, v.subarray(504, 544)) === 0) {
+      all[DongleDisplayValue(info).id] = buffer.toString("base64");
+    }
+  }
+
+  if (Object.keys(all).length === 0)
+    return console.info(`No effective RockeyARM device was found!!`);
+
+  const content = Buffer.from(JSON.stringify(all, null, 2));
+  const blob = new Blob([content], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const name = `Export-RockeyARM-${new Date().toISOString()}.json`;
+  a.href = url;
+  a.download = name;
+  a.innerText = `${name}`;
+
+  const li = document.createElement("li");
+  li.appendChild(a);
+
+  document.getElementById("m").appendChild(li);
+}
+
+async function ImportFile(file) {
+  const kSizeMin = 10 * 1024,
+    kSizeMax = 4096 * kSizeMin;
+  console.info(`Import file: ${file.name} size: ${file.size}`);
+
+  if (file.size < kSizeMin || file.size > kSizeMax)
+    return console.error(`Invalid file ${file.name} size ${file.size});!!`);
+
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onloadend = function () {
+      try {
+        const json = JSON.parse(Buffer.from(reader.result).toString());
+        const all = Object.keys(json);
+
+        for (const key of all) {
+          if (!key.match(/[0-9a-f]{8}-[0-9a-f]{16}/)) continue;
+          const value = json[key];
+          if (typeof value !== "string") continue;
+
+          const buffer = Buffer.from(value, "base64");
+          if (buffer.length !== 8192 + 32) continue;
+
+          const verify = jsCipher
+            .Digest("SHA256")
+            .Init()
+            .Update(buffer.subarray(0, 8192))
+            .Final();
+          if (0 !== Buffer.compare(buffer.subarray(8192), verify)) continue;
+
+          console.info(`Import info ${key} ...`);
+          prev_dashboard_value.set(key, buffer);
+        }
+      } catch (err) {
+        reject(err);
+      }
+    };
+    reader.onerror = function () {
+      reject(Error(`Load ${file.name} Error!`));
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
+async function ImportAllDashboard() {
+  const fileControl = document.createElement("input");
+  fileControl.type = "file";
+  fileControl.multiple = true;
+  fileControl.accept = ".json";
+
+  fileControl.onchange = async () => {
+    const all = [];
+    for (const file of fileControl.files) {
+      all.push(
+        ImportFile(file).catch((err) => {
+          console.error(`ImportFile ${file} Error ${err}`);
+        }),
+      );
+    }
+    await Promise.all(all);
+  };
+  fileControl.click();
+}
+
+function DongleDisplayValue(key) {
+  function V2(v) {
+    return ("00" + v.toString(16)).slice(-2);
+  }
+  function V8(v) {
+    return "0x" + ("00000000" + v.toString(16)).slice(-8);
+  }
+  const version = V8(key.readUInt32LE(0));
+  const type = V8(key.readUInt32LE(4));
+  const birthday = `20${V2(key[8])}-${V2(key[9])}-${V2(key[10])} ${V2(key[11])}:${V2(key[12])}:${V2(key[13])}`;
+  const agent = V8(key.readUInt32LE(16));
+  const pid = V8(key.readUInt32LE(20));
+  const uid = V8(key.readUInt32LE(24));
+  const id = `${key.subarray(28, 32).toString("hex")}-${key.subarray(32, 40).toString("hex")}`;
+  return { id, pid, uid, type, birthday, agent, version };
+}
+
+jsCheckMaster = (info) => {
+  const result = {};
+  if (!(info instanceof Buffer) || info.length !== 1024)
+    throw jsCipher.Annihilus_(`EINVAL typeof(info) : Buffer[1024]`);
+
+  if (
+    0xc8c04e1f !== info.readUInt32LE(0) ||
+    0 !== info.readUInt32LE(8) ||
+    0 !== info.readUInt32LE(12) ||
+    0x04000101 !== info.readUInt32LE(16)
+  )
+    throw jsCipher.Annihilus_(`EINVAL Invalid Header!`);
+
+  result.category = info.readUInt32LE(4);
+  result.SM2ECDSA = info.subarray(20, 84).toString("base64");
+  result.P256ECDSA = info.subarray(84, 148).toString("base64");
+  result.RSA2048 = info.subarray(148, 408).toString("base64");
+  result.SM2ECIES = info.subarray(408, 472).toString("base64");
+  result.nonce_local = info.subarray(472, 504).toString("base64");
+  result.dongle = DongleDisplayValue(info.subarray(504, 544));
+  result.nonce_admin = info.subarray(544, 576).toString("base64");
+  const entrust = Buffer.alloc(80);
+
+  info.subarray(532, 544).copy(entrust);
+  info.subarray(20, 84).copy(entrust, 16);
+  jsEmulator.SM3(entrust.subarray(16)).subarray(0, 3).copy(entrust, 12);
+  result.EnTrust = [
+    entrust.subarray(12, 15).toString("hex"),
+    entrust.toString("base64"),
+  ];
+
+  if (
+    true !==
+    jsEmulator.SM2Verify(
+      info.subarray(408, 472),
+      jsEmulator.SM3(info.subarray(0, 576)),
+      info.subarray(576, 640),
+    )
+  )
+    throw jsCipher.Annihilus_(`EBADFD Invalid SM2ECIES.Signature!`);
+
+  {
+    const rsa2048pubkey = info.subarray(148, 408);
+    const sha256 = jsCipher
+      .Digest("SHA256")
+      .Init()
+      .Update(info.subarray(0, 640))
+      .Final();
+    const origin = jsEmulator.RSAPublic(
+      rsa2048pubkey.readUInt32LE(0),
+      rsa2048pubkey.subarray(4),
+      info.subarray(640, 896),
+      false,
+    );
+
+    if (origin.length !== 32 || 0 !== Buffer.compare(sha256, origin))
+      throw jsCipher.Annihilus_(`EBADFD Invalid RSA2048.Signature!`);
+  }
+
+  if (
+    true !==
+    jsEmulator.P256Verify(
+      info.subarray(84, 148),
+      jsCipher.Digest("SHA256").Init().Update(info.subarray(0, 896)).Final(),
+      info.subarray(896, 960),
+    )
+  )
+    throw jsCipher.Annihilus_(`EBADFD Invalid P256ECDSA.Signature!`);
+
+  if (
+    true !==
+    jsEmulator.SM2Verify(
+      info.subarray(20, 84),
+      jsEmulator.SM3(info.subarray(0, 960)),
+      info.subarray(960),
+    )
+  )
+    throw jsCipher.Annihilus_(`EBADFD Invalid SM2ECDSA.Signature!`);
+
+  return result;
+};
+
+jsCheckEnTrust = (master, info) => {
+  if (
+    0xc8c04e1f !== info.readUInt32LE(0) ||
+    0x532d73d3 !== info.readUInt32LE(4) ||
+    0 !== info.readUInt32LE(8) ||
+    0 !== info.readUInt32LE(12) ||
+    0x04000101 !== info.readUInt32LE(16)
+  )
+    throw jsCipher.Annihilus_(`EINVAL Invalid Header!`);
+
+  if (
+    0 !==
+    Buffer.compare(
+      Buffer.from(master.SM2ECDSA, "base64"),
+      info.subarray(20, 84),
+    )
+  )
+    throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECDSA.pubkey!`);
+
+  if (
+    0 !==
+    Buffer.compare(
+      Buffer.from(master.SM2ECIES, "base64"),
+      info.subarray(84, 148),
+    )
+  )
+    throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECIES.pubkey!`);
+
+  if (
+    true !==
+    jsEmulator.SM2Verify(
+      info.subarray(84, 148),
+      jsEmulator.SM3(info.subarray(0, 896)),
+      info.subarray(896, 960),
+    )
+  )
+    throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECIES.signature!`);
+  if (
+    true !==
+    jsEmulator.SM2Verify(
+      info.subarray(20, 84),
+      jsEmulator.SM3(info.subarray(0, 960)),
+      info.subarray(960),
+    )
+  )
+    throw jsCipher.Annihilus_(`EINVAL Invalid SM2ECDSA.signature!`);
+
+  const result = [];
+  for (let i = 0; i < 5; ++i) {
+    const entrust = info.subarray(180 + i * 112, 180 + i * 112 + 112);
+    if (
+      entrust.readUInt32LE(0) === 0 &&
+      entrust.readUInt32LE(4) === 0 &&
+      entrust.readUInt32LE(8) === 0
+    ) {
+      result.push(null);
+    } else {
+      const Y = jsEmulator.EmuDecompressPointSM2(
+        entrust.subarray(16, 48),
+        (entrust[15] & 1) === 1,
+      );
+      const cipher = Buffer.concat([
+        entrust.subarray(16, 48),
+        Y,
+        entrust.subarray(48),
+      ]).toString("base64");
+      result.push({
+        hid: `${entrust.subarray(0, 4).toString("hex")}-${entrust.subarray(4, 12).toString("hex")}`,
+        kid: `${entrust.subarray(12, 15).toString("hex")}`,
+        cipher,
+      });
+    }
+  }
+
+  return result;
+};
+
+function HandleCheckMaster() {
+  const id = document.getElementById("keys").value;
+  if (!id) throw Error(`HandleCheckMaster: Select RockeyARM device!`);
+
+  const dashboard = prev_dashboard_value.get(id);
+  if (!dashboard)
+    throw Error(`HandleCheckMaster ${id}: Dashboard Info NOT_FOUND!`);
+
+  const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+  if (master.dongle.id !== id)
+    throw Error(`HandleCheckMaster Error ${id}, ${master.dongle.id}!`);
+
+  console.log(`Master(${id}): ${JSON.stringify(master, null, 2)}`);
+}
+function HandleCheckEnTrust() {
+  const id = document.getElementById("keys").value;
+  if (!id) throw Error(`HandleCheckEnTrust: Select RockeyARM device!`);
+
+  const dashboard = prev_dashboard_value.get(id);
+  if (!dashboard)
+    throw Error(`HandleCheckEnTrust ${id}: Dashboard Info NOT_FOUND!`);
+
+  const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+  if (master.dongle.id !== id)
+    throw Error(`HandleCheckEnTrust Error ${id}, ${master.dongle.id}!`);
+
+  const entrust = jsCheckEnTrust(
+    master,
+    dashboard.subarray(6 * 1024, 7 * 1024),
+  );
+  console.log(`EnTrust(${id}: ${JSON.stringify(entrust, null, 2)})`);
+}
+
+function HandleScriptLimitSign() {}
+
+function HandleScriptLimitExport() {}

@@ -2,7 +2,7 @@ public 128;
 
 @ 0  [32] : rLANG_Ed25519_Pubkey;
 @ 32 [32] : rLANG__X25519_Pubkey;
-@ 64 [64] : rLANG_Ed25519_SIGN(0,64);
+@ 64 [64] : rLANG_Ed25519_SIGN;
 
 /**
  *!
