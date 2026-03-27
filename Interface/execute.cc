@@ -75,29 +75,28 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
     }
   }
 
+  if (vm.valid_permission_ == PERMISSION::kAdministrator && v.raw_.header_.zero_ == 0 &&
+      v.raw_.header_.world_magic_ == rLANG_WORLD_MAGIC &&
+      v.raw_.header_.create_magic_ == WorldCreateHeader::kMagicCreate &&
+      v.raw_.header_.target_magic_ == WorldCreateHeader::kMagicWorld &&
+      v.raw_.text_.file_magic_ == ScriptText::kAdminFileMagic && v.raw_.text_.size_public_ <= 1024) {
+    memmove(&v.text_, &v.raw_.text_, sizeof(ScriptText));
+    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
+    if (result < 0) {
+      rlLOGE(TAG, "Bootstrap script, decrypt data Failed: %d", result);
+      return result;
+    } else {
+      rlLOGW(TAG, "Bootstrap script call!");
+    }
+    return vm.Initialize(&v.text_.script_, sizeof(v.text_.script_), v.text_.size_public_);
+  }
+
   size_t size = sizeof(v);
   result = vm.dongle_->RSAPrivate(vm.kKeyIdGlobalRSA2048, v.data_, &size, false);
   if (result < 0) {
-    if (vm.valid_permission_ != PERMISSION::kAdministrator) {
-      rlLOGE(TAG, "EACCES: Adminstrator requirement, plain text script call!");
-      return -EACCES;
-    }
-
-    memcpy(&v, InOutBuf, sizeof(v));
-    const WorldCreateHeader& header = v.raw_.header_;
-    if (header.zero_ == 0 && header.world_magic_ == rLANG_WORLD_MAGIC &&
-        header.create_magic_ == WorldCreateHeader::kMagicCreate &&
-        header.target_magic_ == WorldCreateHeader::kMagicWorld &&
-        v.raw_.text_.file_magic_ == ScriptText::kAdminFileMagic) {
-      memmove(&v.text_, &v.raw_.text_, sizeof(ScriptText));
-      result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
-      if (0 != result)
-        return result;
-    } else {
-      rlLOGXE(TAG, &v.raw_.header_, sizeof(v.raw_.header_), "RSA.Master.Decode Text %08X Failed!",
-              (int)v.raw_.text_.file_magic_);
-      return -EACCES;
-    }
+    rlLOGXE(TAG, &v.raw_.header_, sizeof(v.raw_.header_), "RSA.Master.Decode Text Failed: %d, %08X/%d!", result,
+            (int)v.raw_.text_.file_magic_, v.raw_.text_.size_public_);
+    return -EFAULT;
   } else if (size != sizeof(ScriptText)) {
     rlLOGE(TAG, "Invalid ScriptText %zd", size);
     return -EBADMSG;

@@ -132,7 +132,7 @@ struct VM_t {
   static constexpr int kKeyIdGlobalSM2ECIES = 4; /* SM2/PKI-Encrypt/Text-Verify */
 
   /**
-   *! KeyId == 10 的数据文件, 保存着由SM2ECDSA加密的64字节主密钥(由管理员使用ComputeSecretBytes操作) ...
+   *! KeyId == 10 的数据文件, 保存着由RSA2048加密的64字节主密钥(由管理员使用ComputeSecretBytes操作) ...
    */
   static constexpr int kKeyIdGlobalSECRET = 10; /* LocalChaos(RSA2048.Encrypt(MASTER_SECRET))  */
 
