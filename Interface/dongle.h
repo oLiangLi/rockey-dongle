@@ -240,6 +240,10 @@ class Dongle {
   uint32_t entropy_local_[16] = {0};
 
  public:
+  void LocalChaos(uint32_t state[16], uint8_t loop = 2);
+  void InitializeEntropyLocal();
+
+ public:
   virtual int RandBytes(uint8_t* buffer, size_t size);
   virtual int SeedBytes(const void* buffer, size_t size);
   virtual int HwARandBytes(uint8_t* buffer, size_t size);

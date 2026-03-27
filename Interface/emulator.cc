@@ -629,15 +629,7 @@ rLANGEXPORT int rLANGAPI SM2Cipher_ASN1ToText(const uint8_t* asn1_cipher, size_t
 
 Dongle::Dongle() {
   rLANG_RAND_Bytes(entropy_local_, sizeof(entropy_local_));
-}
-
-int Dongle::SeedBytes(const void* buffer, size_t size) {
-  Sha512Ctx()
-      .Init()
-      .Update(entropy_local_, sizeof(entropy_local_))
-      .Update(buffer, size)
-      .Final((uint8_t*)entropy_local_);
-  return 0;
+  InitializeEntropyLocal();
 }
 
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {

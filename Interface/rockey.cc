@@ -8,16 +8,18 @@ rLANG_DECLARE_MACHINE
 namespace dongle {
 
 Dongle::Dongle() {
+  /**
+   *!
+   */
   HwARandBytes((uint8_t*)entropy_local_, sizeof(entropy_local_));
-}
+  InitializeEntropyLocal();
 
-int Dongle::SeedBytes(const void* buffer, size_t size) {
-  Sha512Ctx()
-      .Init()
-      .Update(entropy_local_, sizeof(entropy_local_))
-      .Update(buffer, size)
-      .Final((uint8_t*)entropy_local_);
-  return 0;
+  /**
+   *!
+   */
+  DONGLE_INFO info;
+  GetDongleInfo(&info);
+  SeedBytes(&info, sizeof(info));
 }
 
 int Dongle::RandBytes(uint8_t* buffer, size_t size) {

@@ -262,7 +262,7 @@ int VM_t::OpManager_ComputeSecretBytes(uint8_t* bytes_, int32_t type) {
   struct Context {
     DONGLE_INFO info_;
     uint32_t seed_0_;
-    uint8_t bytes_[64];
+    uint32_t bytes_[16];
     uint32_t seed_1_;
     uint8_t MASTER_SECRET[kSize_MASTER_SECRET];
     uint32_t seed_2_;
@@ -288,6 +288,7 @@ int VM_t::OpManager_ComputeSecretBytes(uint8_t* bytes_, int32_t type) {
     MASTER_SECRET_CONTEXT.seed_2_ = rLANG_WORLD_SEED_2;
     MASTER_SECRET_CONTEXT.seed_3_ = rLANG_WORLD_SEED_3;
 
+    dongle_->LocalChaos(MASTER_SECRET_CONTEXT.bytes_);
     result = dongle_->GetDongleInfo(&MASTER_SECRET_CONTEXT.info_);
     if (0 != result)
       ++error;

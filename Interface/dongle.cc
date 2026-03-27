@@ -98,17 +98,9 @@ int Dongle::RandBytes(uint8_t* buffer, size_t size) {
   return 0;
 }
 
-int Dongle::SeedBytes(const void* buffer, size_t size) {
-  Sha512Ctx()
-      .Init()
-      .Update(entropy_local_, sizeof(entropy_local_))
-      .Update(buffer, size)
-      .Final((uint8_t*)entropy_local_);
-  return 0;
-}
-
 Dongle::Dongle() {
   RAND_bytes((uint8_t*)entropy_local_, (int)sizeof(entropy_local_));
+  InitializeEntropyLocal();
 }
 
 int Dongle::HwARandBytes(uint8_t* buffer, size_t size) {
