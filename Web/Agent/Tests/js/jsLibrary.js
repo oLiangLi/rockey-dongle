@@ -72,7 +72,7 @@ window.onload = async function () {
      * @type {HTMLSelectElement}
      */
     const eleScripts = document.getElementById("scripts");
-    for(const [name, value] of jsScriptBundled) {
+    for (const [name, value] of jsScriptBundled) {
       const option = document.createElement("option");
       option.text = option.value = name;
       eleScripts.appendChild(option);
@@ -1139,7 +1139,7 @@ async function UserConfirmParamImpl(div, program) {
             /// ZERO[Min] ...
             SetOK(true);
             PARAM_RESULT[name] = Buffer.alloc(arg.sizeMin);
-          } else if(value === 'f') {
+          } else if (value === "f") {
             /// FFFF[Max] ...
             SetOK(true);
             const value = Buffer.alloc(arg.sizeMax);
@@ -1358,6 +1358,17 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
   let program_binary = Buffer.alloc(1024);
   const param = await UserConfirmParam(program);
   const data = CreateDataSegment(program, param, size_data);
+
+  const text_sha512 = jsCipher.Digest("SHA512").Init().Update(code).Final();
+  const data_sha512 = jsCipher.Digest("SHA512").Init().Update(data).Final();
+  console.info(`TEXT.SHA512: ${text_sha512.toString("base64")}`);
+  console.info(`DATA.SHA512: ${data_sha512.toString("base64")}`);
+
+  /**
+   *! Hello world: Exit(0) ...
+   */
+  if(code.readUInt32LE(0) === 0x0c0fd000)
+    console.info(`DATA: ${data.toString("base64")}`);
 
   if (bootstrap) {
     program_binary.writeUInt32LE(0, 0); // Zero ...
@@ -1731,9 +1742,10 @@ function HandleCheckEnTrust() {
 }
 
 function HandleLoadScript() {
-  const script = document.getElementById('scripts').value;
-  if(jsScriptBundled.has(script))
-    document.getElementById('dongle_script').value = jsScriptBundled.get(script);
+  const script = document.getElementById("scripts").value;
+  if (jsScriptBundled.has(script))
+    document.getElementById("dongle_script").value =
+      jsScriptBundled.get(script);
 }
 
 function HandleScriptLimitSign() {}

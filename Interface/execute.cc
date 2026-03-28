@@ -7,10 +7,13 @@ static constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("EXECV");
 namespace dongle {
 namespace script {
 
-static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szData) {
+static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szData, RuntimeHeader& runtime_header_) {
   uint8_t mac[16];
   uint8_t sm3[32];
 
+  /**
+   *!
+   */
   uint8_t* const vmdata = static_cast<uint8_t*>(vm.data_) + 256;
   if (text->ver_major_ != rLANG_DONGLE_VERSION_MAJOR || text->ver_minor_ != rLANG_DONGLE_VERSION_MINOR)
     return -EINVAL;
@@ -19,34 +22,72 @@ static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szDat
 
   vm.dongle_->SM3(text, sizeof(ScriptText) - 16, sm3);
 
-  rlCryptoChaChaPolyCtx ctx;
+  rlCryptoChaChaPolyCtx& ctx = *(rlCryptoChaChaPolyCtx*)vm.buffer_;
   rlCryptoChaChaPolyInit(&ctx);
   rlCryptoChaChaPolySetKey(&ctx, sm3);
   rlCryptoChaChaPolyStarts(&ctx, &text->nonce_[0], 0);
   rlCryptoChaChaPolyUpdate(&ctx, vmdata, vmdata, szData);
   rlCryptoChaChaPolyFinish(&ctx, mac);
+
   if (0 != memcmp(mac, text->check_, 16)) {
     rlLOGE(TAG, "CryptoChaChaPoly.mac error, size %zd!", szData);
     return -EINVAL;
   }
+
+  runtime_header_.zero_ = 0;
+  runtime_header_.world_magic_ = rLANG_WORLD_MAGIC;
+  runtime_header_.ver_major_ = rLANG_DONGLE_VERSION_MAJOR;
+  runtime_header_.ver_minor_ = rLANG_DONGLE_VERSION_MINOR;
+  runtime_header_.size_public_ = text->size_public_;
+  runtime_header_.file_magic_ = text->file_magic_;
+  runtime_header_.reserved_0_ = 0;
+
+  /**
+   *!
+   */
+  switch (runtime_header_.script_category_) {
+    case RuntimeHeader::ScriptCategory::kScriptLimit:
+      memcpy(runtime_header_.text_sign_, (uint8_t*)text->script_ + sizeof(text->script_) - 64, 64);
+      break;
+    case RuntimeHeader::ScriptCategory::kScriptAdmin:
+      memcpy(runtime_header_.data_sign_, vmdata + szData, 64);
+      break;
+    case RuntimeHeader::ScriptCategory::kScriptBootstrap:
+    case RuntimeHeader::ScriptCategory::kScriptAtomic:
+      memset(runtime_header_.zero_fill_, 0, 64);
+      break;
+    default:
+      rlLOGE(TAG, "INVALID SCRIPT CATEGORY %08X!", (int)runtime_header_.script_category_);
+      return -EFAULT;
+  }
+
+  ((Sha512Ctx*)vm.buffer_)->Init().Update(text->script_, sizeof(text->script_)).Final(runtime_header_.text_sha512_);
+  ((Sha512Ctx*)vm.buffer_)->Init().Update(vmdata, szData).Final(runtime_header_.data_sha512_);
+  memcpy(vm.data_, &runtime_header_, sizeof(RuntimeHeader));
   return 0;
 }
 
 rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf) {
-  union {
+  union DecodeTextContext {
     uint8_t data_[256];
     ScriptText text_;
     struct {
       WorldCreateHeader header_;
       ScriptText text_;
     } raw_;
-  } v;
+  };
+  RuntimeHeader& runtime_header_ = *(RuntimeHeader*)((uint8_t*)ExtendBuf + 256);
+  DecodeTextContext& v = *(DecodeTextContext*)((uint8_t*)ExtendBuf + 512);
 
   int result = 0;
   rLANG_ABIREQUIRE(256 == sizeof(v));
   memcpy(&v, InOutBuf, sizeof(v));
   if (vm.data_ != InOutBuf || vm.buffer_ != ExtendBuf)
     return -EBADF;
+
+  memset(&runtime_header_, 0, sizeof(RuntimeHeader));
+  if (0 != vm.dongle_->GetDongleInfo(&runtime_header_.dongle_info_))
+    return -EFAULT;
 
   if (vm.valid_permission_ != PERMISSION::kAdministrator) {
     PERMISSION permission_login = PERMISSION::kAnonymous;
@@ -79,15 +120,21 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
       v.raw_.header_.world_magic_ == rLANG_WORLD_MAGIC &&
       v.raw_.header_.create_magic_ == WorldCreateHeader::kMagicCreate &&
       v.raw_.header_.target_magic_ == WorldCreateHeader::kMagicWorld &&
-      v.raw_.text_.file_magic_ == ScriptText::kAdminFileMagic && v.raw_.text_.size_public_ <= 1024) {
+      v.raw_.text_.file_magic_ == ScriptText::kAdminFileMagic && v.raw_.text_.size_public_ <= 1024 &&
+      v.raw_.text_.ver_major_ == rLANG_DONGLE_VERSION_MAJOR && v.raw_.text_.ver_minor_ == rLANG_DONGLE_VERSION_MINOR) {
+    /**
+     *!
+     */
     memmove(&v.text_, &v.raw_.text_, sizeof(ScriptText));
-    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
+    runtime_header_.script_category_ = RuntimeHeader::ScriptCategory::kScriptBootstrap;
+    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256, runtime_header_);
     if (result < 0) {
       rlLOGE(TAG, "Bootstrap script, decrypt data Failed: %d", result);
       return result;
     } else {
       rlLOGW(TAG, "Bootstrap script call!");
     }
+
     return vm.Initialize(&v.text_.script_, sizeof(v.text_.script_), v.text_.size_public_);
   }
 
@@ -105,7 +152,8 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
     uint8_t ecies_pubkey[64];
     const uint8_t* input = (const uint8_t*)&v.text_;
 
-    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
+    runtime_header_.script_category_ = RuntimeHeader::ScriptCategory::kScriptLimit;
+    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256, runtime_header_);
     if (0 != result)
       return result;
 
@@ -146,7 +194,8 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
     /**
      *!
      */
-    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256 - 64);
+    runtime_header_.script_category_ = RuntimeHeader::ScriptCategory::kScriptAdmin;
+    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256 - 64, runtime_header_);
     if (0 != result)
       return result;
 
@@ -170,7 +219,8 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
       return -EBADF;
     vm.valid_permission_ = PERMISSION::kAdministrator; /* Granting privileges administrator */
   } else {
-    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256);
+    runtime_header_.script_category_ = RuntimeHeader::ScriptCategory::kScriptAtomic;
+    result = RockeyTrustDecryptData(vm, &v.text_, 1024 - 256, runtime_header_);
     if (0 != result)
       return result;
   }

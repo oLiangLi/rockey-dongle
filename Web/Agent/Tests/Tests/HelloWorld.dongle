@@ -1,0 +1,17 @@
+public 1024;
+
+@   0 i[4] : Header_zero_;
+@   4 i[4] : Header_world_magic_;
+@   8 i[1] : Header_ver_major_;
+@   9 i[1] : Header_ver_minor_;
+@  10 i[2] : Header_size_public_;
+@  12 i[4] : Header_script_category_;
+@  16 i[4] : Header_file_magic_;
+@  20 i[4] : Header_reserved_0_;
+@  24 [40] : Header_dongle_info_;
+@  64 [64] : Header_text_sha512_;
+@ 128 [64] : Header_data_sha512_;
+@ 192 [64] : Header_sign_or_zero_;
+@ 256 [1024-256] : Data_;
+
+Exit(0);

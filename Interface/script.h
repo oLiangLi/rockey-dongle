@@ -196,6 +196,35 @@ rLANG_ABIREQUIRE(ScriptText::kAdminFileMagic == rLANG_DECLARE_MAGIC_Xs("ADMIN"))
 rLANG_ABIREQUIRE(ScriptText::kLimitFileMagic == rLANG_DECLARE_MAGIC_Xs("LIMIT"));
 rLANG_ABIREQUIRE(sizeof(WorldCreateHeader) == 16 && sizeof(ScriptText) == 240);
 
+struct RuntimeHeader {
+  enum class ScriptCategory : uint32_t {
+    kScriptBootstrap = rLANG_WORLD_MAGIC,
+    kScriptLimit = ScriptText::kLimitFileMagic,
+    kScriptAdmin = ScriptText::kAdminFileMagic,
+    kScriptAtomic = rLANG_ATOMC_WORLD_MAGIC
+  };
+
+  /*   0 */ uint32_t zero_;
+  /*   4 */ uint32_t world_magic_;
+  /*   8 */ uint8_t ver_major_;
+  /*   9 */ uint8_t ver_minor_;
+  /*  10 */ uint16_t size_public_;
+  /*  12 */ ScriptCategory script_category_;
+  /*  16 */ uint32_t file_magic_;
+  /*  20 */ uint32_t reserved_0_;
+  /*  24 */ DONGLE_INFO dongle_info_;
+
+  /*  64 */ uint8_t text_sha512_[64];
+  /* 128 */ uint8_t data_sha512_[64];
+  union {                             /* switch(script_category_) */
+    /* 192 */ uint8_t zero_fill_[64]; /* default: */
+    /* 192 */ uint8_t text_sign_[64]; /* case kScriptLimit: */
+    /* 192 */ uint8_t data_sign_[64]; /* case kScriptAdmin: */
+  };
+};
+rLANG_ABIREQUIRE(256 == sizeof(RuntimeHeader));
+
+
 /**
  *! 全局的密钥信息保存在数据文件偏移 7KB 的位置, 大小为 1024 ...
  */
