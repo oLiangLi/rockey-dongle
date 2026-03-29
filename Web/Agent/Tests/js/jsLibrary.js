@@ -1403,7 +1403,48 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
 
     program_name = `Bootstrap-${hashId}-${new Date().toISOString()}.dongle.program`;
   } else {
-    throw jsCipher.Annihilus_(`Not implemented`);
+    const dashboard = prev_dashboard_value.get(id);
+    if(!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
+
+    const master =  jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+    if(admin) {
+      // TODO:
+      throw Error(`Not implemented`);
+    } else {
+      const header = Buffer.alloc(240);
+      jsCipher.RandBytes(16).copy(header, 240 - 32); /// nonce ...
+      header.writeUInt32LE(0x0543CD0F, 0); // rLANG_ATOMIC_MAGIC_NUMBER
+      header[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
+      header[5] = 1; /// rLANG_DONGLE_VERSION_MINOR
+      header.writeUInt16LE(program.size_public, 6);
+      code.copy(header, 8);
+
+      const cipher = jsEmulator.SM3(header.subarray(0, 240 - 16));
+      const aead = jsCipher.ChaChaPoly(cipher);
+      const encrypt_data = aead.Seal(data, header.subarray(240 - 32, 240 - 32 + 12));
+      console.assert(encrypt_data.length === size_data + 16);
+      cipher.fill(0);
+      aead.Clear();
+
+      encrypt_data.subarray(size_data).copy(header, 240 - 16);
+      encrypt_data.subarray(0, size_data).copy(program_binary, 256);
+      const RSA_pubkey = Buffer.from(master.RSA2048, 'base64');
+      console.assert(RSA_pubkey.length === 260);
+
+      const encrypt_header = jsEmulator.RSAPublic(RSA_pubkey.readUInt32LE(0), RSA_pubkey.subarray(4), header, true);
+      console.assert(encrypt_header.length === 256);
+      encrypt_header.copy(program_binary, 0);
+
+      const hashId = jsCipher
+          .Digest("SHA256")
+          .Init()
+          .Update(program_binary)
+          .Final()
+          .subarray(0, 6)
+          .toString("hex");
+
+      program_name = `Execv-${id}-H-${hashId}-${new Date().toISOString()}.dongle.program`;
+    }
   }
 
   if (cb) return await cb(program_binary);
