@@ -718,7 +718,9 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
     } else {
       int id = argv[0];
       size_t size = argv[2];
-      if (size <= 96 || size > 256) {
+      if (id == kKeyIdGlobalSM2ECDSA && valid_permission_ != PERMISSION::kAdministrator) {
+        zero_ = -EACCES;
+      } else if (size <= 96 || size > 256) {
         value = -E2BIG;
       } else {
         Dongle::SecretBuffer<256> copy;

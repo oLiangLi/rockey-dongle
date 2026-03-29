@@ -1407,13 +1407,10 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
     if(!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
 
     const master =  jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
-    if(admin) {
-      // TODO:
-      throw Error(`Not implemented`);
-    } else {
+    function CreateProgram (magic, signIf) {
       const header = Buffer.alloc(240);
       jsCipher.RandBytes(16).copy(header, 240 - 32); /// nonce ...
-      header.writeUInt32LE(0x0543CD0F, 0); // rLANG_ATOMIC_MAGIC_NUMBER
+      header.writeUInt32LE(magic, 0);
       header[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
       header[5] = 1; /// rLANG_DONGLE_VERSION_MINOR
       header.writeUInt16LE(program.size_public, 6);
@@ -1426,6 +1423,9 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
       cipher.fill(0);
       aead.Clear();
 
+      if(signIf)
+        signIf.copy(program_binary, 1024 - 64);
+
       encrypt_data.subarray(size_data).copy(header, 240 - 16);
       encrypt_data.subarray(0, size_data).copy(program_binary, 256);
       const RSA_pubkey = Buffer.from(master.RSA2048, 'base64');
@@ -1434,6 +1434,26 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
       const encrypt_header = jsEmulator.RSAPublic(RSA_pubkey.readUInt32LE(0), RSA_pubkey.subarray(4), header, true);
       console.assert(encrypt_header.length === 256);
       encrypt_header.copy(program_binary, 0);
+    }
+
+    if(admin) {
+      /**
+       *! 这里只是功能演示代码(只支持EnTrust为当前模拟器实例), 实际部署时, (解密/管理员签名)代理Key应该受到妥善的隔离和保护 ...
+       */
+      const sign = (()=>{
+        const sm3 = jsEmulator.SM3(data);
+        const entrust = jsCheckEnTrust(master, dashboard.subarray(6 * 1024, 7 * 1024));
+        const emulator = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+        for(const it of entrust) {
+          if(it?.hid === emulator)
+            return jsEmulator.SM2Sign(jsEmulator.SM2Decrypt(1, Buffer.from(it?.cipher, 'base64')), sm3);
+        }
+        throw jsCipher.Annihilus_(`jsEmulator.hid_(${emulator}) !== Any${JSON.stringify(entrust, null, 2)}`);
+      })();
+
+      console.info(`ADMIN.SIGN: ${sign.toString("base64")}`);
+
+      CreateProgram(0x0443493B, sign);  /// 'ADMIN'
 
       const hashId = jsCipher
           .Digest("SHA256")
@@ -1443,7 +1463,19 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
           .subarray(0, 6)
           .toString("hex");
 
-      program_name = `Execv-${id}-H-${hashId}-${new Date().toISOString()}.dongle.program`;
+      program_name = `Execv-${id}-Admin-${hashId}-${new Date().toISOString()}.dongle.program`;
+    } else {
+      CreateProgram(0x0543CD0F, null);  /// 'ATOMC'
+
+      const hashId = jsCipher
+          .Digest("SHA256")
+          .Init()
+          .Update(program_binary)
+          .Final()
+          .subarray(0, 6)
+          .toString("hex");
+
+      program_name = `Execv-${id}-Normal-${hashId}-${new Date().toISOString()}.dongle.program`;
     }
   }
 
