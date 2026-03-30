@@ -1,7 +1,6 @@
-public 1024;
-
-@ 0 i[4] : rLANG_VERIFY_RESULT;
-
-Memset(0, 0, 1024);
-VerifyWorldPublic();
-StoreI32(0, 42);
+///
+/// [ 0x0271, 0x0c0f ]
+/// 1) kVerifyWorldPublic | 0x0000  ///  void = 0; argc = 0;
+/// 2) kExit | 0x0C00               ///  void = 1; argc = 1
+///
+Exit(VerifyWorldPublic());

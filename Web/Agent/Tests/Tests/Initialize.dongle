@@ -174,7 +174,7 @@ GenerateRSA(kFileRSA2048, kOffsetPubkey_RSA2048);
 WriteDataFile(0xffff, kOffsetDonglePublic, 0, kOffsetSign_SM2ECIES);
 
 /**
- *! 生成系统 MASTER_SECRET (kFileSM2ECDSA将同时被创建) ...
+ *! 生成系统 MASTER_SECRET ...
  */
 UpdateMasterSecret();
 

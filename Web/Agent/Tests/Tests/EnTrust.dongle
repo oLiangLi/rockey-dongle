@@ -147,6 +147,11 @@ rLANG_VERSION @ kOff_Version [4] = { kVersionCurrent };
 ///
 Memcpy(kOffsetEnTrust_nonce, kOffsetNonce, 32);
 
+/**
+ *! 更新系统 MASTER_SECRET ...
+ */
+UpdateMasterSecret();
+
 ///
 /// 重新生成 SM2ECIES.PKEY ...
 ///
