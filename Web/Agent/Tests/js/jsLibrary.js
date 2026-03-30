@@ -511,13 +511,29 @@ window.onload = async function () {
     if (!id) throw Error(`Lock: Select RockeyARM device!`);
 
     if (id.slice(0, 2) === "ff") throw new Error("Lock: 好像选中的是模拟设备!");
+    const dashboard = prev_dashboard_value.get(id);
+    if (!dashboard || dashboard.length !== 8192 + 32)
+      throw jsCipher.Annihilus_(`Invalid dashboard value!`);
+    const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+    const sha256 = jsCipher
+      .Digest("SHA256")
+      .Init()
+      .Update(dashboard.subarray(0, 8192))
+      .Final();
 
-    console.log(`#### Lock() ####`);
+    console.log(
+      `#### Lock() ${id}: ${sha256.toString("hex")}, master: ${JSON.stringify(master, null, 2)} ####`,
+    );
+
+    if (!confirm(`你确定需要锁定 RockeyARM: ${id} 设备么`)) {
+      throw jsCipher.Annihilus_(`Canceled`);
+    }
 
     const start = Date.now();
     const payload = Buffer.from(
       JSON.stringify({
         cmd: "lock",
+        stdin: sha256.toString("base64"),
         nonce: jsCipher.RandBytes(12).toString("base64"),
         id,
       }),
@@ -1808,8 +1824,7 @@ async function ReadFileContent(id, min, max) {
     max |= 0;
     if (max < min) max = min;
 
-    if (!file)
-      return reject(Error(`Select File id ${id} size ${min}/${max}`));
+    if (!file) return reject(Error(`Select File id ${id} size ${min}/${max}`));
 
     if (file.size < min || file.size > max)
       return reject(Error(`Invalid file size ${file.size} ${min}/${max}`));
@@ -1820,7 +1835,7 @@ async function ReadFileContent(id, min, max) {
       const result = Buffer.from(reader.result);
       if (result.length < min || result.length > max)
         return reject(
-            Error(`Invalid file size ${result.length} ${min}/${max}`),
+          Error(`Invalid file size ${result.length} ${min}/${max}`),
         );
       resolve(result);
     };
@@ -1987,9 +2002,12 @@ async function LimitScriptSignHelper(id, program) {
     await jsDongleExecv(id, InOutBuffer, true);
 
     const sm3 = jsEmulator.SM3(InOutBuffer.subarray(0, 208 - 64));
-    const verify = jsEmulator.SM2Verify(Buffer.from(master.SM2ECIES, 'base64'), sm3, InOutBuffer.subarray(208-64, 208));
-    if(!verify)
-      throw jsCipher.Annihilus_(`Verify SM2ECIES.Signature Failed!`);
+    const verify = jsEmulator.SM2Verify(
+      Buffer.from(master.SM2ECIES, "base64"),
+      sm3,
+      InOutBuffer.subarray(208 - 64, 208),
+    );
+    if (!verify) throw jsCipher.Annihilus_(`Verify SM2ECIES.Signature Failed!`);
 
     program.signedCode = InOutBuffer.subarray(0, 208).toString("base64");
     InOutBuffer.fill(0);
@@ -2068,7 +2086,11 @@ async function HandleScriptLimitExport() {
   const program = await ReadFileContent("limitFile", 500, 64 * 1024);
   const json = JSON.parse(program.toString());
 
-  if (typeof json?.code !== "string" || typeof json?.output !== "object" || typeof json?.signedCode !== "string") {
+  if (
+    typeof json?.code !== "string" ||
+    typeof json?.output !== "object" ||
+    typeof json?.signedCode !== "string"
+  ) {
     throw Error("Invalid program!");
   }
 

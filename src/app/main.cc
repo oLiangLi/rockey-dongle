@@ -87,7 +87,94 @@ int OpenRockeyById(const uint8_t use_hid[12], RockeyARM& rockey) {
   return 0;
 }
 
-int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
+static int RockeyARM_VerifyExecvHelper(uint16_t opCode, uint16_t verify, RockeyARM* dongle) {
+  int result = 0;
+  using ScriptText = script::ScriptText;
+  using WorldCreateHeader = script::WorldCreateHeader;
+
+  union {
+    uint8_t InOutBuffer[1024];
+    struct {
+      WorldCreateHeader header_;
+      ScriptText script_text_;
+    } V;
+  };
+
+  RAND_bytes(InOutBuffer, sizeof(InOutBuffer));
+  V.header_.zero_ = 0;
+  V.header_.world_magic_ = rLANG_WORLD_MAGIC;
+  V.header_.create_magic_ = WorldCreateHeader::kMagicCreate;
+  V.header_.target_magic_ = WorldCreateHeader::kMagicWorld;
+
+  V.script_text_.file_magic_ = ScriptText::kAdminFileMagic;
+  V.script_text_.ver_major_ = rLANG_DONGLE_VERSION_MAJOR;
+  V.script_text_.ver_minor_ = rLANG_DONGLE_VERSION_MINOR;
+  V.script_text_.size_public_ = 0;
+
+  V.script_text_.script_[0] = opCode;
+  V.script_text_.script_[1] = (uint16_t)script::OpCode::kExit | 0x0C00;  // argc = 1; void = 1;
+
+  uint8_t sm3[32];
+  rlCryptoChaChaPolyCtx ctx;
+
+  dongle->SM3(&V.script_text_, sizeof(ScriptText) - 16, sm3);
+  rlCryptoChaChaPolyInit(&ctx);
+  rlCryptoChaChaPolySetKey(&ctx, sm3);
+  rlCryptoChaChaPolyStarts(&ctx, &V.script_text_.nonce_[0], 1);
+  rlCryptoChaChaPolyUpdate(&ctx, &InOutBuffer[256], &InOutBuffer[256], 1024 - 256);
+  rlCryptoChaChaPolyFinish(&ctx, V.script_text_.check_);
+
+  /**
+   *!
+   */
+#if 0
+  char s_CodeBuffer[2048];
+  rl_BASE64_Write(s_CodeBuffer, InOutBuffer, 1024);
+  rlLOGI(TAG, "Execv.Bootstrap.code: %s", s_CodeBuffer);
+#endif
+
+  int execute_result = 0;
+  long long ts = rLANG_GetTickCount();
+  result = dongle->ExecuteExeFile(InOutBuffer, 1024, &execute_result);
+  ts = rLANG_GetTickCount() - ts;
+
+  if (0 == result && 0 == verify && 0 != execute_result) {
+    rlLOGI(TAG, "ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, OK", opCode, verify, result,
+           execute_result);
+  } else if (0 == result && (execute_result & 0xFFFF) == verify) {
+    rlLOGI(TAG, "ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, OK", opCode, verify, result,
+           execute_result);
+    execute_result = verify;
+  } else {
+    rlLOGE(TAG, "ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, Failed!", opCode, verify,
+           result, execute_result);
+  }
+
+  if (0 == result && execute_result != verify)
+    result = -EFAULT;
+  return result;
+}
+
+static int RockeyARM_Lock(RockeyARM* dongle, const char* hid) {
+  char sPIN[20];
+  uint8_t zPIN[8];
+
+  RAND_bytes(zPIN, sizeof(zPIN));
+  dongle->RandBytes((uint8_t*)sPIN, sizeof(sPIN));
+  for (int i = 0; i < 8; ++i)
+    zPIN[i] ^= sPIN[i];
+
+  rl_HEX_Write(sPIN, zPIN, 8);
+
+  for (int i = 0; i < 3; ++i) {
+    rlLOGW(TAG, "%d) RockeyARM_Lock <%s> HPIN <%s>", i, hid, sPIN);
+  }
+
+  const char* const default_admin_pin_ = dongle->GetDefaultPIN(PERMISSION::kAdministrator);
+  return dongle->ChangePIN(PERMISSION::kAdministrator, default_admin_pin_, sPIN, 100);
+}
+
+int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, const char* hid) {
   int result = 0;
 
   DONGLE_INFO dongle_info_;
@@ -225,12 +312,52 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle) {
     }
   } else if (0 == strcmp(type, "lock")) {
     ///
-    /// 当 KeyID : 1,2,3,4 已经被正确的创建, 系统初始化完成
+    /// 当 KeyID : 1,2,3,4 已经被正确的创建, MASTER_SECRET已经创建, 系统已经初始化完成 ...
     /// 1) 我们可以使用SM2ECIES签名的代码作为管理员运行, 不应该再有管理员了 ...
     /// 2) 应该彻底的忘记管理员PIN码以避免uKey内容被无意识的修改或者读取    ...
     ///
-    rlLOGE(TAG, "TODO: LiangLI, implements Lock dongle ....");
-    result = rLANG_E_CLASSNOTFOUND;
+    char s_sha256[80], s_check[80];
+    uint8_t sha256[32] = {0}, check[32] = {0}, dashboard[8192];
+
+    if (!adminMode) {
+      rlLOGE(TAG, "[EACCES]Utilities.Lock kAdministrator require!!");
+      result = -EACCES;
+    }
+
+    if (0 == result)
+      result = dongle->ReadDataFile(dongle->kFactoryDataFileId, 0, &dashboard[0], sizeof(dashboard));
+    if (0 == result)
+      result = ReadLine(sha256, 32, EncodeFormat::kBase64, "Input SHA256(Dashboard):");
+    Sha256Ctx().Init().Update(dashboard, sizeof(dashboard)).Final(check);
+
+    if (0 == result && 0 != memcmp(sha256, check, 32)) {
+      rl_HEX_Write(s_sha256, sha256, 32);
+      rl_HEX_Write(s_check, check, 32);
+      rlLOGE(TAG, "SHA256(Dashboard) mismatch '%s' != '%s'!", s_sha256, s_check);
+      result = -EFAULT;
+    }
+
+    if (0 == result) {
+      rlLOGI(TAG, "Check HASH Value OK!!");
+
+      uint16_t verify;
+      result = RockeyARM_VerifyExecvHelper((uint16_t)script::OpCode::kLoadUI | 42, 42, dongle);
+      RAND_bytes((uint8_t*)&verify, sizeof(verify));
+
+      for (int loop = (verify & 7) + 4; 0 == result && loop > 0; --loop) {
+        RAND_bytes((uint8_t*)&verify, sizeof(verify));
+        verify &= 0xfff;
+        result = RockeyARM_VerifyExecvHelper((uint16_t)script::OpCode::kLoadUI | verify, verify, dongle);
+      }
+
+      if (0 == result)
+        result = RockeyARM_VerifyExecvHelper((uint16_t)script::OpCode::kVerifyWorldPublic, 0, dongle);
+
+      if (0 == result) {
+        rlLOGI(TAG, "kVerifyWorldPublic OK!");
+        result = RockeyARM_Lock(dongle, hid);
+      }
+    }
   } else {
     rlLOGE(TAG, "##ENOENT: Utilities.%s NOT IMPLEMENTS YET!!", type);
     result = rLANG_E_CLASSNOTFOUND;
@@ -425,8 +552,6 @@ int main(int argc, char* argv[]) {
       else
         rlLOGI(TAG, "rlCryptoX25519 OK!");
       Wait();
-
-
     }
 
     rlLOGW(TAG, "Foobar Tests Error %d", error);
@@ -562,7 +687,7 @@ int main(int argc, char* argv[]) {
   }
 
   if (argv[1][0] == '-' && argv[1][1] == '-')
-    return Utilities(stdout_, argv[1] + 2, &rockey);
+    return Utilities(stdout_, argv[1] + 2, &rockey, adminPasswd != nullptr, StringFromHID(s_hid_1, use_hid));
 #endif /* __EMULATOR__ || !__RockeyARM__ */
 
   char line[4 * 1024] = {0};

@@ -1,4 +1,4 @@
-#include "../base.h"
+﻿#include "../base.h"
 
 #ifdef _WIN32
 #include <windows.h>
@@ -23,7 +23,7 @@ namespace {
 rlLogLevel global_log_level = rlLOG_INFO;
 
 #ifndef rLANG_CONFIG_LOGDATA_SIZEMAX
-#define rLANG_CONFIG_LOGDATA_SIZEMAX 1024
+#define rLANG_CONFIG_LOGDATA_SIZEMAX 2048
 #endif /* rLANG_CONFIG_LOGDATA_SIZEMAX */
 
 static int rLANGAPI rlLog_vsnprintf(char* buff, int size, const char* fmt, va_list ap) {

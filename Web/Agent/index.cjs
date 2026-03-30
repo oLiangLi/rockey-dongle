@@ -176,9 +176,11 @@ async function Lock(req, body, reply) {
   if (typeof id !== "string" || !id.match(reId))
     throw Error(`Invalid id: ${id}`);
 
+  const stdin = CheckStdinSize(body, 32 /* SHA256(dashboard) */);
+
   if (locked_dongle_list.has(id)) throw Error(`Dongle.locked ${id}`);
   locked_dongle_list.add(id);
-  const [err, stdout] = await DongleExecv(["--lock", id, "-"], null, req);
+  const [err, stdout] = await DongleExecv(["--lock", id, "-"], stdin, req);
   locked_dongle_list.delete(id);
 
   if (err) throw err;
@@ -375,7 +377,9 @@ async function StartServer() {
         });
 
         req.on("end", async () => {
-          console.info(`[ I ]${service_counter} receive client ${clientId} size: ${size}`);
+          console.info(
+            `[ I ]${service_counter} receive client ${clientId} size: ${size}`,
+          );
           if (size > kSizeLimit)
             return onError(413, "Request entity too large");
 
