@@ -168,6 +168,9 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
                                  64) < 0)
       return -EBADF;
 
+    if (vm.dongle_->CheckPointOnCurveSM2(&ecies_pubkey[0], &ecies_pubkey[32]))
+      return -EBADF;
+
     result = vm.dongle_->SM2Verify(&ecies_pubkey[0], &ecies_pubkey[32], sm3, &sign[0], &sign[32]);
     if (0 != result)
       return result;

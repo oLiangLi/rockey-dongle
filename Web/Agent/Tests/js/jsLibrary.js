@@ -443,37 +443,6 @@ window.onload = async function () {
     document.getElementById("m").appendChild(li);
   }
 
-  async function ReadFileContent(id, min, max) {
-    return new Promise((resolve, reject) => {
-      const inputElement = document.getElementById(id);
-      const file = inputElement.files?.[0];
-
-      max |= 0;
-      if (max < min) max = min;
-
-      if (!file)
-        return reject(Error(`Select File id ${id} size ${min}/${max}`));
-
-      if (file.size < min || file.size > max)
-        return reject(Error(`Invalid file size ${file.size} ${min}/${max}`));
-
-      const reader = new FileReader();
-      reader.onloadend = function () {
-        console.assert(reader.result instanceof ArrayBuffer);
-        const result = Buffer.from(reader.result);
-        if (result.length < min || result.length > max)
-          return reject(
-            Error(`Invalid file size ${result.length} ${min}/${max}`),
-          );
-        resolve(result);
-      };
-      reader.onerror = function () {
-        reject(Error(`Load file ${file.name} Error!`));
-      };
-      reader.readAsArrayBuffer(file);
-    });
-  }
-
   async function Factory() {
     const id = document.getElementById("keys").value;
     if (!id) throw Error(`Factory: Select RockeyARM device!`);
@@ -1831,6 +1800,37 @@ function HandleCheckEnTrust() {
   console.log(`EnTrust(${id}: ${JSON.stringify(entrust, null, 2)})`);
 }
 
+async function ReadFileContent(id, min, max) {
+  return new Promise((resolve, reject) => {
+    const inputElement = document.getElementById(id);
+    const file = inputElement.files?.[0];
+
+    max |= 0;
+    if (max < min) max = min;
+
+    if (!file)
+      return reject(Error(`Select File id ${id} size ${min}/${max}`));
+
+    if (file.size < min || file.size > max)
+      return reject(Error(`Invalid file size ${file.size} ${min}/${max}`));
+
+    const reader = new FileReader();
+    reader.onloadend = function () {
+      console.assert(reader.result instanceof ArrayBuffer);
+      const result = Buffer.from(reader.result);
+      if (result.length < min || result.length > max)
+        return reject(
+            Error(`Invalid file size ${result.length} ${min}/${max}`),
+        );
+      resolve(result);
+    };
+    reader.onerror = function () {
+      reject(Error(`Load file ${file.name} Error!`));
+    };
+    reader.readAsArrayBuffer(file);
+  });
+}
+
 /**
  * @arg {string} id
  * @arg {Buffer} InOutBuffer
@@ -1906,12 +1906,16 @@ function HandleLoadScript() {
 
 async function LimitScriptSignHelper(id, program) {
   const code = Buffer.from(program.code, "base64");
-  let sum = 0;
+  let sum = 0,
+    last = 0;
   for (let i = 200 - 64; i < 200; ++i) {
+    if (code[i]) last = i;
     sum += code[i];
   }
   if (0 !== sum) {
-    throw jsCipher.Annihilus_(`ScriptLimitExecv: code.size > ${200 - 64}!`);
+    throw jsCipher.Annihilus_(
+      `ScriptLimitExecv: code.size ${last} > ${200 - 64}!`,
+    );
   }
 
   /**
@@ -1935,6 +1939,7 @@ async function LimitScriptSignHelper(id, program) {
   const dashboard = prev_dashboard_value.get(id);
   if (!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
   const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+
   const InOutBuffer = Buffer.alloc(1024);
   InOutBuffer.writeUInt32LE(0x0543cd0f, 0); /// Normal Script ...
   InOutBuffer[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
@@ -1950,36 +1955,85 @@ async function LimitScriptSignHelper(id, program) {
   InOutBuffer.writeUInt16LE(program.size_public, 262);
   code.subarray(0, 200 - 64).copy(InOutBuffer, 264);
 
-  const cipher = jsEmulator.SM3(InOutBuffer.subarray(0, 240 - 16));
-  const aead = jsCipher.ChaChaPoly(cipher);
-  const encrypt_data = aead.Seal(
-    InOutBuffer.subarray(256),
-    InOutBuffer.subarray(240 - 32, 240 - 32 + 12),
-  );
-  encrypt_data.subarray(1024 - 256).copy(InOutBuffer, 240 - 16);
-  encrypt_data.subarray(0, 1024 - 256).copy(InOutBuffer, 256);
-  cipher.fill(0);
-  aead.Clear();
+  if (id.slice(0, 2) === "ff") {
+    const header = InOutBuffer.subarray(256, 256 + 144);
+    const sm3 = jsEmulator.SM3(header);
+    const sign = jsEmulator.SM2Sign(4, sm3);
+    program.signedCode = Buffer.concat([header, sign]).toString("base64");
+  } else {
+    const cipher = jsEmulator.SM3(InOutBuffer.subarray(0, 240 - 16));
+    const aead = jsCipher.ChaChaPoly(cipher);
+    const encrypt_data = aead.Seal(
+      InOutBuffer.subarray(256),
+      InOutBuffer.subarray(240 - 32, 240 - 32 + 12),
+    );
+    encrypt_data.subarray(1024 - 256).copy(InOutBuffer, 240 - 16);
+    encrypt_data.subarray(0, 1024 - 256).copy(InOutBuffer, 256);
+    cipher.fill(0);
+    aead.Clear();
 
-  const RSA_pubkey = Buffer.from(master.RSA2048, "base64");
-  console.assert(RSA_pubkey.length === 260);
+    const RSA_pubkey = Buffer.from(master.RSA2048, "base64");
+    console.assert(RSA_pubkey.length === 260);
 
-  const encrypt_header = jsEmulator.RSAPublic(
-    RSA_pubkey.readUInt32LE(0),
-    RSA_pubkey.subarray(4),
-    InOutBuffer.subarray(0, 240),
-    true,
-  );
-  console.assert(encrypt_header.length === 256);
-  encrypt_header.copy(InOutBuffer);
+    const encrypt_header = jsEmulator.RSAPublic(
+      RSA_pubkey.readUInt32LE(0),
+      RSA_pubkey.subarray(4),
+      InOutBuffer.subarray(0, 240),
+      true,
+    );
+    console.assert(encrypt_header.length === 256);
+    encrypt_header.copy(InOutBuffer);
 
-  await jsDongleExecv(id, InOutBuffer, true);
-  program.signedCode = InOutBuffer.subarray(0, 208).toString("base64");
-  InOutBuffer.fill(0);
+    await jsDongleExecv(id, InOutBuffer, true);
+
+    const sm3 = jsEmulator.SM3(InOutBuffer.subarray(0, 208 - 64));
+    const verify = jsEmulator.SM2Verify(Buffer.from(master.SM2ECIES, 'base64'), sm3, InOutBuffer.subarray(208-64, 208));
+    if(!verify)
+      throw jsCipher.Annihilus_(`Verify SM2ECIES.Signature Failed!`);
+
+    program.signedCode = InOutBuffer.subarray(0, 208).toString("base64");
+    InOutBuffer.fill(0);
+  }
+
   return program;
 }
 
-async function HandleScriptLimitSign() {}
+async function HandleScriptLimitSign() {
+  const id = document.getElementById("keys").value;
+  if (!id) throw Error(`HandleCheckMaster: Select RockeyARM device!`);
+
+  const script = document.getElementById("dongle_script").value;
+  const signedScript = await LimitScriptSignHelper(
+    id,
+    await jsScriptParser(script),
+  );
+
+  const buffer = Buffer.from(JSON.stringify(signedScript, null, 2));
+  delete signedScript.code;
+  console.log(`signedScript: ${JSON.stringify(signedScript, null, 2)}`);
+
+  const blob = new Blob([buffer], {
+    type: "application/json",
+  });
+  const hashId = jsCipher
+    .Digest("SHA256")
+    .Init()
+    .Update(Buffer.from(signedScript.signedCode, "base64"))
+    .Final()
+    .subarray(0, 6)
+    .toString("hex");
+  const name = `SignedCode-${id}-Limit-${hashId}-${new Date().toISOString()}.dongle.program`;
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = name;
+  a.innerText = `${name}`;
+
+  const li = document.createElement("li");
+  li.appendChild(a);
+
+  document.getElementById("m").appendChild(li);
+}
 
 async function HandleScriptLimitExecv() {
   const id = document.getElementById("keys").value;
@@ -2007,4 +2061,16 @@ async function HandleScriptLimitExecv() {
   );
 }
 
-async function HandleScriptLimitExport() {}
+async function HandleScriptLimitExport() {
+  const id = document.getElementById("keys").value;
+  if (!id) throw Error(`HandleCheckMaster: Select RockeyARM device!`);
+
+  const program = await ReadFileContent("limitFile", 500, 64 * 1024);
+  const json = JSON.parse(program.toString());
+
+  if (typeof json?.code !== "string" || typeof json?.output !== "object" || typeof json?.signedCode !== "string") {
+    throw Error("Invalid program!");
+  }
+
+  await ScriptExportHelper(json, id, false, false, null, true);
+}

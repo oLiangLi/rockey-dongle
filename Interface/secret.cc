@@ -72,6 +72,21 @@ void Dongle::LocalChaos(uint32_t state[16], uint8_t loop) {
   };
   InitializeCipherState(cipher);
 
+  {
+    union {
+      DONGLE_INFO info;
+      uint32_t ival_[10];
+      uint8_t sm3_[32];
+    } V;
+    memset(&V, 0, sizeof(V));
+    if (Ready()) {
+      GetDongleInfo(&V.info);
+      SM3(&V, sizeof(V), V.sm3_);
+    }
+    for (int i = 0; i < 10; ++i)
+      cipher[i] += V.ival_[i];
+  }
+
   for (int ii = 0; ii < loop; ++ii) {
     for (int i = 0; i < 16; ++i)
       cipher[i] += state[15 - i];
@@ -92,13 +107,14 @@ void Dongle::InitializeEntropyLocal() {
 
 namespace script {
 
-static void MASTER_SECRET_PROCESS(uint8_t ENCRYPT_MASTER_SECRET[256]) {
+static void MASTER_SECRET_PROCESS(uint8_t ENCRYPT_MASTER_SECRET[256], Dongle* dongle) {
   union {
     uint8_t stream[64];
     uint32_t cipher[16];
   };
   uint8_t* p = ENCRYPT_MASTER_SECRET;
   InitializeCipherState(cipher);
+  dongle->LocalChaos(cipher, 2);
   for (int i = 0; i < 4; ++i) {
     rlCryptoChaCha20Block(cipher, stream);
     for (int i = 0; i < 64; ++i)
@@ -117,7 +133,7 @@ int VM_t::READ_MASTER_SECRET(uint8_t MASTER_SECRET[64]) {
   }
 
   size_t size = 256;
-  MASTER_SECRET_PROCESS(ENCRYPT_MASTER_SECRET);
+  MASTER_SECRET_PROCESS(ENCRYPT_MASTER_SECRET, dongle_);
   result = dongle_->RSAPrivate(kKeyIdGlobalRSA2048, ENCRYPT_MASTER_SECRET, &size, false);
   if (0 != result || size != kSize_MASTER_SECRET) {
     rlLOGE(TAG, "kKeyIdGlobalRSA2048.Decrypt Failed %d/%zd!", result, size);
@@ -173,7 +189,7 @@ int VM_t::WRITE_MASTER_SECRET(const uint8_t MASTER_SECRET[64]) {
     return result;
   }
 
-  MASTER_SECRET_PROCESS(ENCRYPT_MASTER_SECRET);
+  MASTER_SECRET_PROCESS(ENCRYPT_MASTER_SECRET, dongle_);
   result = dongle_->WriteDataFile(kKeyIdGlobalSECRET, 0, &ENCRYPT_MASTER_SECRET[0], 256);
   if (0 != result) {
     rlLOGE(TAG, "kKeyIdGlobalSECRET.Write Failed %d!", result);
