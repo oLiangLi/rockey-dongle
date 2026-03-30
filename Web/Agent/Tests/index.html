@@ -81,10 +81,11 @@
     <p>
       <label for="check_LimitScriptExecv">Limit:</label
       ><input type="checkbox" id="check_LimitScriptExecv" checked disabled />
-      <label for="scripts">Script:</label><select id="scripts" style="width: 200px"></select>
+      <label for="scripts">Script:</label><select id="scripts" style="width: 100px"></select>
       <button onclick="HandleLoadScript()">LoadScript</button>
-      <label for="limitFile"></label><input type="file" id="limitFile" />
+      <label for="limitFile"></label><input type="file" id="limitFile" style="width: 200px" />
       <button onclick="HandleScriptLimitSign()">ScriptLimitSign</button>
+      <button id="limitExecv" onclick="HandleScriptLimitExecv()">ScriptLimitExecv</button>
       <button onclick="HandleScriptLimitExport()">ScriptLimitExport</button>
     </p>
 

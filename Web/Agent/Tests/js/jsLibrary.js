@@ -13,7 +13,7 @@ var jsCipher;
 /**
     * @type {(script : string)=>Promise<{
     size_public : integer;
-    code : Buffer;
+    code : string; /// Base64Encode(code[200])
     output: Array<{
         name: string;
         offset : number;
@@ -568,72 +568,6 @@ window.onload = async function () {
     );
   }
 
-  /**
-   * @arg {string} id
-   * @arg {Buffer} InOutBuffer
-   * @arg {Array<{ name: string; offset : number;  size : number; intType: boolean; }>} output
-   */
-  async function OutputExecvResult(id, InOutBuffer, output) {
-    output = output || [];
-
-    function ReadIntValue(offset, size) {
-      if (
-        (size !== 1 && size !== 2 && size !== 4) ||
-        offset < 0 ||
-        offset > 1024 ||
-        offset + size > 1024
-      )
-        throw Error(`Invalid intType value ${offset}/${size}`);
-
-      if (size === 1) return InOutBuffer[offset];
-      else if (size === 2) return InOutBuffer.readUInt16LE(offset);
-      else return InOutBuffer.readUInt32LE(offset);
-    }
-
-    function ReadBufferValue(offset, size) {
-      if (
-        offset < 0 ||
-        offset > 1024 ||
-        size < 1 ||
-        size > 1024 ||
-        offset + size > 1024
-      )
-        throw Error(`Invalid Buffer value ${offset}/${size}`);
-      return InOutBuffer.subarray(offset, size + offset).toString("base64");
-    }
-
-    const result = {};
-    for (const out of output) {
-      result[out.name] = out.intType
-        ? ReadIntValue(out.offset, out.size)
-        : ReadBufferValue(out.offset, out.size);
-    }
-
-    const json = {
-      buffer: InOutBuffer.toString("base64"),
-      result,
-    };
-
-    if (output.length) {
-      console.log(`Execv(${id}).Output: ${JSON.stringify(result, null, 2)}`);
-    }
-
-    const blob = new Blob([Buffer.from(JSON.stringify(json, null, 2))], {
-      type: "application/json",
-    });
-
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    const name = `ExecvOutput-${id}-${new Date().toISOString()}.json`;
-    a.href = url;
-    a.download = name;
-    a.innerText = name;
-
-    const li = document.createElement("li");
-    li.appendChild(a); /**! */
-    document.getElementById("m").appendChild(li);
-  }
-
   async function Execv() {
     const id = document.getElementById("keys").value;
     if (!id) throw Error(`Execv: Select RockeyARM device!`);
@@ -870,6 +804,7 @@ window.onload = async function () {
   document.getElementById("keys").onchange = () => {
     const id = document.getElementById("keys").value;
     document.getElementById("ScriptExecv").disabled = id.slice(0, 2) !== "ff";
+    document.getElementById("limitExecv").disabled = id.slice(0, 2) !== "ff";
   };
   UpdateDeviceList(null);
 };
@@ -1280,8 +1215,24 @@ async function UserConfirmParam(program) {
   }
 }
 
-async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
-  console.log(`id: ${id}, bootstrap: ${bootstrap}, admin: ${admin}`);
+async function ScriptExportHelper(
+  program,
+  id,
+  bootstrap,
+  admin,
+  cb,
+  limitMode,
+) {
+  if (limitMode === true) {
+    bootstrap = false;
+    admin = false;
+  } else {
+    limitMode = false;
+  }
+
+  console.log(
+    `id: ${id}, bootstrap: ${bootstrap}, admin: ${admin}, limit: ${limitMode}`,
+  );
   console.log(JSON.stringify(program, null, 2));
   const code = Buffer.from(program.code, "base64");
   const size_public = program.size_public;
@@ -1361,13 +1312,14 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
 
   const text_sha512 = jsCipher.Digest("SHA512").Init().Update(code).Final();
   const data_sha512 = jsCipher.Digest("SHA512").Init().Update(data).Final();
-  console.info(`TEXT.SHA512: ${text_sha512.toString("base64")}`);
+  if (!limitMode)
+    console.info(`TEXT.SHA512: ${text_sha512.toString("base64")}`);
   console.info(`DATA.SHA512: ${data_sha512.toString("base64")}`);
 
   /**
    *! Hello world: Exit(0) ...
    */
-  if(code.readUInt32LE(0) === 0x0c0fd000)
+  if (code.readUInt32LE(0) === 0x0c0fd000)
     console.info(`DATA: ${data.toString("base64")}`);
 
   if (bootstrap) {
@@ -1404,76 +1356,141 @@ async function ScriptExportHelper(program, id, bootstrap, admin, cb) {
     program_name = `Bootstrap-${hashId}-${new Date().toISOString()}.dongle.program`;
   } else {
     const dashboard = prev_dashboard_value.get(id);
-    if(!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
+    if (!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
 
-    const master =  jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
-    function CreateProgram (magic, signIf) {
+    const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+    function CreateProgram(magic, signIf, signCodeIf) {
       const header = Buffer.alloc(240);
       jsCipher.RandBytes(16).copy(header, 240 - 32); /// nonce ...
-      header.writeUInt32LE(magic, 0);
-      header[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
-      header[5] = 1; /// rLANG_DONGLE_VERSION_MINOR
-      header.writeUInt16LE(program.size_public, 6);
-      code.copy(header, 8);
+
+      if (signCodeIf) {
+        signCodeIf.copy(header);
+      } else {
+        header.writeUInt32LE(magic, 0);
+        header[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
+        header[5] = 1; /// rLANG_DONGLE_VERSION_MINOR
+        header.writeUInt16LE(program.size_public, 6);
+        code.copy(header, 8);
+      }
 
       const cipher = jsEmulator.SM3(header.subarray(0, 240 - 16));
       const aead = jsCipher.ChaChaPoly(cipher);
-      const encrypt_data = aead.Seal(data, header.subarray(240 - 32, 240 - 32 + 12));
+      const encrypt_data = aead.Seal(
+        data,
+        header.subarray(240 - 32, 240 - 32 + 12),
+      );
       console.assert(encrypt_data.length === size_data + 16);
       cipher.fill(0);
       aead.Clear();
 
-      if(signIf)
+      if (signIf) {
         signIf.copy(program_binary, 1024 - 64);
+      }
 
       encrypt_data.subarray(size_data).copy(header, 240 - 16);
       encrypt_data.subarray(0, size_data).copy(program_binary, 256);
-      const RSA_pubkey = Buffer.from(master.RSA2048, 'base64');
+      const RSA_pubkey = Buffer.from(master.RSA2048, "base64");
       console.assert(RSA_pubkey.length === 260);
 
-      const encrypt_header = jsEmulator.RSAPublic(RSA_pubkey.readUInt32LE(0), RSA_pubkey.subarray(4), header, true);
+      const encrypt_header = jsEmulator.RSAPublic(
+        RSA_pubkey.readUInt32LE(0),
+        RSA_pubkey.subarray(4),
+        header,
+        true,
+      );
       console.assert(encrypt_header.length === 256);
       encrypt_header.copy(program_binary, 0);
     }
 
-    if(admin) {
+    if (limitMode) {
+      const signedCode = (() => {
+        const v = program?.signedCode;
+        if (typeof v === "string") {
+          const result = Buffer.from(v, "base64");
+          if (result.length === 208) return result;
+        }
+        throw jsCipher.Annihilus_(`Invalid signedCode[208]`);
+      })();
+
+      if (
+        0 !==
+          Buffer.compare(
+            signedCode.subarray(8, 8 + 200 - 64),
+            code.subarray(0, 200 - 64),
+          ) ||
+        0 !== Buffer.compare(Buffer.alloc(64), code.subarray(200 - 64))
+      ) {
+        throw jsCipher.Annihilus_(`Program code/signedCode mismatch!!`);
+      }
+
+      const code_sha512 = jsCipher
+        .Digest("SHA512")
+        .Init()
+        .Update(signedCode.subarray(8))
+        .Final();
+      console.info(`TEXT.SHA512: ${code_sha512.toString("base64")}`);
+
+      console.info(
+        `TEXT.SIGN: ${signedCode.subarray(208 - 64).toString("base64")}`,
+      );
+
+      CreateProgram(0x30934953, null, signedCode); /// 'LIMIT'
+
+      const hashId = jsCipher
+        .Digest("SHA256")
+        .Init()
+        .Update(program_binary)
+        .Final()
+        .subarray(0, 6)
+        .toString("hex");
+
+      program_name = `Execv-${id}-Limit-${hashId}-${new Date().toISOString()}.dongle.program`;
+    } else if (admin) {
       /**
        *! 这里只是功能演示代码(只支持EnTrust为当前模拟器实例), 实际部署时, (解密/管理员签名)代理Key应该受到妥善的隔离和保护 ...
        */
-      const sign = (()=>{
+      const sign = (() => {
         const sm3 = jsEmulator.SM3(data);
-        const entrust = jsCheckEnTrust(master, dashboard.subarray(6 * 1024, 7 * 1024));
+        const entrust = jsCheckEnTrust(
+          master,
+          dashboard.subarray(6 * 1024, 7 * 1024),
+        );
         const emulator = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
-        for(const it of entrust) {
-          if(it?.hid === emulator)
-            return jsEmulator.SM2Sign(jsEmulator.SM2Decrypt(1, Buffer.from(it?.cipher, 'base64')), sm3);
+        for (const it of entrust) {
+          if (it?.hid === emulator)
+            return jsEmulator.SM2Sign(
+              jsEmulator.SM2Decrypt(1, Buffer.from(it?.cipher, "base64")),
+              sm3,
+            );
         }
-        throw jsCipher.Annihilus_(`jsEmulator.hid_(${emulator}) !== Any${JSON.stringify(entrust, null, 2)}`);
+        throw jsCipher.Annihilus_(
+          `jsEmulator.hid_(${emulator}) !== Any${JSON.stringify(entrust, null, 2)}`,
+        );
       })();
 
       console.info(`ADMIN.SIGN: ${sign.toString("base64")}`);
 
-      CreateProgram(0x0443493B, sign);  /// 'ADMIN'
+      CreateProgram(0x0443493b, sign); /// 'ADMIN'
 
       const hashId = jsCipher
-          .Digest("SHA256")
-          .Init()
-          .Update(program_binary)
-          .Final()
-          .subarray(0, 6)
-          .toString("hex");
+        .Digest("SHA256")
+        .Init()
+        .Update(program_binary)
+        .Final()
+        .subarray(0, 6)
+        .toString("hex");
 
       program_name = `Execv-${id}-Admin-${hashId}-${new Date().toISOString()}.dongle.program`;
     } else {
-      CreateProgram(0x0543CD0F, null);  /// 'ATOMC'
+      CreateProgram(0x0543cd0f, null); /// 'ATOMC'
 
       const hashId = jsCipher
-          .Digest("SHA256")
-          .Init()
-          .Update(program_binary)
-          .Final()
-          .subarray(0, 6)
-          .toString("hex");
+        .Digest("SHA256")
+        .Init()
+        .Update(program_binary)
+        .Final()
+        .subarray(0, 6)
+        .toString("hex");
 
       program_name = `Execv-${id}-Normal-${hashId}-${new Date().toISOString()}.dongle.program`;
     }
@@ -1814,6 +1831,72 @@ function HandleCheckEnTrust() {
   console.log(`EnTrust(${id}: ${JSON.stringify(entrust, null, 2)})`);
 }
 
+/**
+ * @arg {string} id
+ * @arg {Buffer} InOutBuffer
+ * @arg {Array<{ name: string; offset : number;  size : number; intType: boolean; }>} output
+ */
+async function OutputExecvResult(id, InOutBuffer, output) {
+  output = output || [];
+
+  function ReadIntValue(offset, size) {
+    if (
+      (size !== 1 && size !== 2 && size !== 4) ||
+      offset < 0 ||
+      offset > 1024 ||
+      offset + size > 1024
+    )
+      throw Error(`Invalid intType value ${offset}/${size}`);
+
+    if (size === 1) return InOutBuffer[offset];
+    else if (size === 2) return InOutBuffer.readUInt16LE(offset);
+    else return InOutBuffer.readUInt32LE(offset);
+  }
+
+  function ReadBufferValue(offset, size) {
+    if (
+      offset < 0 ||
+      offset > 1024 ||
+      size < 1 ||
+      size > 1024 ||
+      offset + size > 1024
+    )
+      throw Error(`Invalid Buffer value ${offset}/${size}`);
+    return InOutBuffer.subarray(offset, size + offset).toString("base64");
+  }
+
+  const result = {};
+  for (const out of output) {
+    result[out.name] = out.intType
+      ? ReadIntValue(out.offset, out.size)
+      : ReadBufferValue(out.offset, out.size);
+  }
+
+  const json = {
+    buffer: InOutBuffer.toString("base64"),
+    result,
+  };
+
+  if (output.length) {
+    console.log(`Execv(${id}).Output: ${JSON.stringify(result, null, 2)}`);
+  }
+
+  const blob = new Blob([Buffer.from(JSON.stringify(json, null, 2))], {
+    type: "application/json",
+  });
+
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  const name = `ExecvOutput-${id}-${new Date().toISOString()}.json`;
+  a.href = url;
+  a.download = name;
+  a.innerText = name;
+
+  const li = document.createElement("li");
+  li.appendChild(a); /**! */
+  document.getElementById("m").appendChild(li);
+}
+
 function HandleLoadScript() {
   const script = document.getElementById("scripts").value;
   if (jsScriptBundled.has(script))
@@ -1821,6 +1904,107 @@ function HandleLoadScript() {
       jsScriptBundled.get(script);
 }
 
-function HandleScriptLimitSign() {}
+async function LimitScriptSignHelper(id, program) {
+  const code = Buffer.from(program.code, "base64");
+  let sum = 0;
+  for (let i = 200 - 64; i < 200; ++i) {
+    sum += code[i];
+  }
+  if (0 !== sum) {
+    throw jsCipher.Annihilus_(`ScriptLimitExecv: code.size > ${200 - 64}!`);
+  }
 
-function HandleScriptLimitExport() {}
+  /**
+   * LimitScript 使用SM2ECIES.Key(4) 对 ScriptText 除了 nonce/mac 之外的数据做签名
+   * 1) RockeyARM验证Text签名后将会提权到 kAdministrator 权限执行脚本, 而它的参数是可以任意修改的, 不要对不可信的代码做签名 ...
+   * 2) 签名程序本身需要以 kAdministrator 权限执行, ***不要*** 对本签名程序做签名操作, 否则将导致任意代码都能以管理员权限执行 ...
+   * 3) 对固定用途的uKey应该使用本方式提权执行代码, 并在完成所有必须的Script签名后, 对uKey做锁定操作 ...
+   *
+   * Input ScriptText[256,256+144] => SignedScriptText[0, 208]
+   * Request.ScriptText: || SignedScriptText[208] | nonce[16] | mac[16] ||
+   */
+  const signCodeScript = `
+    public 208;
+    Memcpy(0, 256, 144);
+    DigestSM3(0, 144, 144);
+    SM2Sign(4, 144, 144);
+    Memset(208, 0, 1024-208);`;
+
+  const signScriptProgram = await jsScriptParser(signCodeScript);
+
+  const dashboard = prev_dashboard_value.get(id);
+  if (!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
+  const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
+  const InOutBuffer = Buffer.alloc(1024);
+  InOutBuffer.writeUInt32LE(0x0543cd0f, 0); /// Normal Script ...
+  InOutBuffer[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
+  InOutBuffer[5] = 1; /// rLANG_DONGLE_VERSION_MINOR
+  InOutBuffer.writeUInt16LE(signScriptProgram.size_public, 6);
+  Buffer.from(signScriptProgram.code, "base64").copy(InOutBuffer, 8);
+  jsCipher.RandBytes(16).copy(InOutBuffer, 208);
+
+  jsCipher.RandBytes(1024 - 256).copy(InOutBuffer, 256);
+  InOutBuffer.writeUInt32LE(0x30934953, 256); /// Limit Script ...
+  InOutBuffer[260] = 1; /// rLANG_DONGLE_VERSION_MAJOR
+  InOutBuffer[261] = 1; /// rLANG_DONGLE_VERSION_MINOR
+  InOutBuffer.writeUInt16LE(program.size_public, 262);
+  code.subarray(0, 200 - 64).copy(InOutBuffer, 264);
+
+  const cipher = jsEmulator.SM3(InOutBuffer.subarray(0, 240 - 16));
+  const aead = jsCipher.ChaChaPoly(cipher);
+  const encrypt_data = aead.Seal(
+    InOutBuffer.subarray(256),
+    InOutBuffer.subarray(240 - 32, 240 - 32 + 12),
+  );
+  encrypt_data.subarray(1024 - 256).copy(InOutBuffer, 240 - 16);
+  encrypt_data.subarray(0, 1024 - 256).copy(InOutBuffer, 256);
+  cipher.fill(0);
+  aead.Clear();
+
+  const RSA_pubkey = Buffer.from(master.RSA2048, "base64");
+  console.assert(RSA_pubkey.length === 260);
+
+  const encrypt_header = jsEmulator.RSAPublic(
+    RSA_pubkey.readUInt32LE(0),
+    RSA_pubkey.subarray(4),
+    InOutBuffer.subarray(0, 240),
+    true,
+  );
+  console.assert(encrypt_header.length === 256);
+  encrypt_header.copy(InOutBuffer);
+
+  await jsDongleExecv(id, InOutBuffer, true);
+  program.signedCode = InOutBuffer.subarray(0, 208).toString("base64");
+  InOutBuffer.fill(0);
+  return program;
+}
+
+async function HandleScriptLimitSign() {}
+
+async function HandleScriptLimitExecv() {
+  const id = document.getElementById("keys").value;
+  if (!id) throw Error(`HandleCheckMaster: Select RockeyARM device!`);
+
+  if (id.slice(0, 2) !== "ff")
+    throw jsCipher.Annihilus_(`ScriptLimitExecv: jsEmulator Only!`);
+
+  const script = document.getElementById("dongle_script").value;
+  const signedScript = await LimitScriptSignHelper(
+    id,
+    await jsScriptParser(script),
+  );
+
+  await ScriptExportHelper(
+    signedScript,
+    id,
+    false,
+    false,
+    async (InOutBuffer) => {
+      await jsDongleExecv(id, InOutBuffer, false);
+      await OutputExecvResult(id, InOutBuffer, signedScript.output);
+    },
+    true,
+  );
+}
+
+async function HandleScriptLimitExport() {}

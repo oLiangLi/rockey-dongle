@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 
 (async function () {
   for (const file of process.argv.slice(2)) {
-    console.info(`process file ...`);
+    console.info(`process file ... ${file}`);
     const content = fs.readFileSync(file).toString();
 
     try {
