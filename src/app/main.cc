@@ -275,6 +275,20 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, 
       if (len != write(stdout_, line, len))
         result = -EIO;
     }
+  } else if (0 == strcmp(type, "--reset")) {
+    ///
+    /// 内部使用, 一些之前的uKey没有正常的重置管理员密码为缺省值, 不要在后台中把接口暴露出去 ...
+    ///
+    uint8_t sha256[32], check[32];
+    result = ReadLine(sha256, 32, EncodeFormat::kBase64, "Input SHA256(HID):");
+    Sha256Ctx().Init().Update(hid, strlen(hid)).Final(check);
+    if (0 != memcmp(sha256, check, 32)) {
+      rlLOGE(TAG, "Verify SHA256(HID) Failed!");
+      result = -EFAULT;
+    } else {
+      result = dongle->FactoryReset();
+      rlLOGI(TAG, "result = dongle->FactoryReset return %d", result);
+    }
   } else if (0 == strcmp(type, "factory")) {
     constexpr int kSizeUid = 4;
     constexpr int kSizeSeed = 64;
