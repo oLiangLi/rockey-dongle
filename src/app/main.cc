@@ -167,7 +167,7 @@ static int RockeyARM_VerifyExecvHelper(uint16_t opCode, uint16_t verify, RockeyA
 
   if (42 == verify || 0 == verify || 1 == verify) {
     size_t size = sizeof(ScriptText);
-    memcpy(InOutBuffer, &V.script_text_, size);
+    memmove(InOutBuffer, &V.script_text_, size);
     result = dongle->RSAPublic(2048, *(uint32_t*)public_.dongle_rsa2048_pubkey_, &public_.dongle_rsa2048_pubkey_[4],
                                InOutBuffer, &size, true);
     if (0 != result || size != 256)

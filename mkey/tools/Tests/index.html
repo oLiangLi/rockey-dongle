@@ -1,0 +1,106 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <script src="js/jsWorld.js"></script>
+    <script src="js/jsCrypto.js"></script>
+    <script src="js/jsScriptBundled.js"></script>
+    <script src="js/jsLibrary.js"></script>
+    <title>RockeyARM Tests</title>
+  </head>
+  <body>
+    <label for="url">API:</label
+    ><input
+      type="text"
+      id="url"
+      value="http://localhost:3000/"
+      maxlength="200"
+      style="width: 500px"
+    />
+    <label for="PSK">BASE64(PSK):</label
+    ><input type="password" id="PSK" maxlength="128" value="1234567812345678" />
+    <br />
+    <label for="keys">RockeyARM:</label
+    ><select id="keys" style="width: 700px"></select>
+
+    <p>
+      列出所有的RockeyARM设备:<button id="list">List-All</button
+      ><button id="ExportAllDashboard">Export-All</button>
+      <button id="ImportAllDashboard">Import-All</button>
+      <button onclick="HandleCheckMaster()">Check-Master</button>
+      <button onclick="HandleCheckEnTrust()">Check-EnTrust</button>
+    </p>
+    <p>
+      RockeyARM 模拟器操作:
+      <label>
+        SECRET:
+        <input
+          id="EmuSecret"
+          type="password"
+          maxlength="64"
+          value="1234567812345678"
+        />
+      </label>
+      <label
+        >LOOP:
+        <input id="EmuLoop" type="number" value="256" maxlength="6" /> </label
+      ><br />
+      <button id="EmuCreate">EmuCreate</button>
+      <button id="EmuExport">EmuExport</button>
+      <input type="file" id="emuFile" />
+      <button id="EmuImport">EmuImport</button>
+      <button id="EmuTests">EmuTests</button>
+    </p>
+
+    <p>
+      初始化RockeyARM设备:
+      <label for="uid">UID:</label
+      ><input type="text" id="uid" maxlength="10" value="0x10086" style="width: 100px" />
+      <label for="secret">SECRET:</label><input type="file" id="secret" style="width: 200px" />
+      <label for="main">MAIN:</label><input type="file" id="main" style="width: 200px" />
+      <button id="factory">factory</button>
+    </p>
+
+    <p>
+      将选定的RockeyARM设备的管理员PIN码修改为随机值,
+      这将禁止任何人获取管理员权限(包括你自己): <button id="lock">lock</button>
+    </p>
+
+    <p>
+      <label for="admin">Admin:</label><input type="checkbox" id="admin" />
+      <label for="bootstrap">Bootstrap:</label
+      ><input type="checkbox" id="bootstrap" /> <label for="program"></label
+      ><input type="file" id="program" />
+      <button id="dashboard">dashboard</button
+      ><button id="execv">FileExecv</button>
+      <button id="ScriptExecv">ScriptExecv</button
+      ><button id="ScriptExport">ScriptExport</button
+      ><button id="ScriptParse">ScriptParse</button>
+    </p>
+
+    <p>
+      <label for="check_LimitScriptExecv">Limit:</label
+      ><input type="checkbox" id="check_LimitScriptExecv" checked disabled />
+      <label for="scripts">Script:</label><select id="scripts" style="width: 100px"></select>
+      <button onclick="HandleLoadScript()">LoadScript</button>
+      <label for="limitFile"></label><input type="file" id="limitFile" style="width: 200px" />
+      <button onclick="HandleScriptLimitSign()">ScriptLimitSign</button>
+      <button id="limitExecv" onclick="HandleScriptLimitExecv()">ScriptLimitExecv</button>
+      <button onclick="HandleScriptLimitExport()">ScriptLimitExport</button>
+    </p>
+
+    <p>
+      <label for="dongle_script"></label
+      ><textarea id="dongle_script" rows="20" cols="120"></textarea>
+    </p>
+
+    <div id="infoScriptExport" style="display: none">HelloWorld</div>
+
+    <p>
+      <button onclick="document.getElementById('m').innerHTML = ''">
+        Clear
+      </button>
+    </p>
+    <ol id="m" type="1"></ol>
+  </body>
+</html>
