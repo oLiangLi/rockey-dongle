@@ -9,8 +9,6 @@
 
 export PKEY=9F7E6E5B34545A7D1031A79BC489989197876293
 
-rm -rfv $MTEMP/*
-
 ```
 
 ## 生成64字节的种子码 sec.bin
@@ -35,7 +33,7 @@ node -e 'console.log(fs.readFileSync(".bin/arm-RockeyARM-native-release/sec.bin"
 ```
 
 ## 初始化 K0, K1, K2, K3, 初始后删除sec.bin文件, 运行 Initialize.dongle 脚本, 生成基本参数记录
-- 每次写入uKey前执行下列命令, 燃火通过网页 factory 指令完成系统初始化 ...
+- 每次写入uKey前执行下列命令, 然后通过网页 factory 指令完成系统初始化 ...
 ``` shell
 
 ##
@@ -359,7 +357,7 @@ make dongle -j8
 }
 ```
 
-- K3: 00000000-e886100b610b22a2, X25519_pubkey
+- K3: 00000000-e886100b610b22a2
 ```json
 {
   "rLANG_Ed25519_Pubkey": "0p4TKclxlQUSfT7+9pUCUmVxuywMoDd6Rc26z1vBXc0=",
@@ -369,4 +367,3 @@ make dongle -j8
 ```
 
 ## 验证 jsEmulator 是否能够代理执行uKey相关的Admin脚本, Admin模式执行HelloWorld.dongle, 测试通过后锁定 K0/K1/K2/K3
-- 
