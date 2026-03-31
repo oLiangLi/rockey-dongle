@@ -1955,6 +1955,44 @@ async function LimitScriptSignHelper(id, program) {
   if (!dashboard) throw jsCipher.Annihilus_(`Invalid dashboard value!`);
   const master = jsCheckMaster(dashboard.subarray(7 * 1024, 8 * 1024));
 
+  try {
+    const entrust = jsCheckEnTrust(
+      master,
+      dashboard.subarray(6 * 1024, 7 * 1024),
+    );
+    const emulator = DongleDisplayValue(jsEmulator.GetDongleInfo()).id;
+    for (const it of entrust) {
+      if (it?.hid === emulator) {
+        const header = Buffer.alloc(144);
+        code.copy(header, 8);
+
+        header.writeUInt32LE(0x30934953, 0); /// Limit Script ...
+        header[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
+        header[5] = 1; /// rLANG_DONGLE_VERSION_MINOR
+        header.writeUInt16LE(program.size_public, 6);
+
+        const sm3 = jsEmulator.SM3(header);
+        const sign = jsEmulator.SM2Sign(
+          jsEmulator.SM2Decrypt(1, Buffer.from(it?.cipher, "base64")),
+          sm3,
+        );
+        const verify = jsEmulator.SM2Verify(
+          Buffer.from(master.SM2ECIES, "base64"),
+          sm3,
+          sign,
+        );
+        console.assert(verify);
+
+        if (verify) {
+          program.signedCode = Buffer.concat([header, sign]).toString("base64");
+          return program;
+        }
+      }
+    }
+  } catch (err) {
+    console.error(err);
+  }
+
   const InOutBuffer = Buffer.alloc(1024);
   InOutBuffer.writeUInt32LE(0x0543cd0f, 0); /// Normal Script ...
   InOutBuffer[4] = 1; /// rLANG_DONGLE_VERSION_MAJOR
