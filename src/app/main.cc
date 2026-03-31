@@ -91,6 +91,12 @@ static int RockeyARM_VerifyExecvHelper(uint16_t opCode, uint16_t verify, RockeyA
   int result = 0;
   using ScriptText = script::ScriptText;
   using WorldCreateHeader = script::WorldCreateHeader;
+  using WorldPublic = script::WorldPublic;
+
+  WorldPublic public_;
+  result = dongle->ReadDataFile(Dongle::kFactoryDataFileId, WorldPublic::kOffsetDataFile, &public_, sizeof(public_));
+  if (0 != result)
+    return result;
 
   union {
     uint8_t InOutBuffer[1024];
@@ -100,13 +106,27 @@ static int RockeyARM_VerifyExecvHelper(uint16_t opCode, uint16_t verify, RockeyA
     } V;
   };
 
+  const char* prefix = nullptr;
   RAND_bytes(InOutBuffer, sizeof(InOutBuffer));
   V.header_.zero_ = 0;
   V.header_.world_magic_ = rLANG_WORLD_MAGIC;
   V.header_.create_magic_ = WorldCreateHeader::kMagicCreate;
   V.header_.target_magic_ = WorldCreateHeader::kMagicWorld;
 
-  V.script_text_.file_magic_ = ScriptText::kAdminFileMagic;
+  if (verify == 0) {
+    prefix = "TEXT.SIGN";
+    V.script_text_.file_magic_ = ScriptText::kLimitFileMagic;
+  } else if (verify == 1) {
+    prefix = "NORMAL   ";
+    V.script_text_.file_magic_ = rLANG_ATOMC_WORLD_MAGIC;
+  } else {
+    if (verify == 42)
+      prefix = "DATA.SIGN";
+    else
+      prefix = "BOOTSTRAP";
+    V.script_text_.file_magic_ = ScriptText::kAdminFileMagic;
+  }
+
   V.script_text_.ver_major_ = rLANG_DONGLE_VERSION_MAJOR;
   V.script_text_.ver_minor_ = rLANG_DONGLE_VERSION_MINOR;
   V.script_text_.size_public_ = 0;
@@ -117,37 +137,58 @@ static int RockeyARM_VerifyExecvHelper(uint16_t opCode, uint16_t verify, RockeyA
   uint8_t sm3[32];
   rlCryptoChaChaPolyCtx ctx;
 
-  dongle->SM3(&V.script_text_, sizeof(ScriptText) - 16, sm3);
+  int sizeData = verify != 42 ? 1024 - 256 : 1024 - 256 - 64;
+  if (verify == 42) {
+    result = dongle->SM3(&InOutBuffer[256], sizeData, sm3);
+    if (0 != result)
+      return result;
+    result = dongle->SM2Sign(WorldPublic::kFileSM2ECIES, sm3, &InOutBuffer[1024 - 64], &InOutBuffer[1024 - 32]);
+    if (0 != result)
+      return result;
+  } else if (verify == 0) {
+    result = dongle->SM3(&V.script_text_, sizeof(ScriptText) - 64 - 32, sm3);
+    if (0 != result)
+      return result;
+    result = dongle->SM2Sign(WorldPublic::kFileSM2ECIES, sm3, (uint8_t*)&V.script_text_ + sizeof(ScriptText) - 64 - 32,
+                             (uint8_t*)&V.script_text_ + sizeof(ScriptText) - 64);
+    if (0 != result)
+      return result;
+  }
+
+  result = dongle->SM3(&V.script_text_, sizeof(ScriptText) - 16, sm3);
+  if (0 != result)
+    return result;
+
   rlCryptoChaChaPolyInit(&ctx);
   rlCryptoChaChaPolySetKey(&ctx, sm3);
   rlCryptoChaChaPolyStarts(&ctx, &V.script_text_.nonce_[0], 1);
-  rlCryptoChaChaPolyUpdate(&ctx, &InOutBuffer[256], &InOutBuffer[256], 1024 - 256);
+  rlCryptoChaChaPolyUpdate(&ctx, &InOutBuffer[256], &InOutBuffer[256], sizeData);
   rlCryptoChaChaPolyFinish(&ctx, V.script_text_.check_);
 
-  /**
-   *!
-   */
-#if 0
-  char s_CodeBuffer[2048];
-  rl_BASE64_Write(s_CodeBuffer, InOutBuffer, 1024);
-  rlLOGI(TAG, "Execv.Bootstrap.code: %s", s_CodeBuffer);
-#endif
+  if (42 == verify || 0 == verify || 1 == verify) {
+    size_t size = sizeof(ScriptText);
+    memcpy(InOutBuffer, &V.script_text_, size);
+    result = dongle->RSAPublic(2048, *(uint32_t*)public_.dongle_rsa2048_pubkey_, &public_.dongle_rsa2048_pubkey_[4],
+                               InOutBuffer, &size, true);
+    if (0 != result || size != 256)
+      return -EFAULT;
+  }
 
   int execute_result = 0;
   long long ts = rLANG_GetTickCount();
   result = dongle->ExecuteExeFile(InOutBuffer, 1024, &execute_result);
   ts = rLANG_GetTickCount() - ts;
 
-  if (0 == result && 0 == verify && 0 != execute_result) {
-    rlLOGI(TAG, "ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, OK", opCode, verify, result,
-           execute_result);
+  if (0 == result && 0 == verify && 0 == execute_result) {
+    rlLOGI(TAG, "%s ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, OK", prefix, opCode,
+           verify, result, execute_result);
   } else if (0 == result && (execute_result & 0xFFFF) == verify) {
-    rlLOGI(TAG, "ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, OK", opCode, verify, result,
-           execute_result);
+    rlLOGI(TAG, "%s ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, OK", prefix, opCode,
+           verify, result, execute_result);
     execute_result = verify;
   } else {
-    rlLOGE(TAG, "ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, Failed!", opCode, verify,
-           result, execute_result);
+    rlLOGE(TAG, "%s ExecuteExeFile opCode: %04X, verify: %04X, result: %d, exec.result: %08X, Failed!", prefix, opCode,
+           verify, result, execute_result);
   }
 
   if (0 == result && execute_result != verify)
@@ -339,14 +380,15 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, 
 
     if (0 == result) {
       rlLOGI(TAG, "Check HASH Value OK!!");
-
-      uint16_t verify;
       result = RockeyARM_VerifyExecvHelper((uint16_t)script::OpCode::kLoadUI | 42, 42, dongle);
-      RAND_bytes((uint8_t*)&verify, sizeof(verify));
 
-      for (int loop = (verify & 7) + 4; 0 == result && loop > 0; --loop) {
+      if (0 == result)
+        result = RockeyARM_VerifyExecvHelper((uint16_t)script::OpCode::kLoadUI | 1, 1, dongle);
+
+      for (int loop = 0; 0 == result && loop < 3; ++loop) {
+        uint32_t verify = rand();
         RAND_bytes((uint8_t*)&verify, sizeof(verify));
-        verify &= 0xfff;
+        verify = (verify & 0xfff) | 0x400;
         result = RockeyARM_VerifyExecvHelper((uint16_t)script::OpCode::kLoadUI | verify, verify, dongle);
       }
 
