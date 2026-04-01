@@ -1,0 +1,101 @@
+{
+  "code": "AAAAAB9OwMhTQSENE4z0XDtJQwQBAQAEcAYA0ADQANJAHMCTAJzwkwSc+JMQnPjRAw3Y0SDQARUD0OyngJOEp0ElAtDtp4iTjKdhJQHQ7qfMk9CngSUE0O+nxJPIp4ElAdAU0IIVAtBU0GIVA9CU0EIVD/D/vwHwALwA0EDSIiVzBgDScg4A0ADQANRAHA/w/78B8AC8ANAA1CMlDwQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAG3be2RBms+6/JWE5egRyYBxPqbwjhH1aS0M5K5JBu52aimIB3bSDNcNDuv2vMxhAR2BaxwDGXm793jU55Ya/i8f+UFlVcnQWMQFHUGBKndBr4hXQ3zOH73Fywy+qrivD4wpvv8PuxeKPczQkBtW8TvEv1M1L6OIRdlR9TXWRzpwCHx7KWhTmQOuQteM/gr09avBJ+sbeU1n+d2RqmY4We5Azrs4Go+Tt4oOf8PKSD3Z3xEf9iYbyq64DrLnYQmbYoKWgux6J//GHn582fnU2G11qcOiPgQUz0G1hnAYCS4PeNAagGjW8Vw37d6qtxHUoU8jl9x30kMuxZTVKgJrn+m+6f0qbxjU7UT2YqtHLF7lKSUEVs9dFgZ+VxHvDbZ+jFbzXFzc3r377/kjIM31KLbfvR2YNZeQMUUVHRJBpbFIuwGSZyaD0+2Y4MuqvT5zHMwVy+iz2pVVGuH3UBeVkmBmor+C9frYKk0H+8xKoqS5m+SWLr20D3MnSrtDv1bZ2f4e1JYTFve9hKw4V0cr/UnbWZNuzbZC4BCt2lwGljMG4rwAKLBNP3pT2+I/mu/Xsodhl+R/vgHp1MYUQLAQL1iHetZx2xX+v+9RKTPIx0xgn0FSqMszUwApeWo5NmC30RMUNGjzFhwDaz7kaQYoCalrgCc4tO4To2P3bJvH5IxI067dt0+GTlRU/BGp9SWtM9EDzO4DOCiyDii22IIduErraY3lT8gZvBxBAa8hSoa8HoqdFVemtjoUhSdM37GR2eR04YEsc8xHGti+h9+t+UMNCOlFg4MixaNpUj5rPslLW4b8s0OCb5hAidq1UkL6a1iN64YgF9oKfa3h+nzWT9RufSxE5YfMqzW3CTPDrF578NxLHJ72btEPvBBI5ki4H4xb10ScUUzIyqb2cX4dp1UX4/pOxqmuzZa/0af+Bf6mmW9jfHXIq24wRcymzLNHecpjsOMSCiNkQHGMiG9t4eu0Q6kxEtFDz23k5oAoL0miIwf311Vhnj0W98IpwEscl0BnT7yjoactTf9hg6bwb9ETAHb4qRAlzUzO2ZrSPgNQ==",
+  "output": [
+    {
+      "name": "rLANG_WorldMagic",
+      "offset": 0,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Category",
+      "offset": 4,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Version",
+      "offset": 16,
+      "size": 2,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Size",
+      "offset": 18,
+      "size": 2,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Header",
+      "offset": 0,
+      "size": 20,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECDSA_Pubkey",
+      "offset": 20,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_PRIME256V1_Pubkey",
+      "offset": 84,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_RSA2048_Pubkey",
+      "offset": 148,
+      "size": 260,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECIES_Pubkey",
+      "offset": 408,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_DONGLE_NONCE_1",
+      "offset": 472,
+      "size": 32,
+      "intType": false
+    },
+    {
+      "name": "rLANG_DONGLE_INFO",
+      "offset": 504,
+      "size": 40,
+      "intType": false
+    },
+    {
+      "name": "rLANG_DONGLE_NONCE_2",
+      "offset": 544,
+      "size": 32,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECIES_Signature",
+      "offset": 576,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_RSA2048_Signature",
+      "offset": 640,
+      "size": 256,
+      "intType": false
+    },
+    {
+      "name": "rLANG_PRIME256V1_Signature",
+      "offset": 896,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECDSA_Signature",
+      "offset": 960,
+      "size": 64,
+      "intType": false
+    }
+  ]
+}

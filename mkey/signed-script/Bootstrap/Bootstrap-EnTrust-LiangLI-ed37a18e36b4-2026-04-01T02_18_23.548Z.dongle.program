@@ -1,0 +1,107 @@
+{
+  "code": "AAAAAB9OwMhTQSENE4z0XDtJQwQBAQAElNAI0SDQQRxzBlTQFNByFgDQ4J+00PCfKNH0n+CTBYUPg/CT9JNQ0EEc4JMBsOCf8JNwsPCf9JNQsPSf8IIA0OCftNDwn+CTBYUMg/CTFNAg0HUe4JMBsOCf8JNwsPCf84IP8P+/AfAAvADQVNAjJVOA1+LTswSc5NIc0AEVANMA0IDQQBwA0IDTgNOhHQTQgNOA04QdANDA08DToR0B0MDTwNOEHQ/w/78B8AC4ANAA1CIlDwQAAAAAAAAAAAAAAAAAAAAAAACmey0qDl2k8t6l1VrNaIUXlC/4OPlR4UeGBxuuwp0dH8GQcFJxVG2ebT103slbykIZ43rkrTBgR7mIIqUEwJ9RZx021xcZ02I2fFLFI0XcG7H6ODNAiMG4TWEXpSLGoPcR2F3XGHLjG6kXYr7NJPyiQb9671skf8451LDsJpkYFAc98Ld1VPw2yuQasm9GS5xwsMDDi7ImdBAUK3oJjpXTlAgaTv0jqvEfX7FQkMzIu5QfenF/Ypq/7w0qJFL526icgvRtsxGEeeKZw9zVTsQ+QQkSME6kg14cIZQE5VAi1UO6nu+ljr56oavdedcq0nsdy9h1Jco8Dxi6DDOSsgOQj0bWFRw6sc1FWBcuaJL6c0XOUek6tIFauAcYSY9DDpHTyuQ4bveEGLvxv5pbz2yIH/v2nt1KGqnnAr0ME2duH+LGLFeMrYywI3ki8PU6myCauGigKWootyojIvXQmtqiwCxu1wlqOad5gWUmgeuj9FqnCxEIhBawqUOBcCyDTQQkmwboJgeAGiOc3216Kc695DTJ8v0RKK+jy8vnWR6rh6Jcnpt2gNeWn7h569nT84hJHA1zEqDQ6zJtEvgxuLmgvX+ykoVZzW6U71ttPOQHtoScGnWz2VkTq+7p2pFaM8Qrb2pif+70m7vg4j16WA+g93fcojp/S92HqUDwMgxQqpcORHg2O5zAwG4IwyIv1w+j7rnJgrmqntGJtOdJSMwt91ETcEwj5ViXgBhcx8DFCG1/EDmZbhW4TnQyuz4BWumS/3jlalrNi4jyzPWc/uuBBuDssA71L9+74irUVkfLcUK+Oh/RIQv4umEQ4H/TU+mbm/U0xyij4CYqp5xsQtJT45GJdZUlSwZZCu+tygwieENKG0QJ1yhveBpz0tJRiTUC6vcPaB0Z/3KfD2jsq3CBuROEEOBXLTc5z/9CXlV8lSoQR7zseAXyjZl2KRrPGeUHEA/mSmsQ97ELNeBhq7XZJseajLRtLRbxrfcj4jsNMUrfFg5Z6bVXK/H5W26de7dDJtVWCXDKXCxEE6eqx6n9wk+p78f+nYp8w2kJggkTag==",
+  "output": [
+    {
+      "name": "rLANG_WorldMagic",
+      "offset": 0,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Category",
+      "offset": 4,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Version",
+      "offset": 16,
+      "size": 2,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Size",
+      "offset": 18,
+      "size": 2,
+      "intType": true
+    },
+    {
+      "name": "rLANG_Header",
+      "offset": 0,
+      "size": 20,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECDSA_Pubkey",
+      "offset": 20,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECIES_Pubkey",
+      "offset": 84,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_NONCE_1",
+      "offset": 148,
+      "size": 32,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_0",
+      "offset": 180,
+      "size": 112,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_1",
+      "offset": 292,
+      "size": 112,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_2",
+      "offset": 404,
+      "size": 112,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_3",
+      "offset": 516,
+      "size": 112,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_4",
+      "offset": 628,
+      "size": 112,
+      "intType": false
+    },
+    {
+      "name": "rLANG_ENTRUST_NONCE_2",
+      "offset": 740,
+      "size": 28,
+      "intType": false
+    },
+    {
+      "name": "rLANG_RESERVED_Zero",
+      "offset": 768,
+      "size": 128,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECIES_Signature",
+      "offset": 896,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SM2ECDSA_Signature",
+      "offset": 960,
+      "size": 64,
+      "intType": false
+    }
+  ]
+}

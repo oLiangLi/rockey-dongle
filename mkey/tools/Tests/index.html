@@ -55,9 +55,17 @@
     <p>
       初始化RockeyARM设备:
       <label for="uid">UID:</label
-      ><input type="text" id="uid" maxlength="10" value="0x10086" style="width: 100px" />
-      <label for="secret">SECRET:</label><input type="file" id="secret" style="width: 200px" />
-      <label for="main">MAIN:</label><input type="file" id="main" style="width: 200px" />
+      ><input
+        type="text"
+        id="uid"
+        maxlength="10"
+        value="0x10086"
+        style="width: 100px"
+      />
+      <label for="secret">SECRET:</label
+      ><input type="file" id="secret" style="width: 200px" />
+      <label for="main">MAIN:</label
+      ><input type="file" id="main" style="width: 200px" />
       <button id="factory">factory</button>
     </p>
 
@@ -70,7 +78,7 @@
       <label for="admin">Admin:</label><input type="checkbox" id="admin" />
       <label for="bootstrap">Bootstrap:</label
       ><input type="checkbox" id="bootstrap" /> <label for="program"></label
-      ><input type="file" id="program" />
+      ><input type="file" id="program" style="width: 200px" />
       <button id="dashboard">dashboard</button
       ><button id="execv">FileExecv</button>
       <button id="ScriptExecv">ScriptExecv</button
@@ -81,11 +89,15 @@
     <p>
       <label for="check_LimitScriptExecv">Limit:</label
       ><input type="checkbox" id="check_LimitScriptExecv" checked disabled />
-      <label for="scripts">Script:</label><select id="scripts" style="width: 100px"></select>
+      <label for="scripts">Script:</label
+      ><select id="scripts" style="width: 100px"></select>
       <button onclick="HandleLoadScript()">LoadScript</button>
-      <label for="limitFile"></label><input type="file" id="limitFile" style="width: 200px" />
+      <label for="limitFile"></label
+      ><input type="file" id="limitFile" style="width: 200px" />
       <button onclick="HandleScriptLimitSign()">ScriptLimitSign</button>
-      <button id="limitExecv" onclick="HandleScriptLimitExecv()">ScriptLimitExecv</button>
+      <button id="limitExecv" onclick="HandleScriptLimitExecv()">
+        ScriptLimitExecv
+      </button>
       <button onclick="HandleScriptLimitExport()">ScriptLimitExport</button>
     </p>
 
