@@ -1,0 +1,93 @@
+public 228;
+
+const {
+    kOffset_INPUT_CV25519_Pubkey = 256;
+
+    /**
+     *! 我们约定: 1=>Device, 2=>Bootloader, 3=>Firmware, 4=>Application ...
+     */
+    kOffset_INPUT_SESSION_Type = kOffset_INPUT_CV25519_Pubkey + 32;
+    kOffset_INPUT_Category  = kOffset_INPUT_SESSION_Type + 4;
+    kOffset_INPUT_NotBefore = kOffset_INPUT_Category  + 4;
+    kOffset_INPUT_NotAfter  = kOffset_INPUT_NotBefore + 4;
+    kOffset_INPUT_Message   = kOffset_INPUT_NotAfter  + 4;
+
+    kOffset_OUTPUT_RootCA = 0;
+    kOffset_OUTPUT_Message  = kOffset_OUTPUT_RootCA + 32;
+    kOffset_OUTPUT_SESSION_Pubkey = kOffset_OUTPUT_Message + 32;
+    kOffset_OUTPUT_WORLD_Magic = kOffset_OUTPUT_SESSION_Pubkey + 32;
+    kOffset_OUTPUT_SESSION_Type = kOffset_OUTPUT_WORLD_Magic + 4;
+    kOffset_OUTPUT_Category = kOffset_OUTPUT_SESSION_Type + 4;
+    kOffset_OUTPUT_NotBefore = kOffset_OUTPUT_Category + 4;
+    kOffset_OUTPUT_NotAfter = kOffset_OUTPUT_NotBefore + 4;
+    kOffset_OUTPUT_Signature = kOffset_OUTPUT_NotAfter + 4;
+
+    kOffset_Output_mac = kOffset_OUTPUT_Signature + 64;
+    kOffset_Output_CV25519 = kOffset_Output_mac + 16;
+    kOffset_X_SESSION_Prikey = kOffset_Output_CV25519 + 32; /** 260 */
+}
+
+rLANG_INPUT_CV25519_Pubkey @ kOffset_INPUT_CV25519_Pubkey [32];
+rLANG_INPUT_SESSION_Type @ kOffset_INPUT_SESSION_Type [4] = {1, 2, 3, 4, ${CUSTOM}, ${TYPE} };
+rLANG_INPUT_Category @ kOffset_INPUT_Category [4] = { 0xC35880AF /* public for testing only */, 0x864B40AF /* admin */, ${CUSTOM}, ${CATEGORY} };
+rLANG_INPUT_NotBefore @ kOffset_INPUT_NotBefore [4] = { 20544 - 18262 /* 2026-04-01 */, ${CUSTOM}, ${DATE} }; /// 单位为以 2020-01-01 计算的天数 ...
+rLANG_INPUT_NotAfter @ kOffset_INPUT_NotAfter [4] = { 20727 - 18262 /* 2026-10-01 */,  20819 - 18262 /* 2027-01-01 */, ${CUSTOM}, ${DATE} };
+rLANG_INPUT_Message @ kOffset_INPUT_Message [32]; /// UTF-8, message ...
+
+///
+/// 在MCU上使用标准的X509并使用RSA/P256/SM2做验证是不现实的(计算能力和CodeSize都不允许) ...
+/// 我们使用一组简化的Ed25519验证方式. 在具备基本计算能力的设备上, 应该使用X509证书验证    ...
+///
+///  /*    0 */ rLANG_ROOT_CA_Pubkey[32];
+///  /*   32 */ rLANG_INPUT_Message[32];        // -
+///  /*   64 */ rLANG_SESSION_Pubkey[32];       // -
+///  /*   96 */ rLANG_WORLD_MAGIC[i32];         // -
+///  /*  100 */ rLANG_INPUT_SESSION_Type[i32];  // -
+///  /*  104 */ rLANG_INPUT_Category[i32];      // -
+///  /*  108 */ rLANG_INPUT_NotBefore[i32];     // -
+///  /*  112 */ rLANG_INPUT_NotAfter[i32];      // -
+///  /*  116 */ rLANG_DEVICE_CA_Signature[64];
+///  /*  180 */
+///
+
+@ 0  [kOffset_Output_CV25519] : rLANG_OUTPUT_ENCRYPT_CHAIN;  /// CHACHAPOLY_Encrypt(rLANG_SESSION_PRIKEY, CHAIN, SM3(rLANG_OUTPUT_CV25519_Pubkey)[0,12])
+@ kOffset_Output_CV25519 [32] : rLANG_OUTPUT_CV25519_Pubkey;
+
+/**
+ *!
+ */
+if(LoadI32(kOffset_INPUT_SESSION_Type) < 1 || LoadI32(kOffset_INPUT_SESSION_Type) > 10)
+   Exit(42);
+Memcpy(kOffset_OUTPUT_Message, kOffset_INPUT_Message, 32);
+StoreI32(kOffset_OUTPUT_WORLD_Magic, 0xC8C04E1F);
+StoreI32(kOffset_OUTPUT_SESSION_Type, LoadI32(kOffset_INPUT_SESSION_Type));
+StoreI32(kOffset_OUTPUT_Category, LoadI32(kOffset_INPUT_Category));
+StoreI32(kOffset_OUTPUT_NotBefore, LoadI32(kOffset_INPUT_NotBefore));
+StoreI32(kOffset_OUTPUT_NotAfter, LoadI32(kOffset_INPUT_NotAfter));
+
+/**
+ *!
+ */
+ExCurve25519GenerateKeyPair(kOffset_OUTPUT_Signature /*pkey*/, kOffset_Output_CV25519);
+ExCurve25519ComputeSecret(kOffset_OUTPUT_Signature, kOffset_INPUT_CV25519_Pubkey, kOffset_X_SESSION_Prikey);
+ExEd25519ComputePubkey(kOffset_X_SESSION_Prikey, kOffset_OUTPUT_SESSION_Pubkey);
+
+Memset(kOffset_OUTPUT_Signature, 0, 64);
+ComputeSecretBytes(kOffset_OUTPUT_Signature, 42);   /// World-ROOT-Prikey ...
+ExEd25519ComputePubkey(kOffset_OUTPUT_Signature, kOffset_OUTPUT_RootCA);
+
+/**
+ *!
+ */
+ExEd25519Sign(kOffset_OUTPUT_RootCA, kOffset_OUTPUT_Signature, 0, kOffset_OUTPUT_Signature, kOffset_OUTPUT_Signature);
+
+/**
+ *!
+ */
+DigestSM3(kOffset_Output_CV25519, 32, kOffset_X_SESSION_Prikey + 32); // NONCE
+ExChaChaPolySeal(kOffset_X_SESSION_Prikey, kOffset_X_SESSION_Prikey + 32, kOffset_OUTPUT_RootCA, kOffset_Output_mac);
+
+/**
+ *!
+ */
+Memset(228, 0, 1024-228);
