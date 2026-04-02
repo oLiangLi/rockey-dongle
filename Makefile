@@ -7,7 +7,7 @@ X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machin
 
 .PHONY : wasm wasmjs cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-wasmjs clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
-.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar
+.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin
 
 ##
 ## default build Release version ...
@@ -52,6 +52,12 @@ SO_INSTALL_MODE ?= 644
 ##
 wORLD_DEFAULT_DONGLE ?= RockeyARM
 wORLD_DONGLE ?= $(wORLD_DEFAULT_DONGLE)
+
+##
+##
+##
+sec-bin:
+	@ cd $(wORLD_ROOT) && node -e "fs.writeFileSync('.bin/arm-RockeyARM-native-release/sec.bin', crypto.getRandomValues(Buffer.alloc(64)))" && sha256sum ./.bin/arm-RockeyARM-native-release/sec.bin
 
 ##
 ##
