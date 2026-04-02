@@ -38,15 +38,15 @@ rLANG_INPUT_Message @ kOffset_INPUT_Message [32]; /// UTF-8, message ...
 /// 在MCU上使用标准的X509并使用RSA/P256/SM2做验证是不现实的(计算能力和CodeSize都不允许) ...
 /// 我们使用一组简化的Ed25519验证方式. 在具备基本计算能力的设备上, 应该使用X509证书验证    ...
 ///
-///  /*    0 */ rLANG_ROOT_CA_Pubkey[32];
-///  /*   32 */ rLANG_INPUT_Message[32];        // -
-///  /*   64 */ rLANG_SESSION_Pubkey[32];       // -
-///  /*   96 */ rLANG_WORLD_MAGIC[i32];         // -
-///  /*  100 */ rLANG_INPUT_SESSION_Type[i32];  // -
-///  /*  104 */ rLANG_INPUT_Category[i32];      // -
-///  /*  108 */ rLANG_INPUT_NotBefore[i32];     // -
-///  /*  112 */ rLANG_INPUT_NotAfter[i32];      // -
-///  /*  116 */ rLANG_DEVICE_CA_Signature[64];
+///  /*    0 */ rLANG_ROOT_Pubkey[32];
+///  /*   32 */ rLANG_INPUT_Message[32];
+///  /*   64 */ rLANG_SESSION_Pubkey[32];
+///  /*   96 */ rLANG_WORLD_MAGIC[i32];
+///  /*  100 */ rLANG_INPUT_SESSION_Type[i32];
+///  /*  104 */ rLANG_INPUT_Category[i32];
+///  /*  108 */ rLANG_INPUT_NotBefore[i32];
+///  /*  112 */ rLANG_INPUT_NotAfter[i32];
+///  /*  116 */ rLANG_ROOT_Signature[64];
 ///  /*  180 */
 ///
 

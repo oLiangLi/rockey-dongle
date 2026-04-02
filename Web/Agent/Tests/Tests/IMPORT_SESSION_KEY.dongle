@@ -1,3 +1,90 @@
+public 180;
 
+const {
+    kOffset_OUTPUT_RootCA = 0;
+    kOffset_OUTPUT_Message  = kOffset_OUTPUT_RootCA + 32;
+    kOffset_OUTPUT_SESSION_Pubkey = kOffset_OUTPUT_Message + 32;
+    kOffset_OUTPUT_WORLD_Magic = kOffset_OUTPUT_SESSION_Pubkey + 32;
+    kOffset_OUTPUT_SESSION_Type = kOffset_OUTPUT_WORLD_Magic + 4;
+    kOffset_OUTPUT_Category = kOffset_OUTPUT_SESSION_Type + 4;
+    kOffset_OUTPUT_NotBefore = kOffset_OUTPUT_Category + 4;
+    kOffset_OUTPUT_NotAfter = kOffset_OUTPUT_NotBefore + 4;
+    kOffset_OUTPUT_Signature = kOffset_OUTPUT_NotAfter + 4;
+    kOffset_Output_mac = kOffset_OUTPUT_Signature + 64;
+    kSize_ENCRYPT_CHAIN = kOffset_Output_mac + 16;
 
+    kOffset_STORE_CIPHER = kOffset_Output_mac;
+    kSize_STORE_File = kOffset_STORE_CIPHER + 32;
+    kOffset_CIPHER = kSize_STORE_File;
 
+    kOffset_INPUT_ENCRYPT_CHAIN  = 256;
+    kOffset_INPUT_CV25519_Pubkey = 256 + kSize_ENCRYPT_CHAIN;
+    kOffset_SECRET_BYTES = 256;
+
+    i = 1024 - 4;
+    d = i - 4;
+    s = d - 4;
+    file = s - 4;
+}
+
+@ kOffset_OUTPUT_RootCA  [32] : rLANG_ROOT_Pubkey;
+@ kOffset_OUTPUT_Message [32] : rLANG_INPUT_Message;
+@ kOffset_OUTPUT_SESSION_Pubkey [32] : rLANG_SESSION_Pubkey;
+@ kOffset_OUTPUT_WORLD_Magic  i[4] : rLANG_WORLD_MAGIC;
+@ kOffset_OUTPUT_SESSION_Type i[4] : rLANG_INPUT_SESSION_Type;
+@ kOffset_OUTPUT_Category i[4] : rLANG_INPUT_Category;
+@ kOffset_OUTPUT_NotBefore i[4] : rLANG_INPUT_NotBefore;
+@ kOffset_OUTPUT_NotAfter i[4] : rLANG_INPUT_NotAfter;
+@ kOffset_OUTPUT_Signature [64] : rLANG_ROOT_Signature;
+
+rLANG_INPUT_ENCRYPT_CHAIN  @ kOffset_INPUT_ENCRYPT_CHAIN [kSize_ENCRYPT_CHAIN];
+rLANG_INPUT_CV25519_Pubkey @ kOffset_INPUT_CV25519_Pubkey[32];
+
+/**
+ *!
+ */
+Memcpy(0, kOffset_INPUT_ENCRYPT_CHAIN, 256);
+
+/**
+ *! Master.X25519
+ */
+Memset(kOffset_SECRET_BYTES, -1, 64);
+ComputeSecretBytes(kOffset_SECRET_BYTES);
+ExCurve25519ComputeSecret(kOffset_SECRET_BYTES + 32, kOffset_INPUT_CV25519_Pubkey, kOffset_CIPHER);
+DigestSM3(kOffset_SECRET_BYTES, 64, kOffset_SECRET_BYTES);
+
+/**
+ *!
+ */
+DigestSM3(kOffset_INPUT_CV25519_Pubkey, 32, kOffset_INPUT_CV25519_Pubkey); /// NONCE
+if(ExChaChaPolyOpen(kOffset_CIPHER, kOffset_INPUT_CV25519_Pubkey, 0,  kSize_ENCRYPT_CHAIN) != kOffset_STORE_CIPHER)
+    Exit(42);
+if(LoadU8(kOffset_OUTPUT_SESSION_Type) > 10)
+    Exit(14);
+
+/**
+ *! 我们不验证解密后的数据是否是正确的, 错误的数据是无法通过客户验证的(TEXT长度实在是不够了)
+ *! 1) **限制**: 现在的TEXT.SIZE太大了, 只能直接以Admin权限执行脚本了, 已经无法对TEXT做签名了, 不过我们应该没有在中途更换SESSION-KEY的需求 ...
+ *! 2) **警告**: 正常的工作u-key不应该做SM2ECIES私钥托管, 在导入SESSION-KEY以后, 完成对SESSION_SIGNATURE脚本签名后就应该锁定u-key ...
+ */
+Memcpy(kOffset_STORE_CIPHER, kOffset_CIPHER, 32);
+
+StoreI32(i, 0);
+StoreI32(d, kOffset_STORE_CIPHER);
+StoreI32(s, kOffset_SECRET_BYTES);
+while(LoadI32(i) < 32) {
+    StoreI32(d, LoadI32(d) ^ LoadI32(s));
+    StoreI32(i, LoadI32(i) + 4);
+    StoreI32(d, LoadI32(d) + 4);
+    StoreI32(s, LoadI32(s) + 4);
+}
+
+StoreI32(file, 0x100 + LoadU8(kOffset_OUTPUT_SESSION_Type));
+DeleteDataFile(LoadI32(file));
+CreateDataFile(LoadI32(file), kSize_STORE_File, 2, 2);
+WriteDataFile(LoadI32(file), 0, 0, kSize_STORE_File);
+
+/**
+ *!
+ */
+Memset(180, 0, 1024 - 180);

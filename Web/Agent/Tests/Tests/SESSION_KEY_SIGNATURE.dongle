@@ -1,0 +1,82 @@
+public 244;
+
+const {
+    kOffset_OUTPUT_RootCA = 0;
+    kOffset_OUTPUT_Message  = kOffset_OUTPUT_RootCA + 32;
+    kOffset_OUTPUT_SESSION_Pubkey = kOffset_OUTPUT_Message + 32;
+    kOffset_OUTPUT_WORLD_Magic = kOffset_OUTPUT_SESSION_Pubkey + 32;
+    kOffset_OUTPUT_SESSION_Type = kOffset_OUTPUT_WORLD_Magic + 4;
+    kOffset_OUTPUT_Category = kOffset_OUTPUT_SESSION_Type + 4;
+    kOffset_OUTPUT_NotBefore = kOffset_OUTPUT_Category + 4;
+    kOffset_OUTPUT_NotAfter = kOffset_OUTPUT_NotBefore + 4;
+    kOffset_OUTPUT_Signature = kOffset_OUTPUT_NotAfter + 4;
+    kOffset_CIPHER = kOffset_OUTPUT_Signature + 64;
+    kSizeFile = kOffset_CIPHER + 32;
+
+    kOffset_SESSION_Signature = kOffset_CIPHER;
+
+    kOffset_INPUT_Buffer = 256;
+    kOffset_INPUT_Type = kOffset_INPUT_Buffer + 64;
+
+    kOffset_Ed25519_Pubkey = 64;
+    kOffset_SECRET_BYTES = 512;
+
+    i = 1024 - 4;
+    d = i - 4;
+    s = d - 4;
+}
+
+rLANG_INPUT_Message @ kOffset_INPUT_Buffer [64];
+rLANG_INPUT_Type @ kOffset_INPUT_Type [4] = {1, 2, 3, 4, ${CUSTOM}, ${TYPE} };
+
+@ kOffset_OUTPUT_RootCA  [32] : rLANG_ROOT_Pubkey;
+@ kOffset_OUTPUT_Message [32] : rLANG_INPUT_Message;
+@ kOffset_OUTPUT_SESSION_Pubkey [32] : rLANG_SESSION_Pubkey;
+@ kOffset_OUTPUT_WORLD_Magic  i[4] : rLANG_WORLD_MAGIC;
+@ kOffset_OUTPUT_SESSION_Type i[4] : rLANG_INPUT_SESSION_Type;
+@ kOffset_OUTPUT_Category i[4] : rLANG_INPUT_Category;
+@ kOffset_OUTPUT_NotBefore i[4] : rLANG_INPUT_NotBefore;
+@ kOffset_OUTPUT_NotAfter i[4] : rLANG_INPUT_NotAfter;
+@ kOffset_OUTPUT_Signature [64] : rLANG_ROOT_Signature;
+@ kOffset_SESSION_Signature [64] : rLANG_SESSION_Signature;
+
+/**
+ *!
+ */
+Memset(0, 0, 256);
+if(LoadU8(kOffset_INPUT_Type) > 10)
+    Exit(42);
+if(ReadDataFile(0x100 +  LoadU8(kOffset_INPUT_Type), 0, 0, kSizeFile))
+    Exit(14);
+
+/**
+ *!
+ */
+Memset(kOffset_SECRET_BYTES, -1, 64);
+ComputeSecretBytes(kOffset_SECRET_BYTES);
+DigestSM3(kOffset_SECRET_BYTES, 64, kOffset_SECRET_BYTES);
+
+StoreI32(i, 0);
+StoreI32(d, kOffset_CIPHER);
+StoreI32(s, kOffset_SECRET_BYTES);
+
+/**
+ *! PKEY = STORE_CIPHER ^ SM3(SECRET_BYTES([0xff],0))
+ */
+while(LoadI32(i) < 32) {
+    StoreI32(d, LoadI32(d) ^ LoadI32(s));
+    StoreI32(i, LoadI32(i) + 4);
+    StoreI32(d, LoadI32(d) + 4);
+    StoreI32(s, LoadI32(s) + 4);
+}
+
+/**
+ *!
+ */
+ExDigestSHA512(kOffset_INPUT_Buffer, 64, kOffset_INPUT_Buffer);  /// Ed25519.Sign(SHA512(INPUT))
+ExEd25519Sign(kOffset_Ed25519_Pubkey, kOffset_CIPHER, kOffset_INPUT_Buffer, 64, kOffset_SESSION_Signature);
+
+/**
+ *! Clean ...
+ */
+Memset(244, 0, 1024 - 244);
