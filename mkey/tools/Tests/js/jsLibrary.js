@@ -187,6 +187,15 @@ window.onload = async function () {
      */
     const keys = document.getElementById("keys");
     const json = DongleDisplayValue(info);
+    if (typeof online !== "boolean") {
+      online = false;
+      for (const opt of keys.options) {
+        if (opt.value === json.id) {
+          online = JSON.parse(opt.text)?.online;
+          break;
+        }
+      }
+    }
     json.online = !!online;
 
     const text = JSON.stringify(json);
@@ -1572,6 +1581,8 @@ async function ImportFile(file) {
             .Update(buffer.subarray(0, 8192))
             .Final();
           if (0 !== Buffer.compare(buffer.subarray(8192), verify)) continue;
+
+          jsAddDevice(buffer.subarray(7 * 1024 + 504, 7 * 1024 + 544));
 
           console.info(`Import info ${key} ...`);
           prev_dashboard_value.set(key, buffer);

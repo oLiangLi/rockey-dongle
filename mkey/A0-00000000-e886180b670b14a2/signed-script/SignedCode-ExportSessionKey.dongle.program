@@ -1,0 +1,84 @@
+{
+  "size_public": 228,
+  "code": "AdAgkQGFBYQOCCCRCtAkEAODKtAPDCDQMNEg0EEcyIAE7B++YJwgkWScJJFonCiRbJwskXCcdNDE0CEWdNAA0eTQIh7k0EDQMBZ00ADQQNBAHHTQKtB0FnTQANAwFgDQdNAA0HTQdNAyLsTQINAE0aEd5NAE0QDQtNDgJeTQANAc00AcDwQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "output": [
+    {
+      "name": "rLANG_OUTPUT_ENCRYPT_CHAIN",
+      "offset": 0,
+      "size": 196,
+      "intType": false
+    },
+    {
+      "name": "rLANG_OUTPUT_CV25519_Pubkey",
+      "offset": 196,
+      "size": 32,
+      "intType": false
+    }
+  ],
+  "data": [
+    {
+      "name": "rLANG_INPUT_CV25519_Pubkey",
+      "offset": 256,
+      "sizeMin": 32,
+      "sizeMax": 32,
+      "options": []
+    },
+    {
+      "name": "rLANG_INPUT_SESSION_Type",
+      "offset": 288,
+      "sizeMin": 4,
+      "sizeMax": 4,
+      "options": [
+        1,
+        2,
+        3,
+        4,
+        "CUSTOM",
+        "TYPE"
+      ]
+    },
+    {
+      "name": "rLANG_INPUT_Category",
+      "offset": 292,
+      "sizeMin": 4,
+      "sizeMax": 4,
+      "options": [
+        -1017610065,
+        -2041888593,
+        "CUSTOM",
+        "CATEGORY"
+      ]
+    },
+    {
+      "name": "rLANG_INPUT_NotBefore",
+      "offset": 296,
+      "sizeMin": 4,
+      "sizeMax": 4,
+      "options": [
+        2282,
+        "CUSTOM",
+        "DATE"
+      ]
+    },
+    {
+      "name": "rLANG_INPUT_NotAfter",
+      "offset": 300,
+      "sizeMin": 4,
+      "sizeMax": 4,
+      "options": [
+        2465,
+        2557,
+        "CUSTOM",
+        "DATE"
+      ]
+    },
+    {
+      "name": "rLANG_INPUT_Message",
+      "offset": 304,
+      "sizeMin": 32,
+      "sizeMax": 32,
+      "options": []
+    }
+  ],
+  "signedCode": "U0mTMAEB5AAB0CCRAYUFhA4IIJEK0CQQA4Mq0A8MINAw0SDQQRzIgATsH75gnCCRZJwkkWicKJFsnCyRcJx00MTQIRZ00ADR5NAiHuTQQNAwFnTQANBA0EAcdNAq0HQWdNAA0DAWANB00ADQdNB00DIuxNAg0ATRoR3k0ATRANC00OAl5NAA0BzTQBwPBAAA7GiGBBHGgk0C4MuXOlwY1F9bPQNiyYu8o5mpMLDf5dDt5AiTHY/6f++afrKIcLZlDYunQKUWMcupCFGTaNviLg=="
+}

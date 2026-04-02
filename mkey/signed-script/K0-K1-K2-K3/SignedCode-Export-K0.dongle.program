@@ -1,0 +1,50 @@
+{
+  "size_public": 256,
+  "code": "ggYq0A8MDwQAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "output": [
+    {
+      "name": "rLANG_ENCRYPT_PREV_MASTER_SECRET",
+      "offset": 0,
+      "size": 256,
+      "intType": false
+    }
+  ],
+  "data": [
+    {
+      "name": "rLANG_X25519_PUBKEY_0",
+      "offset": 256,
+      "sizeMin": 32,
+      "sizeMax": 32,
+      "options": []
+    },
+    {
+      "name": "rLANG_X25519_PUBKEY_1",
+      "offset": 288,
+      "sizeMin": 32,
+      "sizeMax": 32,
+      "options": []
+    },
+    {
+      "name": "rLANG_X25519_PUBKEY_2",
+      "offset": 320,
+      "sizeMin": 32,
+      "sizeMax": 32,
+      "options": []
+    },
+    {
+      "name": "rLANG_X25519_PUBKEY_3",
+      "offset": 352,
+      "sizeMin": 32,
+      "sizeMax": 32,
+      "options": []
+    },
+    {
+      "name": "rLANG_RSA_PUBKEY",
+      "offset": 384,
+      "sizeMin": 260,
+      "sizeMax": 260,
+      "options": []
+    }
+  ],
+  "signedCode": "U0mTMAEBAAGCBirQDwwPBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAf1llzfcnCd5qc2O5+c8U5m9MAf13LffHaT9BSbBHgePBSjGawk/lJlmBpSQEnQ3TabMi7rSZZp14LMRFjpMiaA=="
+}
