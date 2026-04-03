@@ -2,6 +2,7 @@ const crypto = require("crypto");
 const http = require("http");
 const fs = require("fs");
 const PORT = process.env.PORT || "3000";
+const HOST = process.env.HOST || "localhost";
 const path = require("path");
 const child_process = require("child_process");
 const PSK = crypto
@@ -419,7 +420,7 @@ async function StartServer() {
         });
       });
 
-      server.listen(vPORT, "localhost", () => {
+      server.listen(vPORT, HOST, () => {
         console.log(
           `Server listening on port ${PORT}=>${vPORT}, PSK: ${PSK.subarray(0, 4).toString("hex")}}, EXECV: ${EXECV_PATH}`,
         );

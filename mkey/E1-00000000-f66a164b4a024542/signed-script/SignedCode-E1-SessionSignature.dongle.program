@@ -1,0 +1,90 @@
+{
+  "size_public": 244,
+  "code": "ANAA0ADRQBxApQrQJBADgyrQDwwA0UClMBAA0ADQ1NAjIQODDtAPDADSAMBA0EAcANJ0DgDSQNAA0qEdAND8n7TQ+J8A0vSf/JMghQ+D+JP0kzgQ+J/8kwSw/J/4kwSw+J/0kwSw9J/wggDRQNAA0aQdQNC00ADRQNC00DIu9NAA0AzTQBwPBAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=",
+  "output": [
+    {
+      "name": "rLANG_ROOT_Pubkey",
+      "offset": 0,
+      "size": 32,
+      "intType": false
+    },
+    {
+      "name": "rLANG_INPUT_Message",
+      "offset": 32,
+      "size": 32,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SESSION_Pubkey",
+      "offset": 64,
+      "size": 32,
+      "intType": false
+    },
+    {
+      "name": "rLANG_WORLD_MAGIC",
+      "offset": 96,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_INPUT_SESSION_Type",
+      "offset": 100,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_INPUT_Category",
+      "offset": 104,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_INPUT_NotBefore",
+      "offset": 108,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_INPUT_NotAfter",
+      "offset": 112,
+      "size": 4,
+      "intType": true
+    },
+    {
+      "name": "rLANG_ROOT_Signature",
+      "offset": 116,
+      "size": 64,
+      "intType": false
+    },
+    {
+      "name": "rLANG_SESSION_Signature",
+      "offset": 180,
+      "size": 64,
+      "intType": false
+    }
+  ],
+  "data": [
+    {
+      "name": "rLANG_INPUT_Message",
+      "offset": 256,
+      "sizeMin": 64,
+      "sizeMax": 64,
+      "options": []
+    },
+    {
+      "name": "rLANG_INPUT_Type",
+      "offset": 320,
+      "sizeMin": 4,
+      "sizeMax": 4,
+      "options": [
+        1,
+        2,
+        3,
+        4,
+        "CUSTOM",
+        "TYPE"
+      ]
+    }
+  ],
+  "signedCode": "U0mTMAEB9AAA0ADQANFAHEClCtAkEAODKtAPDADRQKUwEADQANDU0CMhA4MO0A8MANIAwEDQQBwA0nQOANJA0ADSoR0A0PyftND4nwDS9J/8kyCFD4P4k/STOBD4n/yTBLD8n/iTBLD4n/STBLD0n/CCANFA0ADRpB1A0LTQANFA0LTQMi700ADQDNNAHA8EkLl3x1jUKwR5i65na0SdNg7HOk/KTnmZrqfNLFWvDkVV38/x5bV8z0gHuLQkWdTeZsTg51A1rRiX5HvKkHpY4g=="
+}
