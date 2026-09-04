@@ -342,15 +342,18 @@ int Dongle::RSAPublic(int bits,
   return result;
 }
 
-/*! 标准 PKCS#1 v1.5(SHA256 DigestInfo)验签:COS rsa_pub 解填充后返回裸 payload。
+/*! 标准 PKCS#1 v1.5(SHA256/384/512 DigestInfo)验签:COS rsa_pub 解填充后返回裸 payload。
  *! signature 会被就地覆写(rsa_pub 的输入输出共用, 与 master.cc 的 WorldPublic
  *! 验签同款);X509 场景下证书本身就在 InOutBuf 暂存区, 覆写无害。
- *! 真机检查点:COS 若自行剥离 DigestInfo 只返回 32B 摘要, 走 size_out==32 分支。 */
-int Dongle::RSAVerifyPkcs1(int bits, uint32_t exponent, const uint8_t modulus[256], const uint8_t hash[32], uint8_t signature[256]) {
+ *! 真机检查点:COS 若自行剥离 DigestInfo 只返回摘要本体, 走 size_out==md_type 分支;
+ *! SHA-384/512 的 COS 解填充行为本机无法验证(与 SHA256 的 51B 分支同款推断)。 */
+int Dongle::RSAVerifyPkcs1(int bits, uint32_t exponent, const uint8_t modulus[256], int md_type, const uint8_t hash[64], uint8_t signature[256]) {
   RSA_PUBLIC_KEY pubkey;
   WORD size_out = 256;
 
   if (bits != 2048)
+    return last_error_ = -EINVAL;
+  if (md_type != kX509DigestSHA256 && md_type != kX509DigestSHA384 && md_type != kX509DigestSHA512)
     return last_error_ = -EINVAL;
 
   pubkey.bits = bits;
@@ -361,17 +364,19 @@ int Dongle::RSAVerifyPkcs1(int bits, uint32_t exponent, const uint8_t modulus[25
 
   int result = DONGLE_CHECK(rsa_pub(signature, 256, &pubkey, signature, &size_out, MODE_DECODE));
   if (result >= 0) {
-    if (size_out == 51) {
-      /* DigestInfo ::= SEQUENCE { sha256 AlgId, OCTET STRING hash } 的 19B 前缀(立即数比对) */
-      if (signature[0] != 0x30 || signature[1] != 0x31 || signature[2] != 0x30 || signature[3] != 0x0D ||
+    if (size_out == static_cast<WORD>(19 + md_type)) {
+      /* DigestInfo ::= SEQUENCE { AlgId, OCTET STRING hash } 的 19B 前缀(立即数比对);
+       * [1]=总长(0x31/0x41/0x51)、[14]=OID 末字节(1/2/3, 即 md_type>>4 减 1)、[18]=摘要长 */
+      if (signature[0] != 0x30 || signature[1] != 19 + md_type || signature[2] != 0x30 || signature[3] != 0x0D ||
           signature[4] != 0x06 || signature[5] != 0x09 || signature[6] != 0x60 || signature[7] != 0x86 ||
           signature[8] != 0x48 || signature[9] != 0x01 || signature[10] != 0x65 || signature[11] != 0x03 ||
-          signature[12] != 0x04 || signature[13] != 0x02 || signature[14] != 0x01 || signature[15] != 0x05 ||
-          signature[16] != 0x00 || signature[17] != 0x04 || signature[18] != 0x20 || 0 != memcmp(&signature[19], hash, 32)) {
+          signature[12] != 0x04 || signature[13] != 0x02 || signature[14] != (md_type >> 4) - 1 ||
+          signature[15] != 0x05 || signature[16] != 0x00 || signature[17] != 0x04 || signature[18] != md_type ||
+          0 != memcmp(&signature[19], hash, md_type)) {
         result = -EBADMSG;
       }
-    } else if (size_out == 32) {
-      if (0 != memcmp(signature, hash, 32))
+    } else if (size_out == static_cast<WORD>(md_type)) {
+      if (0 != memcmp(signature, hash, md_type))
         result = -EBADMSG;
     } else {
       result = -EBADMSG;

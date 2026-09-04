@@ -1,10 +1,10 @@
 /*!
- * X509 证书验签原语:严格 DER 解析 + RSA2048-SHA256 / P256-SHA256 / SM2-SM3 验签
+ * X509 证书验签原语:严格 DER 解析 + RSA2048-SHA256/384/512 / P256-SHA256/384/512 / SM2-SM3 验签
  *
  * 约束(固件/模拟器共享):
  *  - 证书 DER <= 1KB, 整块就地解析, 零拷贝(offset/len 直接指向证书字节)
  *  - 无 rodata:全部常量走"逐字节立即数比对";无 / 与 %(M0 无硬件除法)
- *  - 栈纪律:本文件函数帧 <= ~320B;SHA256 上下文放调用方 work 区(ExtendBuf)
+ *  - 栈纪律:本文件函数帧 <= ~320B;哈希上下文与摘要缓冲都放调用方 work 区(ExtendBuf)
  *  - 验签走设备硬件(FTRX)/宿主 TASSL;软件模幂/软件 ECDSA 不可用(ukey 性能)
  *  - 时间检查只置警告位(设备实时钟不可靠)
  */
@@ -12,7 +12,7 @@
 #include <Interface/x509.h>
 #include <base/base.h>
 
-rLANG_DECLARE_MACHINE
+AGINX_DECLARE_MACHINE
 
 namespace dongle {
 
@@ -141,9 +141,21 @@ static uint8_t classify_sigalg(const uint8_t* oid, size_t len) {
   /* 1.2.840.113549.1.1.11 sha256WithRSAEncryption */
   if (oid_eq_9(oid, len, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B))
     return kX509SigRSA_SHA256;
+  /* 1.2.840.113549.1.1.12 sha384WithRSAEncryption */
+  if (oid_eq_9(oid, len, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C))
+    return kX509SigRSA_SHA384;
+  /* 1.2.840.113549.1.1.13 sha512WithRSAEncryption */
+  if (oid_eq_9(oid, len, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D))
+    return kX509SigRSA_SHA512;
   /* 1.2.840.10045.4.3.2 ecdsa-with-SHA256 */
   if (oid_eq_8(oid, len, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02))
     return kX509SigP256_SHA256;
+  /* 1.2.840.10045.4.3.3 ecdsa-with-SHA384 */
+  if (oid_eq_8(oid, len, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03))
+    return kX509SigP256_SHA384;
+  /* 1.2.840.10045.4.3.4 ecdsa-with-SHA512 */
+  if (oid_eq_8(oid, len, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x04))
+    return kX509SigP256_SHA512;
   /* 1.2.156.10197.1.501 SM2-with-SM3 */
   if (oid_eq_8(oid, len, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75))
     return kX509SigSM2_SM3;
@@ -319,8 +331,20 @@ static int sig_rsa(const X509View* view, const uint8_t* leaf, const uint8_t** ou
 bool X509OID_Sha256WithRSA(const uint8_t* oid, size_t len) {
   return oid_eq_9(oid, len, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0B);
 }
+bool X509OID_Sha384WithRSA(const uint8_t* oid, size_t len) {
+  return oid_eq_9(oid, len, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0C);
+}
+bool X509OID_Sha512WithRSA(const uint8_t* oid, size_t len) {
+  return oid_eq_9(oid, len, 0x2A, 0x86, 0x48, 0x86, 0xF7, 0x0D, 0x01, 0x01, 0x0D);
+}
 bool X509OID_EcdsaWithSHA256(const uint8_t* oid, size_t len) {
   return oid_eq_8(oid, len, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x02);
+}
+bool X509OID_EcdsaWithSHA384(const uint8_t* oid, size_t len) {
+  return oid_eq_8(oid, len, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x03);
+}
+bool X509OID_EcdsaWithSHA512(const uint8_t* oid, size_t len) {
+  return oid_eq_8(oid, len, 0x2A, 0x86, 0x48, 0xCE, 0x3D, 0x04, 0x03, 0x04);
 }
 bool X509OID_SM2WithSM3(const uint8_t* oid, size_t len) {
   return oid_eq_8(oid, len, 0x2A, 0x81, 0x1C, 0xCF, 0x55, 0x01, 0x83, 0x75);
@@ -655,9 +679,34 @@ int X509ExtNext(const X509View* view, const uint8_t* der, size_t size, X509Ext* 
 
 /* ---- 验签 ---- */
 
-static int x509_hash_tbs(void* work, const uint8_t* tbs, size_t len, uint8_t md[32]) {
-  Sha256Ctx* ctx = reinterpret_cast<Sha256Ctx*>(work);
-  ctx->Init().Update(tbs, len).Final(md);
+/*! 按签名算法取摘要字节数(仅 RSA/P256 需本地哈希;SM2 摘要由硬件/宿主库按 GM/T 0003 内部计算)。
+ *! 固件禁用 switch(会生成 rodata 跳表, 违反链接脚本 rodata 为空), 一律 if 链。 */
+static int sig_digest_len(uint8_t sig_type) {
+  if (kX509SigRSA_SHA384 == sig_type || kX509SigP256_SHA384 == sig_type)
+    return Dongle::kX509DigestSHA384;
+  if (kX509SigRSA_SHA512 == sig_type || kX509SigP256_SHA512 == sig_type)
+    return Dongle::kX509DigestSHA512;
+  return Dongle::kX509DigestSHA256;
+}
+
+/*! 计算 tbs 摘要:哈希上下文放 work[0..240), 摘要缓冲放 work[240..304), 不落栈;
+ *! 三种 Sha*Ctx 均为 240B(同一 rlCryptoShaCtx), work 布局与算法无关。
+ *! 成功返回 0(摘要经 out_md 传出, 长度由 sig_type 决定), work_size 不足返回 -ENOBUFS。 */
+static int x509_hash_tbs(void* work, size_t work_size, uint8_t sig_type, const uint8_t* tbs, size_t len,
+                         const uint8_t** out_md) {
+  if (work_size < sizeof(Sha512Ctx) + Dongle::kX509DigestSHA512)
+    return -ENOBUFS;
+  uint8_t* base = static_cast<uint8_t*>(work);
+  uint8_t* md = base + sizeof(Sha512Ctx);
+  int dlen = sig_digest_len(sig_type);
+  if (Dongle::kX509DigestSHA384 == dlen) {
+    reinterpret_cast<Sha384Ctx*>(base)->Init().Update(tbs, len).Final(md);
+  } else if (Dongle::kX509DigestSHA512 == dlen) {
+    reinterpret_cast<Sha512Ctx*>(base)->Init().Update(tbs, len).Final(md);
+  } else {
+    reinterpret_cast<Sha256Ctx*>(base)->Init().Update(tbs, len).Final(md);
+  }
+  *out_md = md;
   return 0;
 }
 
@@ -665,7 +714,7 @@ int X509VerifySignature(Dongle* dongle, const uint8_t* leaf, size_t leaf_size, c
                         size_t ca_cert_size, void* work, size_t work_size) {
   if (!dongle || !leaf || !ca_cert || !work)
     return -EINVAL;
-  if (work_size < sizeof(Sha256Ctx))
+  if (work_size < sizeof(Sha512Ctx) + Dongle::kX509DigestSHA512)
     return -ENOBUFS;
 
   X509View lv;
@@ -677,84 +726,88 @@ int X509VerifySignature(Dongle* dongle, const uint8_t* leaf, size_t leaf_size, c
   if (0 != r)
     return r;
 
-  uint8_t md[32];
-  r = x509_hash_tbs(work, leaf + lv.off_tbs, lv.len_tbs, md);
-  if (0 != r)
-    return r;
+  if (kX509SigRSA_SHA256 == lv.sig_type || kX509SigRSA_SHA384 == lv.sig_type || kX509SigRSA_SHA512 == lv.sig_type) {
+    /* CA 的 SPKI 必须是 rsaEncryption */
+    const uint8_t* ca_alg = ca_cert + cv.off_spki_alg_oid;
+    if (!X509OID_RSAEncryption(ca_alg, cv.len_spki_alg_oid))
+      return -EBADMSG;
 
-  switch (lv.sig_type) {
-    case kX509SigRSA_SHA256: {
-      /* CA 的 SPKI 必须是 rsaEncryption */
-      const uint8_t* ca_alg = ca_cert + cv.off_spki_alg_oid;
-      if (!X509OID_RSAEncryption(ca_alg, cv.len_spki_alg_oid))
-        return -EBADMSG;
+    const uint8_t* n;
+    size_t n_len;
+    uint32_t e;
+    r = spki_rsa(&cv, ca_cert, &n, &n_len, &e);
+    if (0 != r)
+      return r;
 
-      const uint8_t* n;
-      size_t n_len;
-      uint32_t e;
-      r = spki_rsa(&cv, ca_cert, &n, &n_len, &e);
-      if (0 != r)
-        return r;
+    const uint8_t* sig;
+    r = sig_rsa(&lv, leaf, &sig);
+    if (0 != r)
+      return r;
 
-      const uint8_t* sig;
-      r = sig_rsa(&lv, leaf, &sig);
-      if (0 != r)
-        return r;
+    const uint8_t* md;
+    r = x509_hash_tbs(work, work_size, lv.sig_type, leaf + lv.off_tbs, lv.len_tbs, &md);
+    if (0 != r)
+      return r;
 
-      /* 设备端会就地覆写 signature 区域(rsa_pub 输入输出共用, master.cc 同款);
-       * 证书本体在 InOutBuf 暂存区, 覆写无害;指针不指向 work(ExtendBuf) */
-      return dongle->RSAVerifyPkcs1(2048, e, n, md, const_cast<uint8_t*>(sig));
-    }
-
-    case kX509SigP256_SHA256: {
-      const uint8_t* ca_alg = ca_cert + cv.off_spki_alg_oid;
-      if (!X509OID_ECPublicKey(ca_alg, cv.len_spki_alg_oid))
-        return -EBADMSG;
-
-      const uint8_t* x;
-      const uint8_t* y;
-      r = spki_ec(&cv, ca_cert, &x, &y);
-      if (0 != r)
-        return r;
-
-      uint8_t rr[32];
-      uint8_t ss[32];
-      r = sig_ecdsa(&lv, leaf, rr, ss);
-      if (0 != r)
-        return r;
-
-      if (0 != dongle->CheckPointOnCurvePrime256v1(x, y))
-        return -EFAULT;
-      return dongle->P256Verify(x, y, md, rr, ss);
-    }
-
-    case kX509SigSM2_SM3: {
-      const uint8_t* ca_alg = ca_cert + cv.off_spki_alg_oid;
-      if (!X509OID_ECPublicKey(ca_alg, cv.len_spki_alg_oid))
-        return -EBADMSG;
-
-      const uint8_t* x;
-      const uint8_t* y;
-      r = spki_ec(&cv, ca_cert, &x, &y);
-      if (0 != r)
-        return r;
-
-      uint8_t rr[32];
-      uint8_t ss[32];
-      r = sig_ecdsa(&lv, leaf, rr, ss);
-      if (0 != r)
-        return r;
-
-      if (0 != dongle->CheckPointOnCurveSM2(x, y))
-        return -EFAULT;
-      /* 设备 COS/TASSL 均按 GM/T 0003 内部计算 e = SM3(Z_A || M),
-       * 此处传原始 tbsCertificate(指针在 InOutBuf, 不被 FTRX 暂存区影响) */
-      return dongle->SM2VerifyMessage(x, y, leaf + lv.off_tbs, lv.len_tbs, rr, ss);
-    }
-
-    default:
-      return -ENOTSUP;
+    /* 设备端会就地覆写 signature 区域(rsa_pub 输入输出共用, master.cc 同款);
+     * 证书本体在 InOutBuf 暂存区, 覆写无害;指针不指向 work(ExtendBuf) */
+    return dongle->RSAVerifyPkcs1(2048, e, n, sig_digest_len(lv.sig_type), md, const_cast<uint8_t*>(sig));
   }
+
+  if (kX509SigP256_SHA256 == lv.sig_type || kX509SigP256_SHA384 == lv.sig_type || kX509SigP256_SHA512 == lv.sig_type) {
+    const uint8_t* ca_alg = ca_cert + cv.off_spki_alg_oid;
+    if (!X509OID_ECPublicKey(ca_alg, cv.len_spki_alg_oid))
+      return -EBADMSG;
+
+    const uint8_t* x;
+    const uint8_t* y;
+    r = spki_ec(&cv, ca_cert, &x, &y);
+    if (0 != r)
+      return r;
+
+    uint8_t rr[32];
+    uint8_t ss[32];
+    r = sig_ecdsa(&lv, leaf, rr, ss);
+    if (0 != r)
+      return r;
+
+    const uint8_t* md;
+    r = x509_hash_tbs(work, work_size, lv.sig_type, leaf + lv.off_tbs, lv.len_tbs, &md);
+    if (0 != r)
+      return r;
+
+    if (0 != dongle->CheckPointOnCurvePrime256v1(x, y))
+      return -EFAULT;
+    /* FIPS 186-4 §6.4:SHA-384/512 摘要长于阶位宽(256), 取左 256 位作 e;
+     * P256Verify 固定收 32B 摘要, md 的首 32B 即左 256 位 */
+    return dongle->P256Verify(x, y, md, rr, ss);
+  }
+
+  if (kX509SigSM2_SM3 == lv.sig_type) {
+    const uint8_t* ca_alg = ca_cert + cv.off_spki_alg_oid;
+    if (!X509OID_ECPublicKey(ca_alg, cv.len_spki_alg_oid))
+      return -EBADMSG;
+
+    const uint8_t* x;
+    const uint8_t* y;
+    r = spki_ec(&cv, ca_cert, &x, &y);
+    if (0 != r)
+      return r;
+
+    uint8_t rr[32];
+    uint8_t ss[32];
+    r = sig_ecdsa(&lv, leaf, rr, ss);
+    if (0 != r)
+      return r;
+
+    if (0 != dongle->CheckPointOnCurveSM2(x, y))
+      return -EFAULT;
+    /* 设备 COS/TASSL 均按 GM/T 0003 内部计算 e = SM3(Z_A || M),
+     * 此处传原始 tbsCertificate(指针在 InOutBuf, 不被 FTRX 暂存区影响) */
+    return dongle->SM2VerifyMessage(x, y, leaf + lv.off_tbs, lv.len_tbs, rr, ss);
+  }
+
+  return -ENOTSUP;
 }
 
 int X509VerifySelfSigned(Dongle* dongle, const uint8_t* cert, size_t cert_size, void* work, size_t work_size) {
@@ -779,7 +832,9 @@ int X509GetPublicKey(const uint8_t* der, size_t size, uint8_t* out, size_t* size
   if (0 != r)
     return r;
 
-  if (view.sig_type == kX509SigRSA_SHA256) {
+  /* 按证书自身 SPKI 算法分派(与签名算法无关:叶证书密钥类型可与签发者签名算法不同) */
+  const uint8_t* alg = der + view.off_spki_alg_oid;
+  if (X509OID_RSAEncryption(alg, view.len_spki_alg_oid)) {
     const uint8_t* n;
     size_t n_len;
     uint32_t e;
@@ -793,7 +848,7 @@ int X509GetPublicKey(const uint8_t* der, size_t size, uint8_t* out, size_t* size
     out[3] = static_cast<uint8_t>(e >> 24);
     memcpy(out + 4, n, 256);
     *size_out = 260;
-  } else if (view.sig_type == kX509SigP256_SHA256 || view.sig_type == kX509SigSM2_SM3) {
+  } else if (X509OID_ECPublicKey(alg, view.len_spki_alg_oid)) {
     const uint8_t* x;
     const uint8_t* y;
     r = spki_ec(&view, der, &x, &y);
@@ -812,4 +867,4 @@ int X509GetPublicKey(const uint8_t* der, size_t size, uint8_t* out, size_t* size
 
 }  // namespace dongle
 
-rLANG_DECLARE_END
+AGINX_DECLARE_END

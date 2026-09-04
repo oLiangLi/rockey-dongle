@@ -19,6 +19,7 @@
 - **固件中 `Dongle` 的实现是 `Interface/rockey.cc`**(由 `Interface/xModule.mk:9-11` 选择);`dongle.cc` 是主机侧 USB 实现;`emulator.cc` 是模拟器实现。三个类同名,`secret.cc`/`master.cc`/`script.cc` 为共享成员函数。
 - 密码学有两套实现:`base/src/crypto.cc`(5,524 行,常量时间版本)与 `Interface/curve25519.cc`(当前 1,806 行,慢速路径,**dongle 固件 VM 指令实际走这套**;审查时 2,429 行,e3c7283 紧凑化净删 659 行,见 §10.2)。
 - **固件无除法约束(2026-09-04 发现)**:Cortex-M0 无硬件除法,/ 与 % 引入 `__aeabi_idiv → idivmod.o → crt.o → main` 依赖链,导致测试固件链接失败。固件侧拆包/打包/日期解析一律用移位序列递进替代除法(§10.2/§10.3,x509.cc 同样遵守)。
+- **固件禁用 switch-case(用户 2026-09-04 告知)**:多 case 的 switch 会生成 rodata 跳表(`-fno-jump-tables` 阻止不了),违反 linker.ld 的 rodata 为空断言;固件侧(rockey.cc/x509.cc 等编入固件的文件)一律写 if 链。宿主侧(emulator.cc/dongle.cc/wasm)不受限。
 
 ### 2.2 固件内存布局(定量核算结果)
 | 区域 | 地址/大小 | 说明 |
@@ -257,3 +258,13 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 设计要点:时间检查只置警告位(设备 RTC 不可靠);遵守固件无 rodata/无除法约束(OID 立即数比对、拆包/日期解析无 / 与 %)。
 - 新增 `src/__Testing__/__x509__/`(320 行):TASSL 生成 RSA/P256/SM2 CA+叶证书,正反例与 OpenSSL X509_verify 对照 0 错误;stack-check 0 违规。
 - **⏳ 待办:脚本层 OpCode 尚未接入(用户后续接入)**;接入后固件 text 增量约 3.5–4KB,余量充足。
+
+### 10.4 2026-09-04 X509 摘要扩展 SHA384/512 + cLAUD 代码签名宏(未提交,本会话)
+
+- **RSA/P256 支持 SHA384/512**:`X509SigType` 新增 4 值(RSA_SHA384/512、P256_SHA384/512,值 4-7),classify_sigalg 与 OID 谓词补齐 4 个 OID;SM2 仍固定 SM3。
+- 摘要计算全部移入 work 区(布局 `[Sha*Ctx 240B][md 64B]`,work 下限 752→**304B**);三种 Sha*Ctx 同尺寸(240B,同一 `rlCryptoShaCtx`)。
+- **P256+SHA384/512 按 FIPS 186-4 §6.4 截取左 256 位**作 e(P256Verify 接口固定 32B 摘要,设备 FTRX 与宿主 TASSL 一致;摘要已与 OpenSSL 实测一致)。
+- `RSAVerifyPkcs1` 签名加 md_type 参数(`Dongle::X509Digest` 枚举,值即摘要字节数 32/48/64):设备端 DigestInfo 前缀立即数比对参数化([1]=19+len、[14]=(len>>4)−1、[18]=len);宿主/模拟器映射 NID_sha256/384/512。真机检查点扩展:SHA384/512 的 COS 解填充行为本机无法验证。
+- **X509GetPublicKey 改按证书自身 SPKI OID 分派**(原按 sig_type:叶证书密钥类型与签发者签名算法不同时错路由;混合链测试覆盖此修复)。
+- 测试 __x509__:**8 条链**(RSA/P256×SHA256/384/512、SM2×SM3、P256-CA 签 RSA-叶混合链)+ EC 公钥提取断言,与 OpenSSL X509_verify 对照 **0 错误**;aarch64-linux/foobar/`make dongle` 构建全过;stack-check 0 违规(稳态 1784B 不变,X509 链未接 VM 不计入);固件 text 仍 49024B(X509 函数无调用方被 gc-sections 裁掉,OpCode 接入时才计入)。
+- **代码签名宏(用户 2026-09-04 决定,2026-09-05 修订)**:Claude 编写的代码用专属命名空间宏;昵称 Claude(克劳德),前缀原为 `cLAUD`。2026-09-05 用户决定前缀改为 **`AGINX`**(取产品名而非作者代号,避免每位协作者各占一对宏使 base.h 膨胀)。base/bits/base.h 已定义 `AGINX_DECLARE_MACHINE`/`AGINX_DECLARE_END`(与 rLANG 同构),x509.cc 与 __x509__ 测试已采用。

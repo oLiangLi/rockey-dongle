@@ -1136,9 +1136,24 @@ int Dongle::RSAPublic(int bits,
 }
 
 /*! 标准 PKCS#1 v1.5(SHA256 DigestInfo)验签:TASSL RSA_verify, 与设备 COS rsa_pub 语义对齐 */
-int Dongle::RSAVerifyPkcs1(int bits, uint32_t exponent, const uint8_t modulus[256], const uint8_t hash[32], uint8_t signature[256]) {
+int Dongle::RSAVerifyPkcs1(int bits, uint32_t exponent, const uint8_t modulus[256], int md_type, const uint8_t hash[64], uint8_t signature[256]) {
   if (bits != 2048)
     return last_error_ = -EINVAL;
+
+  int nid;
+  switch (md_type) {
+    case kX509DigestSHA256:
+      nid = NID_sha256;
+      break;
+    case kX509DigestSHA384:
+      nid = NID_sha384;
+      break;
+    case kX509DigestSHA512:
+      nid = NID_sha512;
+      break;
+    default:
+      return last_error_ = -EINVAL;
+  }
 
   RSA* rsa = RSA_new();
   BIGNUM* n = BN_bin2bn(modulus, 256, nullptr);
@@ -1149,7 +1164,7 @@ int Dongle::RSAVerifyPkcs1(int bits, uint32_t exponent, const uint8_t modulus[25
   DONGLE_VERIFY(1 == RSA_set0_key(rsa, n, e, nullptr));
 
   int result = 0;
-  if (1 != RSA_verify(NID_sha256, hash, 32, signature, 256, rsa)) {
+  if (1 != RSA_verify(nid, hash, md_type, signature, 256, rsa)) {
     rlLOGE(TAG, "RSA_verify error %ld", ERR_get_error());
     result = -1;
   }

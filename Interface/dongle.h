@@ -333,12 +333,20 @@ public:
                         const uint8_t S[32]);
 
  public:  // X509 证书验签原语(Interface/x509.cc 调用)...
-  /*! 标准 PKCS#1 v1.5(SHA256 DigestInfo)验签:设备走 COS rsa_pub, 宿主/模拟器走 TASSL RSA_verify。
+  /*! RSA 验签摘要类型:值即摘要字节数, DigestInfo 前缀与 NID 映射均由它唯一确定 */
+  enum X509Digest {
+    kX509DigestSHA256 = 32,
+    kX509DigestSHA384 = 48,
+    kX509DigestSHA512 = 64,
+  };
+  /*! 标准 PKCS#1 v1.5(SHA256/384/512 DigestInfo)验签:设备走 COS rsa_pub(解填充后
+   *! 由本地比对 DigestInfo), 宿主/模拟器走 TASSL RSA_verify。
    *! signature 为非 const:设备端 rsa_pub 就地覆写(输入输出共用, master.cc 同款)。 */
   virtual int RSAVerifyPkcs1(int bits,
                              uint32_t exponent,
                              const uint8_t modulus[256],
-                             const uint8_t hash[32],
+                             int md_type,
+                             const uint8_t hash[64],
                              uint8_t signature[256]);
   /*! SM2 变长消息验签:输入为原始消息 M(设备 COS 内部按 GM/T 0003 计算 e = SM3(Z_A||M)) */
   virtual int SM2VerifyMessage(const uint8_t X[32],

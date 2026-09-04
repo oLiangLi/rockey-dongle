@@ -28,6 +28,17 @@
 #define rLANG_DECLARE_END
 #endif /* rLANG_DECLARE_MACHINE */
 
+/* AGINX 命名空间宏:与 rLANG_DECLARE_MACHINE/END 同构。
+ * 前缀取产品名而非作者代号,避免每位协作者各占一对宏使 base.h 持续膨胀;
+ * 用于标识 AI 协作(如 Claude Code)编写的代码文件(如 Interface/x509.h|cc)。 */
+#if !defined(AGINX_DECLARE_MACHINE) && defined(__cplusplus)
+#define AGINX_DECLARE_MACHINE namespace machine {
+#define AGINX_DECLARE_END }
+#elif !defined(AGINX_DECLARE_MACHINE)
+#define AGINX_DECLARE_MACHINE
+#define AGINX_DECLARE_END
+#endif /* AGINX_DECLARE_MACHINE */
+
 #if !defined(rLANG_LIKELY) && (defined(__GNUC__) || defined(__clang__))
 #define rLANG_LIKELY(x) (__builtin_expect(!!(x), 1))
 #elif !defined(rLANG_LIKELY)

@@ -22,6 +22,10 @@ enum X509SigType {
   kX509SigRSA_SHA256 = 1,   /* sha256WithRSAEncryption (1.2.840.113549.1.1.11) */
   kX509SigP256_SHA256 = 2,  /* ecdsa-with-SHA256 (1.2.840.10045.4.3.2) */
   kX509SigSM2_SM3 = 3,      /* SM2-with-SM3 (1.2.156.10197.1.501) */
+  kX509SigRSA_SHA384 = 4,   /* sha384WithRSAEncryption (1.2.840.113549.1.1.12) */
+  kX509SigRSA_SHA512 = 5,   /* sha512WithRSAEncryption (1.2.840.113549.1.1.13) */
+  kX509SigP256_SHA384 = 6,  /* ecdsa-with-SHA384 (1.2.840.10045.4.3.3) */
+  kX509SigP256_SHA512 = 7,  /* ecdsa-with-SHA512 (1.2.840.10045.4.3.4) */
 };
 
 /*! 解析视图:所有 offset/len 相对证书 DER 起点, 就地零拷贝 */
@@ -76,8 +80,10 @@ int X509CheckTime(X509View* view, const uint8_t* der, size_t size, uint64_t now_
 int X509ExtNext(const X509View* view, const uint8_t* der, size_t size, X509Ext* out, uint8_t* iterator);
 
 /*! 用 ca_cert 的 SPKI 验证 leaf 签名(两种证书均 <=1KB DER)
- *! work/work_size: 工作区(OpCode 传 ExtendBuf 区域), 需 >= 752B
- *! (Sha256Ctx 240B + RSA 模数/签名规范化各 256B);SHA256 在 work 内做, 不落栈 */
+ *! RSA: PKCS#1 v1.5 + SHA256/384/512 DigestInfo;P256: ECDSA + SHA256/384/512(摘要截左 256 位,
+ *! FIPS 186-4 §6.4);SM2: 固定 SM3(e = SM3(Z_A||tbs) 由硬件/宿主库内部计算)。
+ *! work/work_size: 工作区(OpCode 传 ExtendBuf 区域), 需 >= 304B(Sha*Ctx 各 240B + md 缓冲 64B);
+ *! 哈希上下文与摘要缓冲都在 work 内做, 不落栈 */
 int X509VerifySignature(Dongle* dongle, const uint8_t* leaf, size_t leaf_size, const uint8_t* ca_cert,
                         size_t ca_cert_size, void* work, size_t work_size);
 
@@ -90,7 +96,11 @@ int X509GetPublicKey(const uint8_t* der, size_t size, uint8_t* out, size_t* size
 
 /* ---- OID 立即数比对(零 rodata) ---- */
 bool X509OID_Sha256WithRSA(const uint8_t* oid, size_t len);
+bool X509OID_Sha384WithRSA(const uint8_t* oid, size_t len);
+bool X509OID_Sha512WithRSA(const uint8_t* oid, size_t len);
 bool X509OID_EcdsaWithSHA256(const uint8_t* oid, size_t len);
+bool X509OID_EcdsaWithSHA384(const uint8_t* oid, size_t len);
+bool X509OID_EcdsaWithSHA512(const uint8_t* oid, size_t len);
 bool X509OID_SM2WithSM3(const uint8_t* oid, size_t len);
 bool X509OID_RSAEncryption(const uint8_t* oid, size_t len);
 bool X509OID_ECPublicKey(const uint8_t* oid, size_t len);

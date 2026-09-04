@@ -6,19 +6,20 @@
 #include <Interface/x509.h>
 #include <base/base.h>
 #include <openssl/evp.h>
+#include <openssl/ec.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #include <openssl/pem.h>
 #include <vector>
 #include <time.h>
 
-rLANG_DECLARE_MACHINE
+AGINX_DECLARE_MACHINE
 
 namespace {
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("x509");
 }
 
-rLANG_DECLARE_END
+AGINX_DECLARE_END
 
 namespace {
 
@@ -65,11 +66,11 @@ EVP_PKEY* NewECKey(int nid) {
   return pkey;
 }
 
-/*! 生成 CA(自签) + 叶证书(CA 签发), 返回 DER */
-int MakeChain(int key_nid /* 0 = RSA2048 */, const EVP_MD* md, const char* cn_ca, const char* cn_leaf,
-              CertPair* out) {
-  EVP_PKEY* ca_key = (key_nid == 0) ? NewRSAKey() : NewECKey(key_nid);
-  EVP_PKEY* leaf_key = (key_nid == 0) ? NewRSAKey() : NewECKey(key_nid);
+/*! 生成 CA(自签) + 叶证书(CA 签发), 返回 DER;ca/leaf 密钥类型可不同(混合链) */
+int MakeChain(int ca_key_nid /* 0 = RSA2048 */, int leaf_key_nid /* 0 = RSA2048 */, const EVP_MD* md,
+              const char* cn_ca, const char* cn_leaf, CertPair* out) {
+  EVP_PKEY* ca_key = (ca_key_nid == 0) ? NewRSAKey() : NewECKey(ca_key_nid);
+  EVP_PKEY* leaf_key = (leaf_key_nid == 0) ? NewRSAKey() : NewECKey(leaf_key_nid);
 
   X509* ca = X509_new();
   X509_set_version(ca, 2);
@@ -135,17 +136,26 @@ int main() {
   alignas(8) uint8_t work[1024];
   int error = 0;
 
-  /* ---- 三种签名算法的链验签 + OpenSSL 对照 ---- */
+  /* ---- 8 条链:RSA/P256 × SHA256/384/512、SM2×SM3、混合链(P256 CA 签 RSA 叶) ---- */
   {
-    CertPair chains[3];
-    if (0 != MakeChain(0, EVP_sha256(), "RSA Root CA", "RSA Leaf", &chains[0]) ||
-        0 != MakeChain(NID_X9_62_prime256v1, EVP_sha256(), "P256 Root CA", "P256 Leaf", &chains[1]) ||
-        0 != MakeChain(NID_sm2, EVP_sm3(), "SM2 Root CA", "SM2 Leaf", &chains[2])) {
+    CertPair chains[8];
+    if (0 != MakeChain(0, 0, EVP_sha256(), "RSA Root CA", "RSA Leaf", &chains[0]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha256(), "P256 Root CA", "P256 Leaf", &chains[1]) ||
+        0 != MakeChain(NID_sm2, NID_sm2, EVP_sm3(), "SM2 Root CA", "SM2 Leaf", &chains[2]) ||
+        0 != MakeChain(0, 0, EVP_sha384(), "RSA384 Root CA", "RSA384 Leaf", &chains[3]) ||
+        0 != MakeChain(0, 0, EVP_sha512(), "RSA512 Root CA", "RSA512 Leaf", &chains[4]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha384(), "P256384 Root CA", "P256384 Leaf", &chains[5]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha512(), "P256512 Root CA", "P256512 Leaf", &chains[6]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, 0, EVP_sha256(), "P256 Root CA", "RSA Leaf", &chains[7])) {
       rlLOGE(TAG, "MakeChain failed");
       ++error;
     }
 
-    for (int i = 0; i < 3; ++i) {
+    static const uint8_t kExpectType[8] = {kX509SigRSA_SHA256, kX509SigP256_SHA256, kX509SigSM2_SM3,
+                                           kX509SigRSA_SHA384, kX509SigRSA_SHA512, kX509SigP256_SHA384,
+                                           kX509SigP256_SHA512, kX509SigP256_SHA256};
+
+    for (int i = 0; i < 8; ++i) {
       const auto& c = chains[i];
       if (c.leaf.size() > 1024 || c.ca.size() > 1024) {
         rlLOGE(TAG, "chain %d: DER too large leaf=%zu ca=%zu", i, c.leaf.size(), c.ca.size());
@@ -162,9 +172,8 @@ int main() {
           continue;
         }
       }
-      uint8_t expect_type = (i == 0) ? kX509SigRSA_SHA256 : (i == 1 ? kX509SigP256_SHA256 : kX509SigSM2_SM3);
-      if (v.sig_type != expect_type) {
-        rlLOGE(TAG, "chain %d: sig_type %d != %d", i, v.sig_type, expect_type);
+      if (v.sig_type != kExpectType[i]) {
+        rlLOGE(TAG, "chain %d: sig_type %d != %d", i, v.sig_type, kExpectType[i]);
         ++error;
       }
 
@@ -215,7 +224,7 @@ int main() {
       }
 
       /* 错误 CA(交叉) → 失败 */
-      const auto& other = chains[(i + 1) % 3];
+      const auto& other = chains[(i + 1) % 8];
       if (0 == X509VerifySignature(&rockey, c.leaf.data(), c.leaf.size(), other.ca.data(), other.ca.size(), work, sizeof(work))) {
         rlLOGE(TAG, "chain %d: wrong CA accepted!", i);
         ++error;
@@ -261,8 +270,9 @@ int main() {
       }
     }
 
-    /* 公钥提取与 OpenSSL 比对(RSA) */
+    /* 公钥提取与 OpenSSL 比对:按证书自身 SPKI 分派, 与签名算法无关 */
     {
+      /* RSA 根(自签 sha256) */
       uint8_t pub[260];
       size_t size_pub = 0;
       uint8_t sig_type = 0;
@@ -283,6 +293,35 @@ int main() {
         if (0 != memcmp(pub + 4, nbuf, 256) || BN_get_word(e) != 65537 ||
             0 != memcmp(pub, "\x01\x00\x01\x00", 4)) {
           rlLOGE(TAG, "X509GetPublicKey RSA mismatch");
+          ++error;
+        }
+        EVP_PKEY_free(key);
+        X509_free(ca);
+      }
+
+      /* 混合链叶证书:RSA 密钥 + P256 签名 → 必须提取 RSA(SPKI 分派, 不是签名算法) */
+      if (0 != X509GetPublicKey(chains[7].leaf.data(), chains[7].leaf.size(), pub, &size_pub, &sig_type) ||
+          size_pub != 260 || sig_type != kX509SigP256_SHA256) {
+        rlLOGE(TAG, "X509GetPublicKey mixed leaf failed size=%zu type=%d", size_pub, sig_type);
+        ++error;
+      }
+
+      /* P256 根:X||Y 与 OpenSSL point2oct 比对 */
+      uint8_t pubec[64];
+      if (0 != X509GetPublicKey(chains[1].ca.data(), chains[1].ca.size(), pubec, &size_pub, &sig_type) ||
+          size_pub != 64 || sig_type != kX509SigP256_SHA256) {
+        rlLOGE(TAG, "X509GetPublicKey P256 failed size=%zu type=%d", size_pub, sig_type);
+        ++error;
+      } else {
+        const uint8_t* p = chains[1].ca.data();
+        X509* ca = d2i_X509(nullptr, &p, static_cast<long>(chains[1].ca.size()));
+        EVP_PKEY* key = X509_get_pubkey(ca);
+        EC_KEY* ec = EVP_PKEY_get0_EC_KEY(key);
+        const EC_POINT* point = EC_KEY_get0_public_key(ec);
+        uint8_t oct[65];
+        if (65 != EC_POINT_point2oct(EC_KEY_get0_group(ec), point, POINT_CONVERSION_UNCOMPRESSED, oct, 65, nullptr) ||
+            oct[0] != 0x04 || 0 != memcmp(pubec, oct + 1, 64)) {
+          rlLOGE(TAG, "X509GetPublicKey P256 mismatch");
           ++error;
         }
         EVP_PKEY_free(key);
