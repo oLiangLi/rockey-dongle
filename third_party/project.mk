@@ -1,6 +1,15 @@
 ﻿THIRD_PARTY_INSTALL_PREFIX := $(shell mkdir -p $(X4C_GENERATE)/System && realpath $(X4C_GENERATE)/System)
 THIRD_PARTY_INSTALL_BINARY := $(shell mkdir -p $(X4C_BINARY) && realpath "$(X4C_BINARY)")
 
+##
+## RockeyTrust 下提供的 TASSL 库默认不允许加载额外.so库, 不允许连接网络, 如果需要必须主动提供所需函数
+##
+rLANG_TASSL_CFLAGS := \
+	-Ddlopen=rLANG_dlopen \
+	-Dgetaddrinfo=rLANG_getaddrinfo \
+	-Dgethostbyname=rLANG_gethostbyname \
+	-Dsocket=rLANG_socket
+
 ifeq ("$(X4C_BUILD)","emscripten")
 
 ##
@@ -56,15 +65,6 @@ X4C_COMMON_LDFLAGS  += -L$(THIRD_PARTY_INSTALL_PREFIX)/lib -lssl -lcrypto -ldl
 BUILD_TASSL_LIBRARY_BUILD_ROOT   := $(THIRD_PARTY_INSTALL_PREFIX)/Build-TASSL
 BUILD_TASSL_LIBRARY_BUILD_STAMP  := $(BUILD_TASSL_LIBRARY_BUILD_ROOT)/.build-tassl-done
 BUILD_TASSL_LIBRARY_SOURCE_ROOT  := $(shell realpath $(wORLD_ROOT)/third_party/TASSL-1.1.1)
-
-##
-## RockeyTrust 下提供的 TASSL 库默认不允许加载额外.so库, 不允许连接网络, 如果需要必须主动提供所需函数
-##
-rLANG_TASSL_CFLAGS := \
-	-Ddlopen=rLANG_dlopen \
-	-Dgetaddrinfo=rLANG_getaddrinfo \
-	-Dgethostbyname=rLANG_gethostbyname \
-	-Dsocket=rLANG_socket
 
 ##
 ##
