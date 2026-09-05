@@ -47,7 +47,7 @@ __attribute__((weak)) struct hostent* rLANG_gethostbyname(const char* name){
   return NULL;
 }
 
-__attribute__((weak)) void* dlopen(const char* filename, int flags){
+__attribute__((weak)) void* rLANG_dlopen(const char* filename, int flags){
   errno = ENOSYS;
   return NULL;
 }

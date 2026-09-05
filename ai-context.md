@@ -1,6 +1,6 @@
 # Rockey-Dongle 项目审查上下文记录
 
-> 本文件是 2026-09-01 ~ 2026-09-02 一次完整代码审查会话的工作上下文,并持续维护至 2026-09-04(§9 复核、§10 后续提交),供后续会话/接手人直接续接工作,避免重复分析。
+> 本文件是 2026-09-01 ~ 2026-09-02 一次完整代码审查会话的工作上下文,并持续维护至 2026-09-05(§9 复核、§10 后续提交),供后续会话/接手人直接续接工作,避免重复分析。
 > 配套交付物:`bug-analysis-report.html`(完整带样式报告,含图表)。
 
 ---
@@ -224,7 +224,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **TASSL(third_party, 真实 bug)**:pk7_doit.c PKCS7_signatureVerify `i` 在 no_hash 路径 BIO_read 失败 goto gerr 时未初始化 → `i = -1`;s3_lib.c `gtype = 0`(GCC 误报,行为不变);s_client.c OPT_DTLS1_3 显式报"不支持"(原静默忽略,1.1.1 分支无 DTLS1.3 实现)。
 - micro-ecc default_RNG 加 `__attribute__((unused))`(本项目经 uECC_set_rng 注入自研 RNG);HelloWorld 测试 RSA_generate_key→RSA_generate_key_ex(弃用 API);emulator.cc -Wformat 枚举转换与 -Wclass-memaccess 取 `[0]`(foobar debug 才显)。
 - **TASSL 构建是 stamp 门控**(third_party/project.mk `.build-tassl-done`):源改动需手动 make -C 各配置 Build-TASSL + install_sw 再清二进制重链接;修改第三方源时注意 pk7_doit.c/s3_lib.c 是 **GBK 编码**,必须字节级编辑(UTF-8 工具会打乱上游中文注释,曾发生一次已恢复)。
-- 不可消除:glibc 静态链接 dlopen/getaddrinfo/gethostbyname 警告(来自 glibc .gnu.warning 桩,TASSL 依赖这些符号);设备固件 readelf "bogus end-of-sibling" 提示。
+- 不可消除:设备固件 readelf "bogus end-of-sibling" 提示。~~glibc 静态链接 dlopen/getaddrinfo/gethostbyname 警告~~(原判不可消除)已由 65c3adc 根除——TASSL 内 weak 桩 + 符号重定向,见 §10.5。
 - 既有问题(未修):wasmjs 配置链接失败(Web/Emulator pki.cc 的 RockeyPKEY_Sign/Decrypt 为 rLANGIMPORT,宿主无 JS 实现)。
 
 ### 9.4 协议重验(31f41fe 之后, 2026-09-03 晚)
@@ -259,7 +259,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 新增 `src/__Testing__/__x509__/`(320 行):TASSL 生成 RSA/P256/SM2 CA+叶证书,正反例与 OpenSSL X509_verify 对照 0 错误;stack-check 0 违规。
 - **⏳ 待办:脚本层 OpCode 尚未接入(用户后续接入)**;接入后固件 text 增量约 3.5–4KB,余量充足。
 
-### 10.4 2026-09-04 X509 摘要扩展 SHA384/512 + cLAUD 代码签名宏(未提交,本会话)
+### 10.4 2026-09-04 X509 摘要扩展 SHA384/512 + AGINX 代码签名宏(已提交 95d742b)
 
 - **RSA/P256 支持 SHA384/512**:`X509SigType` 新增 4 值(RSA_SHA384/512、P256_SHA384/512,值 4-7),classify_sigalg 与 OID 谓词补齐 4 个 OID;SM2 仍固定 SM3。
 - 摘要计算全部移入 work 区(布局 `[Sha*Ctx 240B][md 64B]`,work 下限 752→**304B**);三种 Sha*Ctx 同尺寸(240B,同一 `rlCryptoShaCtx`)。
@@ -268,3 +268,24 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **X509GetPublicKey 改按证书自身 SPKI OID 分派**(原按 sig_type:叶证书密钥类型与签发者签名算法不同时错路由;混合链测试覆盖此修复)。
 - 测试 __x509__:**8 条链**(RSA/P256×SHA256/384/512、SM2×SM3、P256-CA 签 RSA-叶混合链)+ EC 公钥提取断言,与 OpenSSL X509_verify 对照 **0 错误**;aarch64-linux/foobar/`make dongle` 构建全过;stack-check 0 违规(稳态 1784B 不变,X509 链未接 VM 不计入);固件 text 仍 49024B(X509 函数无调用方被 gc-sections 裁掉,OpCode 接入时才计入)。
 - **代码签名宏(用户 2026-09-04 决定,2026-09-05 修订)**:Claude 编写的代码用专属命名空间宏;昵称 Claude(克劳德),前缀原为 `cLAUD`。2026-09-05 用户决定前缀改为 **`AGINX`**(取产品名而非作者代号,避免每位协作者各占一对宏使 base.h 膨胀)。base/bits/base.h 已定义 `AGINX_DECLARE_MACHINE`/`AGINX_DECLARE_END`(与 rLANG 同构),x509.cc 与 __x509__ 测试已采用。
+
+### 10.5 65c3adc/cf88c27 TASSL dso/网络阻断重构,linux/aarch64 链接警告清零(2026-09-05)
+
+- **65c3adc**:`src/app/main.cc` 末尾的 Linux 阻断桩(dlopen/dlclose/getaddrinfo/freeaddrinfo/gethostbyname + DSO_METHOD_openssl,rLANGEXPORT)整体移除,改由 TASSL 库自身承载:
+  - `third_party/TASSL-1.1.1/crypto/dso/dso_dlfcn.c` 增 weak 桩:`rLANG_socket/rLANG_getaddrinfo/rLANG_gethostbyname/dlopen`(ENOSYS / EAI_SYSTEM / NULL;注意该文件首行现带 UTF-8 BOM,用户编辑器引入,GCC 无害,但触碰首行须字节安全编辑);
+  - `third_party/project.mk` TASSL Configure 注入 `CFLAGS="$(rLANG_TASSL_CFLAGS)"`:`-Ddlopen=rLANG_dlopen -Dgetaddrinfo=rLANG_getaddrinfo -Dgethostbyname=rLANG_gethostbyname -Dsocket=rLANG_socket`——宏作用于整个 TASSL 编译单元(含 dso_dlfcn.c 自身定义),弱符号最终以 rLANG_* 名义存在;宿主确需真实网络/dso 时须主动提供强符号 rLANG_*(缺省阻断语义,README 同步);
+  - 效果:§9.3 原判"不可消除"的 glibc 静态链接 dlopen/getaddrinfo/gethostbyname 警告全部消失;__x509__/__diff__ 测试、dongle.h、xModule.mk 同步调整。
+- **cf88c27**:project.mk 位置修正——rLANG_TASSL_CFLAGS 定义块原插在 `BUILD_TASSL_LIBRARY_SOURCE_ROOT` 之后,`:=` 立即展开,更早的分支取到空值;上移至文件顶部(9+/9- 纯移动)。
+- **零警告基线(2026-09-05 实测)**:`make linux -j8` 与 `make aarch64-linux -j8` 均 exit 0、全日志 grep -i warning = 0(根 Makefile **没有** amd64-linux 目标,`linux` 输出即 `.bin/amd64-linux-release`)。**用户要求:后续开发持续保持 linux 与 aarch64-linux 零警告**,每次实质改动后重跑两目标自检。
+- 注意:TASSL 构建 stamp 门控(§9.3)——project.mk/dso_dlfcn.c 改动须清 stamp 重编再重链接,否则旧 libcrypto.a 继续带 glibc 警告;验证前须确认 stamp 新于 project.mk。
+
+### 10.6 X509Tests 测试项(2026-09-05, 未提交)
+
+- `src/__Testing__/__dongle__/main.cc` 新增测试项 **index 18 = X509Tests**(X509 验签原语真机测试),子模式由 argv_[1] 选择:0/缺省 = P256 链 | 1 = SM2 链 | 2 = RSA2048 自签 CA(单证书)。
+- **证书通道(用户决策)**:证书 DER 在进入测试前由 host/模拟器 `WriteX509Certs` 写入 **dashboard[0, 4KB)**(factory dataFile 0xFFFF **匿名可写区**,与 Initialize.dongle 的 `kOffsetX509Chain = 4*1024` 注释同源约定);测试内三平台统一 `ReadDataFile` 加载到 InOutBuf[360, 1024) 证书区。blob = [u16 leaf_len][u16 ca_len][leaf][ca];`kX509CertOffset = 360`,编译期断言 `sizeof(Context_t) == 360`。
+- **固件 rodata 约束**(用户确认"ukey 下 rodata 不可读"):内置证书数组仅 `!__RockeyARM__` 构建编译(linux/aarch64/foobar/wasm),固件零静态数据;链接脚本 rodata/data 空断言兜底验证。
+- 内置证书:TASSL/BabaSSL libcrypto(gen/System 版本,仅无网络功能)生成——P256 CA+叶 610B、SM2 CA+叶 609B、**RSA2048 v1 自签 664B 恰好占满证书区**;统一有效期 2020-01-01~2030-01-01(GeneralizedTime);叶 issuer 指向 CA 名(自签判定负例用);RSA v1 无扩展最小化体积;生成时 OpenSSL `X509_verify` 交叉验证=1。
+- 覆盖:严格 DER 解析、X509CheckTime 固定 epoch 警告位(2025-06-01 窗口内 / 2035-01-01 After / 2015-01-01 Before,不取设备 RTC)、X509GetPublicKey(SPKI 分派,RSA e=65537 校验)、X509ExtNext 遍历(BC/KU critical)、链验签/自签根、篡改负例(CA 公钥 X/N 字节、叶签名首字节)、尾随字节与空/超长证书拒绝。
+- **设备端 rsa_pub 就地覆写签名区的处理**:单证书 RSA 负例用栈上 256B 备份恢复(master.cc OpManager_VerifyWorldPublic 栈上 world 同款思路);ExtendBuf 仅作 X509VerifySignature work 区(304B),**不可跨 FTRX 调用保数据**;EC 验签不覆写签名区,无需备份。dashboard 原件(flash)在每次调用开头重写,两轮协议天然稳定。
+- 验证:foobar 三子模式两轮 0 错;linux/aarch64-linux **零警告**;`make dongle` 通过(rodata/data 空断言、bss≤16);X509 代码已链入 rockey_dongle(59 个 X509 符号,text 48656B);stack-check 0 违规(RockeyTrust 不受影响,仍 49024B);紧凑回归(1..8+18×3,两轮)与 §9.1 基线一致(i8 的 124/126 源于用户本轮 KeyExec 模拟器循环 10000→1000 的改动,与本次无关)。
+- **真机检查点**:① COS rsa_pub 解填充行为(SHA256 DigestInfo 51B 分支;SHA384/512 本机无法验证);② work 区摘要缓冲在 COS 调用期间的存活(X509VerifySignature 的"证书在 InOutBuf、work 在 ExtendBuf"设计首次真机验证);③ SM2 sm2_verify 的 e=SM3(Z_A||tbs) 语义(注释称真机已验证)。
