@@ -1,4 +1,4 @@
-/*
+﻿/*
  * Copyright 2000-2019 The OpenSSL Project Authors. All Rights Reserved.
  *
  * Licensed under the OpenSSL license (the "License").  You may not use
@@ -20,6 +20,40 @@
 
 #include "dso_local.h"
 #include "e_os.h"
+
+#ifdef __linux__
+
+#include <sys/types.h>
+#include <dlfcn.h>
+#include <sys/socket.h>
+#include <netdb.h>
+#include <errno.h>
+
+__attribute__((weak)) int rLANG_socket(int domain, int type, int protocol) {
+  errno = ENOSYS;
+  return -1;
+}
+
+__attribute__((weak)) int rLANG_getaddrinfo(const char* node,
+                                            const char* service,
+                                            const struct addrinfo* hints,
+                                            struct addrinfo** res) {
+  errno = ENOSYS;
+  return EAI_SYSTEM;
+}
+
+__attribute__((weak)) struct hostent* rLANG_gethostbyname(const char* name){
+  errno = ENOSYS;
+  return NULL;
+}
+
+__attribute__((weak)) void* dlopen(const char* filename, int flags){
+  errno = ENOSYS;
+  return NULL;
+}
+
+#endif /* __linux__ */
+
 
 #ifdef DSO_DLFCN
 

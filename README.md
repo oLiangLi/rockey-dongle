@@ -1,4 +1,4 @@
-# Rockey-dongle 在 Rockey-ARM 上实现了一套常用的密码学套件, 可以在 dongle 中比较安全的执行自定义的代码
+﻿# Rockey-dongle 在 Rockey-ARM 上实现了一套常用的密码学套件, 可以在 dongle 中比较安全的执行自定义的代码
 
 ## 如何编译程序 ...
 - make -j8 && make foobar -j8 && make dongle -j8 && make wasm -j8 && npm run release ...
@@ -25,7 +25,7 @@
 ## 移植的额外支持的非对称加密算法, 额外移植的算法速度很慢, 应该优先使用硬件自带的
 
 - X25519
-- Ed25519, 由于 RockeyARM 可用内存略小, 有轻微的堆栈溢出而覆盖 InOutBuf 底部
+- Ed25519
 - Secp256r1 ECDSA/ECDH, 支持压缩格式
 - Secp256k1 ECDSA/ECDH, 支持压缩格式
 

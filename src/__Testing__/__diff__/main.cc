@@ -1,4 +1,4 @@
-/*! 交叉验证:Interface/curve25519.cc(dongle 路径, 含 2026-09-04 紧凑版标量运算)
+﻿/*! 交叉验证:Interface/curve25519.cc(dongle 路径, 含 2026-09-04 紧凑版标量运算)
  *! 与 base/crypto.cc(ref10 64 位实现, RFC 8032 向量验证过)互验。
  *! 另含 RFC 8032 / RFC 7748 官方向量经 dongle 路径的逐字节比对。 */
 #include <Interface/dongle.h>
@@ -7,12 +7,10 @@
 rLANG_DECLARE_MACHINE
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("diff");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("@diff");
 }
 
-rLANG_DECLARE_END
-
-int main() {
+rLANGEXPORT int main() {
   using namespace machine;
   using namespace machine::dongle;
 
@@ -90,6 +88,8 @@ int main() {
     static const uint8_t kOut2[] = {0x95, 0xcb, 0xde, 0x94, 0x76, 0xe8, 0x90, 0x7d, 0x7a, 0xad, 0xe4, 0x5c, 0xb4, 0xb8, 0x73, 0xf8,
                                     0x8b, 0x59, 0x5a, 0x68, 0x79, 0x9f, 0xa1, 0x52, 0xe6, 0xf8, 0xf7, 0x64, 0x0a, 0x98, 0xcb, 0xd7};
     Curve25519 curve;
+
+    std::ignore = kOut2;
 
     uint8_t out[32], b32[32];
     int e_x1 = 0, e_x2 = 0;
@@ -170,3 +170,5 @@ int main() {
   rlLOGI(TAG, "__diff__ total error = %d", error);
   return error;
 }
+
+rLANG_DECLARE_END

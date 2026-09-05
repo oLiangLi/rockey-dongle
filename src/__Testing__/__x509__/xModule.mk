@@ -1,4 +1,4 @@
-LOCAL_PATH := $(my-dir)
+﻿LOCAL_PATH := $(my-dir)
 
 $(call clear-local-vars)
 LOCAL_MODULE := __Testing__x509__
@@ -6,8 +6,6 @@ LOCAL_MODULE := __Testing__x509__
 $(call add_general_source_files_under, $(LOCAL_PATH))
 $(call module_depends, rockey base)
 
-ifeq ("$(X4C_BUILD)","native")
-$(call build-library)
-else
+ifneq ("$(X4C_BUILD)","native")
 $(call build-executable)
 endif

@@ -3,6 +3,10 @@
 #ifndef __WTINC_DONGLE_PUBLIC__
 #define __WTINC_DONGLE_PUBLIC__
 
+#ifdef _WIN32
+#include <windows.h>
+#endif /* _WIN32 */
+
 #include <base/base.h>
 #include <memory>
 #include <tuple>
@@ -21,14 +25,10 @@
 #include <openssl/sm2.h>
 #include <openssl/sm3.h>
 #include <openssl/sm4.h>
+#include <openssl/pem.h>
+#include <openssl/x509.h>
+#include <openssl/x509v3.h>
 #endif /* X_BUILD_native */
-
-#ifdef _WIN32
-#include <malloc.h>
-#include <windows.h>
-#else /* _WIN32 */
-#include <alloca.h>
-#endif /* _WIN32 */
 
 rLANG_DECLARE_MACHINE
 

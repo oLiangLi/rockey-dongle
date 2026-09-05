@@ -1,25 +1,13 @@
-/*! X509 原语测试:主机侧(TASSL/OpenSSL)现场生成 RSA2048/P256/SM2 CA+叶证书,
- *! 与 OpenSSL X509_verify 对照, 覆盖正反例/严格 DER/字段与扩展提取/时间警告。
- *! 仅主机侧(arm-none-eabi 固件目标无 OpenSSL, 编译为空 TU)。 */
-#if !defined(__RockeyARM__)
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/x509.h>
-#include <base/base.h>
-#include <openssl/evp.h>
-#include <openssl/ec.h>
-#include <openssl/x509.h>
-#include <openssl/x509v3.h>
-#include <openssl/pem.h>
 #include <vector>
 #include <time.h>
 
 AGINX_DECLARE_MACHINE
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("x509");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("@x509");
 }
-
-AGINX_DECLARE_END
 
 namespace {
 
@@ -128,7 +116,7 @@ bool OpenSSLVerify(const CertPair& c) {
 
 }  // namespace
 
-int main() {
+rLANGEXPORT int main() {
   using namespace machine;
   using namespace machine::dongle;
 
@@ -356,4 +344,5 @@ int main() {
   rlLOGI(TAG, "__x509__ total error = %d", error);
   return error;
 }
-#endif /* !__RockeyARM__ */
+
+AGINX_DECLARE_END
