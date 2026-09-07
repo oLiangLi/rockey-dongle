@@ -357,3 +357,13 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
   - **设备 1(已初始化):每轮恒 +1 错**,定位为收尾 `ExecuteExeFile return -1 / F0000003`(main.cc `if (result3 < 0) ++result`),而设备 0 为 `return 0, mainRet -9`——**该设备应用固件不接受 exe 传输**(§10.7 "设备固件不一致"担忧在第二把成立)。**扣除该 +1 后,设备 1 各索引测试主体错误数与设备 0 逐项相等**,X509 三子模式 `total error = 0`、`Test.18 return 0`。
   - 失败码构成差异:设备 1 前奏**无 F0000006**(已初始化设备 ChangePIN/ResetUserPIN 不再报"未初始化"),日志为 F0000008/F000000F + 1×F0000003(ExecuteExeFile);设备 0 为 6×F0000006 + 2×F0000008 前奏(§10.11)。
 - **结论**:两把设备的文件/密钥类主体错误一致且复现 §10.11 基线——设备状态(无密钥/匿名权限)性预期失败,非回归;host 侧算法/X509 全 0。设备 1 的 +1 是 ExecuteExeFile 传输差异,勿误判为测试失败。
+
+### 10.13 2026-09-07 Windows emsdk 3.1.64 安装(make wasm 可生成)
+
+> 用户要求在本机装好 emsdk 使 `make wasm -j8` 正确生成。github 直连不可达;emcc 3.1.64 下载源(storage.googleapis.com / nodejs.org / python.org)直连可达,emsdk **源码**自 WSL `/opt/dev/emsdk`(同版本 3.1.64)打包拷贝,二进制安装走代理 **10.20.20.124:8001**(用户提供;下载失败时使用)。
+
+- 安装位置:**`C:\Users\liangli\emsdk`**(node 18.20.3 / nuget python 3.9.2 / upstream LLVM 全套装);`emsdk.bat activate 3.1.64` 已完成。
+- **用户级环境已持久化**(新终端生效):`EMSDK=C:/Users/liangli/emsdk`、`EMSDK_PYTHON`、`EMSDK_NODE`,PATH 前置 `%EMSDK%\shim;%EMSDK%;%EMSDK%\upstream\emscripten`。
+- **⚠️ cygwin 桥(shim)必要**:x4c 经 cygwin make 调用 `emcc/em++`(POSIX sh 包装),直接执行会因 (a) `exec` Windows 反斜杠 python 路径失败、(b) 原生 python 收到 `/cygdrive/...` 脚本路径被误解、(c) `-I/cygdrive/x/...` 绝对 include 原样传给 clang 而找不到头。`C:\Users\liangli\emsdk\shim\{emcc,em++,emar,emranlib}` 包装器解决:exe 用 `cygpath -u` 的 POSIX 路径 exec,脚本与含 `/cygdrive/` 的参数(含 `-I/-L` 前缀)用 `cygpath -m` 转 `C:/...` 后再交给原生 python。
+- **`make wasm X4C_NODE=node -j8` exit 0(本会话两轮验证,幂等)**:全部 `.wasm` 产出至 `.bin/wasm-emscripten-release`(dongle_entry/Emulator/Script/__Testing__* 共 11 个),wasm-opt 输出 `Web/Assembly/{Script,Emulator}.wasm` + 对应 `_wasm.ts`。TASSL(wasm)沿用 9/5 gen/System 产物(stamp 门控,与 emsdk 同 3.1.64);此前曾误判需重编,实际 clean-wasm 不清 gen。
+- 备注:wasmjs(wasmjs.conf)同工具链,§9.3 的 pki.cc rLANGIMPORT 链接问题未在本会话验证;构建时发现工作树另有两处**非本会话**的 clang-format 改动(.clang-format 补 AGINX 宏、__x509__/main.cc 折行,疑为用户编辑器),未提交。

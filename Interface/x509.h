@@ -19,13 +19,13 @@ namespace dongle {
 
 enum X509SigType {
   kX509SigUnknown = 0,
-  kX509SigRSA_SHA256 = 1,   /* sha256WithRSAEncryption (1.2.840.113549.1.1.11) */
-  kX509SigP256_SHA256 = 2,  /* ecdsa-with-SHA256 (1.2.840.10045.4.3.2) */
-  kX509SigSM2_SM3 = 3,      /* SM2-with-SM3 (1.2.156.10197.1.501) */
-  kX509SigRSA_SHA384 = 4,   /* sha384WithRSAEncryption (1.2.840.113549.1.1.12) */
-  kX509SigRSA_SHA512 = 5,   /* sha512WithRSAEncryption (1.2.840.113549.1.1.13) */
-  kX509SigP256_SHA384 = 6,  /* ecdsa-with-SHA384 (1.2.840.10045.4.3.3) */
-  kX509SigP256_SHA512 = 7,  /* ecdsa-with-SHA512 (1.2.840.10045.4.3.4) */
+  kX509SigRSA_SHA256 = 1,  /* sha256WithRSAEncryption (1.2.840.113549.1.1.11) */
+  kX509SigP256_SHA256 = 2, /* ecdsa-with-SHA256 (1.2.840.10045.4.3.2) */
+  kX509SigSM2_SM3 = 3,     /* SM2-with-SM3 (1.2.156.10197.1.501) */
+  kX509SigRSA_SHA384 = 4,  /* sha384WithRSAEncryption (1.2.840.113549.1.1.12) */
+  kX509SigRSA_SHA512 = 5,  /* sha512WithRSAEncryption (1.2.840.113549.1.1.13) */
+  kX509SigP256_SHA384 = 6, /* ecdsa-with-SHA384 (1.2.840.10045.4.3.3) */
+  kX509SigP256_SHA512 = 7, /* ecdsa-with-SHA512 (1.2.840.10045.4.3.4) */
 };
 
 /*! 解析视图:所有 offset/len 相对证书 DER 起点, 就地零拷贝 */
@@ -65,9 +65,9 @@ struct X509Ext {
 
 enum {
   kX509TimeOK = 0,
-  kX509TimeBefore = 1,       /* now < notBefore */
-  kX509TimeAfter = 2,        /* now > notAfter */
-  kX509TimeUnavailable = 4,  /* 时间无法解析/年份超出可表示范围 */
+  kX509TimeBefore = 1,      /* now < notBefore */
+  kX509TimeAfter = 2,       /* now > notAfter */
+  kX509TimeUnavailable = 4, /* 时间无法解析/年份超出可表示范围 */
 };
 
 /*! 严格 DER 解析(拒绝 indefinite 长度/非规范编码/尾随字节/负 INTEGER), 失败返回负值 */
@@ -84,8 +84,13 @@ int X509ExtNext(const X509View* view, const uint8_t* der, size_t size, X509Ext* 
  *! FIPS 186-4 §6.4);SM2: 固定 SM3(e = SM3(Z_A||tbs) 由硬件/宿主库内部计算)。
  *! work/work_size: 工作区(OpCode 传 ExtendBuf 区域), 需 >= 304B(Sha*Ctx 各 240B + md 缓冲 64B);
  *! 哈希上下文与摘要缓冲都在 work 内做, 不落栈 */
-int X509VerifySignature(Dongle* dongle, const uint8_t* leaf, size_t leaf_size, const uint8_t* ca_cert,
-                        size_t ca_cert_size, void* work, size_t work_size);
+int X509VerifySignature(Dongle* dongle,
+                        const uint8_t* leaf,
+                        size_t leaf_size,
+                        const uint8_t* ca_cert,
+                        size_t ca_cert_size,
+                        void* work,
+                        size_t work_size);
 
 /*! 链引导:issuer==subject 且用自身 SPKI 验签 */
 int X509VerifySelfSigned(Dongle* dongle, const uint8_t* cert, size_t cert_size, void* work, size_t work_size);

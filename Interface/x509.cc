@@ -20,17 +20,41 @@ namespace {
 
 /* ---- OID 立即数比对(禁止 static const 数组:固件 rodata 必须为空) ---- */
 
-bool oid_eq_9(const uint8_t* p, size_t n, uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5,
-              uint8_t a6, uint8_t a7, uint8_t a8) {
+bool oid_eq_9(const uint8_t* p,
+              size_t n,
+              uint8_t a0,
+              uint8_t a1,
+              uint8_t a2,
+              uint8_t a3,
+              uint8_t a4,
+              uint8_t a5,
+              uint8_t a6,
+              uint8_t a7,
+              uint8_t a8) {
   return n == 9 && p[0] == a0 && p[1] == a1 && p[2] == a2 && p[3] == a3 && p[4] == a4 && p[5] == a5 && p[6] == a6 &&
          p[7] == a7 && p[8] == a8;
 }
-bool oid_eq_8(const uint8_t* p, size_t n, uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5,
-              uint8_t a6, uint8_t a7) {
+bool oid_eq_8(const uint8_t* p,
+              size_t n,
+              uint8_t a0,
+              uint8_t a1,
+              uint8_t a2,
+              uint8_t a3,
+              uint8_t a4,
+              uint8_t a5,
+              uint8_t a6,
+              uint8_t a7) {
   return n == 8 && p[0] == a0 && p[1] == a1 && p[2] == a2 && p[3] == a3 && p[4] == a4 && p[5] == a5 && p[6] == a6 &&
          p[7] == a7;
 }
-bool oid_eq_7(const uint8_t* p, size_t n, uint8_t a0, uint8_t a1, uint8_t a2, uint8_t a3, uint8_t a4, uint8_t a5,
+bool oid_eq_7(const uint8_t* p,
+              size_t n,
+              uint8_t a0,
+              uint8_t a1,
+              uint8_t a2,
+              uint8_t a3,
+              uint8_t a4,
+              uint8_t a5,
               uint8_t a6) {
   return n == 7 && p[0] == a0 && p[1] == a1 && p[2] == a2 && p[3] == a3 && p[4] == a4 && p[5] == a5 && p[6] == a6;
 }
@@ -173,23 +197,34 @@ static bool is_leap(int y) {
     ++q;
   }
   if (y != 0)
-    return true; /* y%4==0 且 y%100!=0 */
+    return true;       /* y%4==0 且 y%100!=0 */
   return 0 == (q & 3); /* 整除 100:看 400 */
 }
 
 static int days_before_month(int m /* 1..12 */) {
   int d = 0;
-  if (m > 1) d += 31;
-  if (m > 2) d += 28;
-  if (m > 3) d += 31;
-  if (m > 4) d += 30;
-  if (m > 5) d += 31;
-  if (m > 6) d += 30;
-  if (m > 7) d += 31;
-  if (m > 8) d += 31;
-  if (m > 9) d += 30;
-  if (m > 10) d += 31;
-  if (m > 11) d += 30;
+  if (m > 1)
+    d += 31;
+  if (m > 2)
+    d += 28;
+  if (m > 3)
+    d += 31;
+  if (m > 4)
+    d += 30;
+  if (m > 5)
+    d += 31;
+  if (m > 6)
+    d += 30;
+  if (m > 7)
+    d += 31;
+  if (m > 8)
+    d += 31;
+  if (m > 9)
+    d += 30;
+  if (m > 10)
+    d += 31;
+  if (m > 11)
+    d += 30;
   return d;
 }
 
@@ -234,7 +269,10 @@ static int64_t parse_time(const uint8_t* s, size_t len) {
 
 /* ---- 验签路径内部 ---- */
 
-static int spki_rsa(const X509View* view, const uint8_t* ca_cert, const uint8_t** out_n, size_t* out_n_len,
+static int spki_rsa(const X509View* view,
+                    const uint8_t* ca_cert,
+                    const uint8_t** out_n,
+                    size_t* out_n_len,
                     uint32_t* out_e) {
   /* SPKI 内容 = SEQUENCE { INTEGER n, INTEGER e } */
   DerCursor c = {ca_cert + view->off_spki_pub, ca_cert + view->off_spki_pub + view->len_spki_pub};
@@ -692,7 +730,11 @@ static int sig_digest_len(uint8_t sig_type) {
 /*! 计算 tbs 摘要:哈希上下文放 work[0..240), 摘要缓冲放 work[240..304), 不落栈;
  *! 三种 Sha*Ctx 均为 240B(同一 rlCryptoShaCtx), work 布局与算法无关。
  *! 成功返回 0(摘要经 out_md 传出, 长度由 sig_type 决定), work_size 不足返回 -ENOBUFS。 */
-static int x509_hash_tbs(void* work, size_t work_size, uint8_t sig_type, const uint8_t* tbs, size_t len,
+static int x509_hash_tbs(void* work,
+                         size_t work_size,
+                         uint8_t sig_type,
+                         const uint8_t* tbs,
+                         size_t len,
                          const uint8_t** out_md) {
   if (work_size < sizeof(Sha512Ctx) + Dongle::kX509DigestSHA512)
     return -ENOBUFS;
@@ -710,8 +752,13 @@ static int x509_hash_tbs(void* work, size_t work_size, uint8_t sig_type, const u
   return 0;
 }
 
-int X509VerifySignature(Dongle* dongle, const uint8_t* leaf, size_t leaf_size, const uint8_t* ca_cert,
-                        size_t ca_cert_size, void* work, size_t work_size) {
+int X509VerifySignature(Dongle* dongle,
+                        const uint8_t* leaf,
+                        size_t leaf_size,
+                        const uint8_t* ca_cert,
+                        size_t ca_cert_size,
+                        void* work,
+                        size_t work_size) {
   if (!dongle || !leaf || !ca_cert || !work)
     return -EINVAL;
   if (work_size < sizeof(Sha512Ctx) + Dongle::kX509DigestSHA512)
@@ -817,7 +864,8 @@ int X509VerifySelfSigned(Dongle* dongle, const uint8_t* cert, size_t cert_size, 
   int r = X509Parse(&view, cert, cert_size);
   if (0 != r)
     return r;
-  if (view.len_issuer != view.len_subject || 0 != memcmp(cert + view.off_issuer, cert + view.off_subject, view.len_issuer))
+  if (view.len_issuer != view.len_subject ||
+      0 != memcmp(cert + view.off_issuer, cert + view.off_subject, view.len_issuer))
     return -EBADMSG;
   return X509VerifySignature(dongle, cert, cert_size, cert, cert_size, work, work_size);
 }

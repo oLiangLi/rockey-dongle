@@ -1,7 +1,7 @@
 ﻿#include <Interface/dongle.h>
 #include <Interface/x509.h>
-#include <vector>
 #include <time.h>
+#include <vector>
 
 AGINX_DECLARE_MACHINE
 
@@ -55,8 +55,12 @@ EVP_PKEY* NewECKey(int nid) {
 }
 
 /*! 生成 CA(自签) + 叶证书(CA 签发), 返回 DER;ca/leaf 密钥类型可不同(混合链) */
-int MakeChain(int ca_key_nid /* 0 = RSA2048 */, int leaf_key_nid /* 0 = RSA2048 */, const EVP_MD* md,
-              const char* cn_ca, const char* cn_leaf, CertPair* out) {
+int MakeChain(int ca_key_nid /* 0 = RSA2048 */,
+              int leaf_key_nid /* 0 = RSA2048 */,
+              const EVP_MD* md,
+              const char* cn_ca,
+              const char* cn_leaf,
+              CertPair* out) {
   EVP_PKEY* ca_key = (ca_key_nid == 0) ? NewRSAKey() : NewECKey(ca_key_nid);
   EVP_PKEY* leaf_key = (leaf_key_nid == 0) ? NewRSAKey() : NewECKey(leaf_key_nid);
 
@@ -128,19 +132,22 @@ rLANGEXPORT int main() {
   {
     CertPair chains[8];
     if (0 != MakeChain(0, 0, EVP_sha256(), "RSA Root CA", "RSA Leaf", &chains[0]) ||
-        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha256(), "P256 Root CA", "P256 Leaf", &chains[1]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha256(), "P256 Root CA", "P256 Leaf",
+                       &chains[1]) ||
         0 != MakeChain(NID_sm2, NID_sm2, EVP_sm3(), "SM2 Root CA", "SM2 Leaf", &chains[2]) ||
         0 != MakeChain(0, 0, EVP_sha384(), "RSA384 Root CA", "RSA384 Leaf", &chains[3]) ||
         0 != MakeChain(0, 0, EVP_sha512(), "RSA512 Root CA", "RSA512 Leaf", &chains[4]) ||
-        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha384(), "P256384 Root CA", "P256384 Leaf", &chains[5]) ||
-        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha512(), "P256512 Root CA", "P256512 Leaf", &chains[6]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha384(), "P256384 Root CA", "P256384 Leaf",
+                       &chains[5]) ||
+        0 != MakeChain(NID_X9_62_prime256v1, NID_X9_62_prime256v1, EVP_sha512(), "P256512 Root CA", "P256512 Leaf",
+                       &chains[6]) ||
         0 != MakeChain(NID_X9_62_prime256v1, 0, EVP_sha256(), "P256 Root CA", "RSA Leaf", &chains[7])) {
       rlLOGE(TAG, "MakeChain failed");
       ++error;
     }
 
-    static const uint8_t kExpectType[8] = {kX509SigRSA_SHA256, kX509SigP256_SHA256, kX509SigSM2_SM3,
-                                           kX509SigRSA_SHA384, kX509SigRSA_SHA512, kX509SigP256_SHA384,
+    static const uint8_t kExpectType[8] = {kX509SigRSA_SHA256,  kX509SigP256_SHA256, kX509SigSM2_SM3,
+                                           kX509SigRSA_SHA384,  kX509SigRSA_SHA512,  kX509SigP256_SHA384,
                                            kX509SigP256_SHA512, kX509SigP256_SHA256};
 
     for (int i = 0; i < 8; ++i) {
@@ -172,7 +179,8 @@ rLANGEXPORT int main() {
       }
 
       /* 链验签 */
-      if (0 != X509VerifySignature(&rockey, c.leaf.data(), c.leaf.size(), c.ca.data(), c.ca.size(), work, sizeof(work))) {
+      if (0 !=
+          X509VerifySignature(&rockey, c.leaf.data(), c.leaf.size(), c.ca.data(), c.ca.size(), work, sizeof(work))) {
         rlLOGE(TAG, "chain %d: X509VerifySignature(leaf, ca) failed", i);
         ++error;
       }
@@ -206,14 +214,16 @@ rLANGEXPORT int main() {
       /* 篡改签名 → 验签必须失败 */
       std::vector<uint8_t> tampered = c.leaf;
       tampered[tampered.size() - 1] ^= 0x01;
-      if (0 == X509VerifySignature(&rockey, tampered.data(), tampered.size(), c.ca.data(), c.ca.size(), work, sizeof(work))) {
+      if (0 == X509VerifySignature(&rockey, tampered.data(), tampered.size(), c.ca.data(), c.ca.size(), work,
+                                   sizeof(work))) {
         rlLOGE(TAG, "chain %d: tampered signature accepted!", i);
         ++error;
       }
 
       /* 错误 CA(交叉) → 失败 */
       const auto& other = chains[(i + 1) % 8];
-      if (0 == X509VerifySignature(&rockey, c.leaf.data(), c.leaf.size(), other.ca.data(), other.ca.size(), work, sizeof(work))) {
+      if (0 == X509VerifySignature(&rockey, c.leaf.data(), c.leaf.size(), other.ca.data(), other.ca.size(), work,
+                                   sizeof(work))) {
         rlLOGE(TAG, "chain %d: wrong CA accepted!", i);
         ++error;
       }
@@ -264,8 +274,8 @@ rLANGEXPORT int main() {
       uint8_t pub[260];
       size_t size_pub = 0;
       uint8_t sig_type = 0;
-      if (0 != X509GetPublicKey(chains[0].ca.data(), chains[0].ca.size(), pub, &size_pub, &sig_type) || size_pub != 260 ||
-          sig_type != kX509SigRSA_SHA256) {
+      if (0 != X509GetPublicKey(chains[0].ca.data(), chains[0].ca.size(), pub, &size_pub, &sig_type) ||
+          size_pub != 260 || sig_type != kX509SigRSA_SHA256) {
         rlLOGE(TAG, "X509GetPublicKey RSA failed size=%zu type=%d", size_pub, sig_type);
         ++error;
       } else {
@@ -278,8 +288,7 @@ rLANGEXPORT int main() {
         RSA_get0_key(rsa, &n, &e, nullptr);
         uint8_t nbuf[256];
         BN_bn2binpad(n, nbuf, 256);
-        if (0 != memcmp(pub + 4, nbuf, 256) || BN_get_word(e) != 65537 ||
-            0 != memcmp(pub, "\x01\x00\x01\x00", 4)) {
+        if (0 != memcmp(pub + 4, nbuf, 256) || BN_get_word(e) != 65537 || 0 != memcmp(pub, "\x01\x00\x01\x00", 4)) {
           rlLOGE(TAG, "X509GetPublicKey RSA mismatch");
           ++error;
         }
