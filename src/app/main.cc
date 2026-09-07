@@ -197,30 +197,129 @@ static int RockeyARM_VerifyExecvHelper(uint16_t opCode, uint16_t verify, RockeyA
 }
 
 static int RockeyARM_Lock(RockeyARM* dongle, const char* hid) {
-  char sPIN[20];
-  uint8_t zPIN[8];
+  dongle::Dongle::SecretBuffer<20, char> sPIN;
+  dongle::Dongle::SecretBuffer<8> zPIN;
 
   RAND_bytes(zPIN, sizeof(zPIN));
-  if (0 != dongle->RandBytes((uint8_t*)sPIN, sizeof(sPIN)))
+  if (0 != dongle->RandBytes((uint8_t*)&sPIN[0], sizeof(sPIN)))
     return -EFAULT;
   for (int i = 0; i < 8; ++i)
     zPIN[i] ^= sPIN[i];
 
   rl_HEX_Write(sPIN, zPIN, 8);
 
-#if !defined(rLANG_CONFIG_DONGLE_FINAL_LOCK) || 10086 != rLANG_CONFIG_DONGLE_FINAL_LOCK
   /**
-   *! TODO: LiangLI, 将 sPIN 加密到预置的 gpg-pubkey 或者 K0/K1/K2/K3 SM2ECIES-pubkey ...
+   *! 使用环境变量 WT_DONGLE_FINAL_LOCK 控制是否在 factory-lock 时输出修改后的管理员PIN码 ...
    *! 1) Initialize + EnTrust 以及功能脚本签名必须在物理隔离的可信环境执行 ...
-   *! 2) 离开可信环境前 ***必须*** 锁定 u-key ...
-   **/
-  for (int i = 0; i < 3; ++i) {
-    rlLOGW(TAG, "%d) RockeyARM_Lock <%s> HPIN <%s>", i, hid, sPIN);
+   *! 2) 环境变量应该被设置为 **绝对信任的** EnTrust.pubkey, 它在必要时可以解密管理员PIN码 ...
+   *! 3) 不设置环境变量或者设置为 plaintext **只能在测试环境中使用***
+   *! 4) 离开可信环境前 ***必须*** 锁定 u-key ...
+   */
+#ifndef rLANG_ROCKEY_DEBUG_LOCK
+#define rLANG_ROCKEY_DEBUG_LOCK 0
+#endif /* rLANG_ROCKEY_DEBUG_LOCK */
+
+  /* escrow 记录字段序(与 SM2Cipher_ASN1ToText 一致, 见 dongle.cc):
+   *! X[0..32) | Y[32..64) | C2[64..96) | C3[96..128), 共 128B
+   *! 输出 = base64(cipher[0..48)) + base64(cipher[48..96)) + base64(cipher[96..128))
+   *! KID = EnTrust 槽位编号(3B, hex) */
+  char ehid[32] = {0}, kid[8] = {0}, line[3][80] = {{0}};
+  bool escrow_used = false;
+
+  const char* lock = getenv("WT_DONGLE_FINAL_LOCK");
+  if (!lock || 0 == strcmp("plaintext", lock)) {
+    for (int timeout = 3; timeout > 0; --timeout) {
+      rlLOGE(TAG, "%d) RockeyARM_Lock will output the Admin-PIN in plain text. Press Ctrl+C to exit", timeout);
+#ifdef _WIN32
+      Sleep(3000);
+#else  /* _WIN32 */
+      usleep(3000000);
+#endif /* _WIN32 */
+    }
+
+    for (int i = 0; i < 3; ++i) {
+      rlLOGW(TAG, "%d) RockeyARM_Lock <%s> HPIN <%s>", i, hid, static_cast<const char*>(sPIN));
+    }
+  } else {
+    uint8_t EnTrust[80]; /* hid[12] | kid[3] | Zero | x[32] | y[32] */
+    auto parse_entrust = [&] {
+      const size_t len = strlen(lock);
+      /* 规范 80B base64 = 108 字符且以 '=' 结尾;
+       * 否则无填充输入会被 rl_BASE64_Read 解出 81B → 越界写 EnTrust[80] */
+      if (len != (size_t)((80 + 2) / 3 * 4) || '=' != lock[len - 1])
+        return false;
+      uint8_t decoded[128];
+      if (80 != rl_BASE64_Read(decoded, lock, -1) || 0 != decoded[15])
+        return false;  /// sizeof(EnTrust) == 80 && EnTrust[15] == 0
+      memcpy(EnTrust, decoded, sizeof(EnTrust));
+      uint8_t value = 0;
+      for (int i = 0; i < 12; ++i)
+        value |= EnTrust[i];
+      if (0 == value)
+        return false;  /// HID != 0
+      return 0 == dongle->CheckPointOnCurveSM2(&EnTrust[16], &EnTrust[48]);
+    };
+
+    if (!parse_entrust()) {
+      rlLOGE(TAG, "[EnTrust.Check] %s Failed!", lock);
+      return -EFAULT;
+    }
+
+    uint8_t text[32], cipher[96 + 32];
+    int result = dongle->RandBytes(text, sizeof(text));
+    if (0 != result)
+      return result;
+
+    strcpy(reinterpret_cast<char*>(text), sPIN);
+    result = dongle->SM2Encrypt(&EnTrust[16], &EnTrust[48], text, sizeof(text), cipher);
+    if (result < 0)
+      return result;
+
+#if rLANG_ROCKEY_DEBUG_LOCK
+    rlLOGE(TAG, "sPIN: %s", static_cast<const char*>(sPIN));
+#endif /* rLANG_ROCKEY_DEBUG_LOCK */
+
+    StringFromHID(ehid, &EnTrust[0]);
+    rl_HEX_Write(kid, &EnTrust[12], 3);
+    rl_BASE64_Write(line[0], &cipher[0], 48);
+    rl_BASE64_Write(line[1], &cipher[48], 48);
+    rl_BASE64_Write(line[2], &cipher[96], 32);
+    escrow_used = true;
+
+    /* PIN 明文(PIN+NUL+随机尾)不再需要, 立即清零 */
+    {
+      volatile uint8_t* p = text;
+      for (size_t i = 0; i < sizeof(text); ++i)
+        p[i] = 0;
+    }
+
+    /* ⚠️ escrow 记录必须先于 ChangePIN 输出:
+     * 若 ChangePIN 期间程序 Crash, ukey 的 Admin PIN 可能已被修改而日志未出 → 新 PIN 永久丢失;
+     * 先输出记录, 新 PIN 总能由可信任设备解密恢复。若随后 ChangePIN 失败, 默认 Admin PIN 与
+     * escrow 记录解密出的新 Admin PIN 两者测试必然解锁其一(见函数尾失败提示)。 */
+    for (int timeout = 3; timeout > 0; --timeout) {
+      rlLOGW(TAG,
+             "%d RockeyARM_Lock <%s> Confirm? (Press Ctrl+C to exit)\n\n----- BEGIN ROKEY-LOCK ENTRUST -----\nHID: "
+             "%s, E-HID: %s, KID: %s\nLAYOUT: X[0,32)|Y[32,64)|C2[64,96)|C3[96,128) [128B]\n\n%s\n%s\n%s\n"
+             "----- END ROKEY-LOCK ENTRUST -----\n\n",
+             timeout, hid, hid, ehid, kid, line[0], line[1], line[2]);
+#ifdef _WIN32
+      Sleep(3000);
+#else  /* _WIN32 */
+      usleep(3000000);
+#endif /* _WIN32 */
+    }
   }
-#endif /* rLANG_CONFIG_DONGLE_FINAL_LOCK */
 
   const char* const default_admin_pin_ = dongle->GetDefaultPIN(PERMISSION::kAdministrator);
-  return dongle->ChangePIN(PERMISSION::kAdministrator, default_admin_pin_, sPIN, 100);
+  const int lock_result = dongle->ChangePIN(PERMISSION::kAdministrator, default_admin_pin_, sPIN, 100);
+
+  /* escrow 记录已在 ChangePIN 前输出(见上, 崩溃安全); 此处仅处理失败提示:
+   * 默认 Admin PIN 与 escrow 可解密的新 Admin PIN 两者必中其一 */
+  if (0 != lock_result && escrow_used)
+    rlLOGE(TAG, "RockeyARM_Lock ChangePIN failed (%d)! 解锁候选: 默认 Admin PIN, 或 escrow 记录解密出的新 Admin PIN",
+           lock_result);
+  return lock_result;
 }
 
 int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, const char* hid) {

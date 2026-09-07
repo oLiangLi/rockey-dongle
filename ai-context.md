@@ -1,4 +1,4 @@
-﻿# Rockey-Dongle 项目审查上下文记录
+# Rockey-Dongle 项目审查上下文记录
 
 > 本文件是 2026-09-01 ~ 2026-09-02 一次完整代码审查会话的工作上下文,并持续维护至 2026-09-05(§9 复核、§10 后续提交),供后续会话/接手人直接续接工作,避免重复分析。
 > 配套交付物:`bug-analysis-report.html`(完整带样式报告,含图表)。
@@ -373,5 +373,6 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **一律建分支提交**:代码/文档改动先在 **`feat/AGINX/<有意义且唯一的名字>`** 分支上提交,由用户 squash merge;**不直接提交 master**。(§10.13 的 `bfa5c5a` 是约定确立前最后一次 master 直提。)
 - **PGP 签名**:仓库 `commit.gpgsign=true`(EDDSA B9C754…),但会话环境 gpg 必失败(keyboxd "未实现"/pinentry 不可用)→ 分支上统一 `git commit --no-gpg-sign`(无签名),签名/合并在用户侧处理。
 - **格式化约定**:改写 C++ 文件后按仓库 **`.clang-format`** 执行格式化(clang-format **19.1.5** = `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang-format.exe`,即仓库现行格式版本;`.clang-format` StatementMacros 已含 AGINX 宏)。纯 JS(`.cjs/.ts`)与 `.md` 不适用。
+- **编码约定(UTF-8 BOM)**:**非 third_party 的 C/C++/asm/ts/js 程序文件默认以带 BOM 的 UTF-8 保存**,减少 Windows 下乱码可能。要点:① third_party 源码除外(§9.3/§10.5:dso_dlfcn.c 等 GBK/首行 BOM 需字节级编辑);② clang-format 19 重写会**剥掉 BOM** → 格式化后须按本约定补回(用 `EF BB BF` 前缀,勿用编辑器重复叠加);③ 文本编辑工具(如 edit 工具整文件重写)也可能剥 BOM,收尾需检查首 3 字节。
 - 真机多设备测试:`WT_RKEY_DEVICE`(默认 0)选择 Enum 索引,两把并行时分别设 0/1(§10.12);`WT_APP_DONGLE` 仅确需更新设备固件时设置,刷写次数有限(§10.7)。
 
