@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <Interface/x509.h>
 #include <base/base.h>
 
@@ -1871,6 +1871,10 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   RockeyARM rockey;
   DONGLE_INFO dongle_info[64];
 
+  /* 多设备: WT_RKEY_DEVICE 选择 Enum 索引(默认 0), 与 WT_APP_DONGLE 同款 env 模式 */
+  const char* rkey_dev = getenv("WT_RKEY_DEVICE");
+  const int dev_index = rkey_dev ? atoi(rkey_dev) : 0;
+
   result = rockey.Enum(dongle_info);
   rlLOGI(TAG, "rockey.Enum return %d/%08x", result, rockey.GetLastError());
 
@@ -1878,7 +1882,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     rlLOGXI(TAG, &dongle_info[i], sizeof(DONGLE_INFO), "rockey.Enum %d/%d", i + 1, result);
   }
 
-  result = rockey.Open(0);
+  result = rockey.Open(dev_index);
   rlLOGI(TAG, "rockey.Open return %d/%08x", result, rockey.GetLastError());
 
   result = rockey.ResetState();
@@ -1920,7 +1924,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     result = rockey.ChangePIN(PERMISSION::kAdministrator, admin, "FFFFFFFFFFFFFFFF", 255);
     rlLOGI(TAG, "rockey.ChangePIN %d/%08x", result, rockey.GetLastError());
 
-    result = rockey.Open(0);
+    result = rockey.Open(dev_index);
     rlLOGI(TAG, "rockey.Open return %d/%08x", result, rockey.GetLastError());
 
     result = rockey.VerifyPIN(PERMISSION::kAdministrator, nullptr, nullptr);

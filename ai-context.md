@@ -304,3 +304,56 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **exit=103 不是错误**:SeedSecret 失败使 result=-1,`10086-(-1)=10087 mod 256=103`。判断 X509Tests 成败只看 "X509Tests total error"。
 - **⚠️ 设备端 FTRX 验签(§10.6 真机检查点①②③)未跑到**:本 ukey 刷的是**生产固件 RockeyTrust**——`ExecuteExeFile` mainRet 恒为 **-9**;测试固件 Start 只会返回 `10086-result`(不可能为 -9),而生产 Main 把测试 Context 当 VM 上下文解析、execute.cc 头部校验失败返回 -EBADF(-9)完全吻合。host 侧验签为 TASSL 本地(dongle.cc RSAVerifyPkcs1=RSA_verify 等,设计如此)。**要跑设备端 X509,须把 `.bin/arm-RockeyARM-native-release/rockey_dongle.bin` 测试固件刷入 ukey**;ukey 当前 Ver 0x222。
 - **刷写规则(用户 2026-09-06 告知)**:刷写经 `WT_APP_DONGLE` 环境变量(指向固件 bin,__Testing__dongle__ main.cc:1948 UpdateExeFile 路径);**ukey 刷写次数有限**——只有确实改动了设备侧程序并重编后才设置,纯测试/无改动严禁设置。
+
+### 10.8 56b8990 附带改动补录(2026-09-07 静态复核)
+
+> 56b8990(Squashed commit,2026-09-07)除更新本文件 §10.7 外还带两处小改动,当时未单独记录,复核对照代码确认:
+
+- **`src/__Testing__/__dongle__/main.cc`:SeedSecret 验证调用已删除**(用户决策 2026-09-06)——ukey 未初始化(PID=ffffffff)时 SeedSecret 必然失败(F0000006),失败值经 result 流入最终退出码(`10086-(-1) mod 256 = 103`)干扰测试结果判定;`Context->seed_` 无任何消费方,纯记录无意义。§10.7 晚补中 "exit=103 不是错误" 描述的是**删除前**的行为。
+- **`MCU/RockeyARM/xModule.mk`:install-platform 的 readelf 检查静默 stderr**(`2>/dev/null`)——readelf 对 .debug_info 的 "bogus end-of-siblings" 警告(§9.3 记为不可消除项)在安装步骤无意义,不再污染构建输出;不影响产物。
+
+### 10.9 2026-09-07 加载并验证会话记录(静态复核 + Windows 本机复验)
+
+> 目的:验证 ai-context.md 与 HEAD(56b8990)代码一致并复验关键构建/测试结论。静态复核 25+ 项声明与代码逐一吻合(§7 修复、TRNG/x509/AGINX/weak 桩等);两处 56b8990 未记录改动见 §10.8。动态复验在 **Windows 本机**(cygwin make + clang-cl/VS2022 + arm-none-eabi **14.3 rel1**)进行;**WSL2 本会话不可用**(服务 E_ACCESSDENIED),故 §10.5 的 linux/aarch64-linux 零警告基线本次未重跑。
+
+- **`make dongle`(先 clean-dongle 全量重建,避免与 9/5 WSL 旧对象混链)exit 0**:rockey_dongle.bin / RockeyTrust.bin 均 **65520B**;readelf 三段(.text R E / .bss MemSiz 0x10=16B ≤16 / g_FEI 独立),rodata/data 空断言与 bss≤16 通过。
+- **⚠️ stack-check 在 Windows 的坑**:cygwin/Windows 链接器生成的 map 用 `\` 分隔路径(`./.bin/.lib/arm-RockeyARM-native-release\librockey.a(member.o)`),工具正则只匹配 `/`,直接 `make stack-check` 只解析到 **2 个对象/4 个函数**(帧匹配 0,深度 0——**无意义**)仍返回 0。把 map 反斜杠归一化为 `/` 后直跑脚本,得完整覆盖(**24 对象/345 函数/868 调用边/帧匹配 252**)。
+- **stack-check 结果(14.3 rel1,归一化 map)**:RockeyTrust 稳态最大 **1944B/2032B,余量 88B,0 违规**(最深链 Start(376)→VM Execute(48)→OpEd25519(56)→VerifySignEd25519(24)→Ed25519::Verify(224)→ge_scalarmult_base(16)→ge_scalarmult(616)→ge_add(88)→ge_p1p1_to_p3(32)→fe_mul(464));rockey_dongle 稳态 1856B,0 违规。**⚠️ 与 §7 记录的 10.3.1 数字不同:14.3 帧更大(fe_mul 392→464、ge_scalarmult 528→616),稳态余量由 248B(10.3.1)收窄至 88B——仍 0 违规,但后续栈深改动请以 14.3 复跑为准**(map 归一化步骤在 §10.9 之前未文档化)。
+- **`make foobar`(amd64 windows debug,clang-cl)exit 0**;模拟器套件全过:25519/sha256/micro_ecc/aes **exit=10086(0 错)**;x509 `total error = 0`(篡改负例 "Verify False" 为预期);diff `total error = 0`;HelloWorld 0。
+- **`__Testing__dongle__` 紧凑回归(1..8 + 18×3,两轮,§9.1/§9.4 协议;SeedSecret 已删,无 §10.7 的 exit-103 干扰)** —— 与基线逐项一致,无回归:
+  - i1 首轮 3 错(全新镜像 Delete 不存在)→ 二轮 0;i2 两轮 **0**(H-09 无回归);i3/i5 两轮 0;i4 首轮 3 → 0;i6/i7 首轮 2 → 0。
+  - **i8 KeyExec 首轮 1002 错 / 二轮 1000 错**(exit 9084/9086 = mod 256 的 **124/126**,与 §10.6 记录精确一致,KeyExec 循环 1000 所致)。
+  - **X509Tests(index 18)P256/SM2/RSA 三子模式两轮 `total error = 0`**。
+- **结论**:HEAD 在可复验范围内无回归,文档与代码一致;唯一环境性差异是工具链帧尺寸(余量 88B vs 文档 248B)。**建议已采纳实施**:stack-check.cjs 读 map 后先 `mapText.replace(/\\/g,"/")`,Windows 上 `make stack-check` 现已直接全量可信(改后复跑:24 对象/345 函数/868 边,结果同上)。
+
+### 10.10 WSL 复验补跑:linux / aarch64-linux 零警告 + amd64-linux 套件(2026-09-07)
+
+> 首次探测误报"WSL 未装工具链"(探测脚本引号被 PowerShell→wsl 传递破坏);实际环境齐全,补跑 §10.5 零警告基线。
+
+- 环境:WSL2 **Ubuntu-22.04(x86_64)**;node **v22.21.0** 位于 **`/Machine/System/bin/node`**(Makefile 的 X4C_NODE 默认路径恰为它,含 npm/npx/pnpm/tsc;用户提示:node 主体编译为 .so,如需 nodejs native bindings 须链接 `/Machine/System/lib/libnode.so`);make/gcc/g++/`aarch64-linux-gnu-*` 在 /usr/bin 齐全。
+- **§10.5 零警告基线复验**:`make linux -j8` 与 `make aarch64-linux -j8` 均 **exit 0**,日志 `grep -ci warning` = **0**;9/7 的 `__dongle__ main.cc`(SeedSecret 删除)触发相应测试目标重编重装,非空跑。
+- **amd64-linux-release 纯软件套件与 §10.7 完全一致**:25519/sha256/micro_ecc/aes **exit=102(0 错)**;x509 exit=0(`total error = 0`);HelloWorld exit=0。`__Testing__diff__`(amd64,§10.7 已记录跑不了)与 `__Testing__dongle__`(amd64=真机破坏性协议)按约定未跑。
+
+### 10.11 2026-09-07 真机全量测试首次运行(Windows 原生,amd64-windows-release)
+
+> 用户接入实体 ukey 并授权全量测试;按用户指示走 **Windows 原生**(免 usbipd),用 `./.bin/amd64-windows-release/__Testing__dongle__`(clang-cl,11:30 当前代码)。设备 = §10.7 同一把(Ver 0x222、PID/UID=ffffffff 未初始化、birthday 2024-11-26、HID 00000000-efea115bfc084642),dongle_entry 枚举正常。
+
+- **⚠️ 固件刷新失败(用户要求首次设 `WT_APP_DONGLE` 刷最新固件)**:`rockey.UpdateExeFile rockey_dongle.bin -1/F0000008`(`Dongle_DownloadExeFile` 被拒)——未初始化设备(PID/UID=ffffffff)不允许下载可执行文件(与 LimitSeedCount F0000008 同族权限限制)。**设备固件未更新**,仍是既有固件(§10.7 判断为生产 RockeyTrust);§10.6/§10.7 的**设备端 FTRX/X509 检查点①-③仍未覆盖**。后续要跑设备端 X509 需先初始化设备(PID/PIN)或经厂商工具刷写。
+- **结果表(exit→错数;exit=10086 即 0 错)**:i1 CreateDataFile 6 · i2 ReadWriteDataFile 35 · i3 ReadWriteFactoryData 128 · i4 CreateRSAFile 6 · i5 RSAExec 123 · i6 SM2Exec 111 · i7 P256Exec 111 · i8 KeyExec 22 · i9 HashExec **0** · i10 Secp256K1Exec **0** · i11 ChaChaPoly **0** · i12-14 Sha256/384/512 **0** · i15 Curve25519 **0** · i16 Ed25519 **0** · i17 PKeyCountDown 3 · **i18 X509Tests P256/SM2/RSA 三子模式全 0**(`total error = 0`,`Test.18 return 0`)。
+- **失败性质**:每日志固定含 6×F0000006 + 2×F0000008(前奏 ChangePIN/ResetUserPIN/LimitSeedCount 无害失败,§10.7 同款),文件/密钥类索引的其余失败码均为 **F0000006/F0000008/F000000F**(未初始化设备上文件/密钥操作被权限拒绝)——**预期状态性失败,非回归**;纯算法/哈希/Ed25519/X509 host 侧验证全部 0 错。
+- **56b8990 SeedSecret 删除真机验证达成**:X509 三子模式 exit=**10086**(0 错),不再是 §10.7 晚补的 exit=103——修复目标在真机确认。
+- 本表是**未初始化设备上的首次真机全量基线**(无法与 foobar 模拟器基线直接对比:设备状态不同),供设备初始化(PID/PIN)后复跑对照;未初始化状态下多数索引失败属预期,勿误判为回归。
+
+### 10.12 2026-09-07 双 ukey 并行全量测试(Windows,amd64-windows-release)
+
+> 用户插入第二把 ukey 并授权两把全量。harness 原 `rockey.Open(0)` 只开第一把,新增多设备选择后并行跑。
+
+- **设备**(dongle_entry 枚举,两把均 Ver 0x222):
+  - **[0/2]** PID/UID=ffffffff 未初始化,birthday 2024-11-26,HID 00000000-efea115bfc084642(§10.7/§10.11 同一把);
+  - **[1/2]** PID=**7c62fe4c**、UID=**00010086**,birthday 2023-02-10(**已初始化**,与设备 0 状态不同)。
+- **harness 改动(本会话)**:`__Testing__dongle__ main.cc` 增加 **`WT_RKEY_DEVICE`** 环境变量选择 `rockey.Open()` 的 Enum 索引(默认 0;与 WT_APP_DONGLE 同款 WT_ 前缀 env 模式,不改 CLI/argv),两处 `Open(0)` → `Open(dev_index)`。
+- **并行两进程**(WT_RKEY_DEVICE=0 / =1)各跑全量 1..17 + 18×3,无 WT_APP_DONGLE(不刷固件):
+  - **设备 0(未初始化):结果与 §10.11 逐项完全一致**(i1 6 · i2 35 · i3 128 · i4 6 · i5 123 · i6 111 · i7 111 · i8 22 · i9-i16 全 0 · i17 3 · X509×3 0)——二次运行稳定性复现。
+  - **设备 1(已初始化):每轮恒 +1 错**,定位为收尾 `ExecuteExeFile return -1 / F0000003`(main.cc `if (result3 < 0) ++result`),而设备 0 为 `return 0, mainRet -9`——**该设备应用固件不接受 exe 传输**(§10.7 "设备固件不一致"担忧在第二把成立)。**扣除该 +1 后,设备 1 各索引测试主体错误数与设备 0 逐项相等**,X509 三子模式 `total error = 0`、`Test.18 return 0`。
+  - 失败码构成差异:设备 1 前奏**无 F0000006**(已初始化设备 ChangePIN/ResetUserPIN 不再报"未初始化"),日志为 F0000008/F000000F + 1×F0000003(ExecuteExeFile);设备 0 为 6×F0000006 + 2×F0000008 前奏(§10.11)。
+- **结论**:两把设备的文件/密钥类主体错误一致且复现 §10.11 基线——设备状态(无密钥/匿名权限)性预期失败,非回归;host 侧算法/X509 全 0。设备 1 的 +1 是 ExecuteExeFile 传输差异,勿误判为测试失败。

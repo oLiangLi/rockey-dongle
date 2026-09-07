@@ -57,7 +57,8 @@ const repoRoot = path.resolve(path.dirname(mapFile), "..", "..", "..");
 /* ------------------------------------------------------------------ */
 /* 1. 从 map 提取链接对象                                              */
 /* ------------------------------------------------------------------ */
-const mapText = fs.readFileSync(mapFile, "utf8");
+/* Windows/cygwin 链接器生成的 map 用 '\' 分隔路径, 先归一化为 '/' 再匹配 */
+const mapText = fs.readFileSync(mapFile, "utf8").replace(/\\/g, "/");
 const objSet = new Set();
 for (const m of mapText.matchAll(/(\.\/\.bin\/\.obj\/[^ )]+\.o)/g)) {
   const p = path.resolve(repoRoot, m[1]);
