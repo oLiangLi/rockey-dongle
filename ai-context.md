@@ -366,7 +366,9 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **用户级环境已持久化**(新终端生效):`EMSDK=C:/Users/liangli/emsdk`、`EMSDK_PYTHON`、`EMSDK_NODE`,PATH 前置 `%EMSDK%\shim;%EMSDK%;%EMSDK%\upstream\emscripten`。
 - **⚠️ cygwin 桥(shim)必要**:x4c 经 cygwin make 调用 `emcc/em++`(POSIX sh 包装),直接执行会因 (a) `exec` Windows 反斜杠 python 路径失败、(b) 原生 python 收到 `/cygdrive/...` 脚本路径被误解、(c) `-I/cygdrive/x/...` 绝对 include 原样传给 clang 而找不到头。`C:\Users\liangli\emsdk\shim\{emcc,em++,emar,emranlib}` 包装器解决:exe 用 `cygpath -u` 的 POSIX 路径 exec,脚本与含 `/cygdrive/` 的参数(含 `-I/-L` 前缀)用 `cygpath -m` 转 `C:/...` 后再交给原生 python。
 - **`make wasm X4C_NODE=node -j8` exit 0(本会话两轮验证,幂等)**:全部 `.wasm` 产出至 `.bin/wasm-emscripten-release`(dongle_entry/Emulator/Script/__Testing__* 共 11 个),wasm-opt 输出 `Web/Assembly/{Script,Emulator}.wasm` + 对应 `_wasm.ts`。TASSL(wasm)沿用 9/5 gen/System 产物(stamp 门控,与 emsdk 同 3.1.64);此前曾误判需重编,实际 clean-wasm 不清 gen。
-- 备注:wasmjs(wasmjs.conf)同工具链,§9.3 的 pki.cc rLANGIMPORT 链接问题未在本会话验证;构建时发现工作树另有两处**非本会话**的 clang-format 改动(.clang-format 补 AGINX 宏、__x509__/main.cc 折行,疑为用户编辑器),未提交。
+- **cygwin 登录 shell 直跑修复(2026-09-07 晚)**:新增 `/etc/profile.d/emsdk-aginx.sh`(cygwin)导出 `EMSDK/EMSDK_PYTHON/EMSDK_NODE` 与 **`X4C_NODE=node`**(Makefile 默认 `/Machine/System/bin/node` 在 Windows 不存在),并把 `emsdk\shim` 前置 PATH(幂等);`~/.bashrc` 交互守卫前 source 同文件(非 login 交互 shell 亦生效)。新开 cygwin 终端后**直接 `make wasm -j8`(无需任何参数/手动 env)**。
+- **TASSL(wasm)在 Windows 上全量重编要点(本会话踩坑)**:emconfigure.py 会把 CC 写成**带反斜杠绝对路径** `C:\...\emcc.bat` → cygwin sh 反斜杠被吞 `Error 127`;故 `shim/emconfigure` 直接替代它:以**裸名工具链 env**(`CC=emcc CXX=em++ AR=emar RANLIB=emranlib LD=em++`)+ **cygwin perl `/usr/bin/perl`(POSIX 路径)** 执行 Configure(POSIX 参数不做转换)。shim 现共 **6 个**:emcc/em++/emar/emranlib/emconfigure/emmake。验证:纯 cygwin `make wasm -j8` exit 0(首轮含 TASSL 重编→libcrypto.a 3.0MB,次轮幂等 0)。
+- 备注:wasmjs(wasmjs.conf)同工具链,§9.3 的 pki.cc rLANGIMPORT 链接问题未在本会话验证。
 
 ### 10.14 工作约定(2026-09-07 起,用户确认;后续会话遵守)
 
