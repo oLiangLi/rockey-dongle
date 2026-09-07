@@ -1,4 +1,4 @@
-# Rockey-Dongle 项目审查上下文记录
+﻿# Rockey-Dongle 项目审查上下文记录
 
 > 本文件是 2026-09-01 ~ 2026-09-02 一次完整代码审查会话的工作上下文,并持续维护至 2026-09-05(§9 复核、§10 后续提交),供后续会话/接手人直接续接工作,避免重复分析。
 > 配套交付物:`bug-analysis-report.html`(完整带样式报告,含图表)。
@@ -367,3 +367,11 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **⚠️ cygwin 桥(shim)必要**:x4c 经 cygwin make 调用 `emcc/em++`(POSIX sh 包装),直接执行会因 (a) `exec` Windows 反斜杠 python 路径失败、(b) 原生 python 收到 `/cygdrive/...` 脚本路径被误解、(c) `-I/cygdrive/x/...` 绝对 include 原样传给 clang 而找不到头。`C:\Users\liangli\emsdk\shim\{emcc,em++,emar,emranlib}` 包装器解决:exe 用 `cygpath -u` 的 POSIX 路径 exec,脚本与含 `/cygdrive/` 的参数(含 `-I/-L` 前缀)用 `cygpath -m` 转 `C:/...` 后再交给原生 python。
 - **`make wasm X4C_NODE=node -j8` exit 0(本会话两轮验证,幂等)**:全部 `.wasm` 产出至 `.bin/wasm-emscripten-release`(dongle_entry/Emulator/Script/__Testing__* 共 11 个),wasm-opt 输出 `Web/Assembly/{Script,Emulator}.wasm` + 对应 `_wasm.ts`。TASSL(wasm)沿用 9/5 gen/System 产物(stamp 门控,与 emsdk 同 3.1.64);此前曾误判需重编,实际 clean-wasm 不清 gen。
 - 备注:wasmjs(wasmjs.conf)同工具链,§9.3 的 pki.cc rLANGIMPORT 链接问题未在本会话验证;构建时发现工作树另有两处**非本会话**的 clang-format 改动(.clang-format 补 AGINX 宏、__x509__/main.cc 折行,疑为用户编辑器),未提交。
+
+### 10.14 工作约定(2026-09-07 起,用户确认;后续会话遵守)
+
+- **一律建分支提交**:代码/文档改动先在 **`feat/AGINX/<有意义且唯一的名字>`** 分支上提交,由用户 squash merge;**不直接提交 master**。(§10.13 的 `bfa5c5a` 是约定确立前最后一次 master 直提。)
+- **PGP 签名**:仓库 `commit.gpgsign=true`(EDDSA B9C754…),但会话环境 gpg 必失败(keyboxd "未实现"/pinentry 不可用)→ 分支上统一 `git commit --no-gpg-sign`(无签名),签名/合并在用户侧处理。
+- **格式化约定**:改写 C++ 文件后按仓库 **`.clang-format`** 执行格式化(clang-format **19.1.5** = `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang-format.exe`,即仓库现行格式版本;`.clang-format` StatementMacros 已含 AGINX 宏)。纯 JS(`.cjs/.ts`)与 `.md` 不适用。
+- 真机多设备测试:`WT_RKEY_DEVICE`(默认 0)选择 Enum 索引,两把并行时分别设 0/1(§10.12);`WT_APP_DONGLE` 仅确需更新设备固件时设置,刷写次数有限(§10.7)。
+
