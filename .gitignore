@@ -36,3 +36,6 @@ log
 /dist
 /out
 
+
+## ? Interface/script.h ??(? Build/tools/script/opcode.cjs / make jsWrapper)
+/Web/Script/lib/opcode.ts

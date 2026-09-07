@@ -1,4 +1,4 @@
-﻿wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 
 ##
 ##
@@ -7,7 +7,7 @@ X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machin
 
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
-.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check
+.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check jsWrapper
 
 ##
 ## default build Release version ...
@@ -94,6 +94,18 @@ clean-foobar:
 wasm:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasm prepare R=1
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasm optimize R=1
+
+##
+## 由 Interface/script.h 生成 Web/Script/lib/opcode.ts(enum + AllFunc), 再打包 JS 封装:
+##   R=1 → npm run release; 否则 → npm run build
+##
+jsWrapper:
+	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/script/opcode.cjs
+ifeq ("$(R)","1")
+	cd $(wORLD_ROOT) && npm run release
+else
+	cd $(wORLD_ROOT) && npm run build
+endif
 
 docker:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) all-docker

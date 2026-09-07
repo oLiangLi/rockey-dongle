@@ -2,7 +2,8 @@
   "type": "commonjs",
   "scripts": {
     "build": "tsc && node Web/Emulator/lib/packScript.cjs && webpack -c Web/Emulator/lib/webpack.cjs --mode development",
-    "release": "tsc && node Web/Emulator/lib/packScript.cjs && webpack -c Web/Emulator/lib/webpack.cjs --mode production"
+    "release": "tsc && node Web/Emulator/lib/packScript.cjs && webpack -c Web/Emulator/lib/webpack.cjs --mode production",
+    "gen:opcode": "node Build/tools/script/opcode.cjs"
   },
   "devDependencies": {
     "@types/node": "^25.3.3"
