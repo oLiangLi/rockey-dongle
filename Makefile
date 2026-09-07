@@ -5,8 +5,8 @@
 ##
 X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machine/System/bin/node-rlang ; else echo /Machine/System/bin/node ; fi )
 
-.PHONY : wasm wasmjs cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
-.PHONY : clean-wasm clean-wasmjs clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
+.PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
+.PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
 .PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check
 
 ##
@@ -95,10 +95,6 @@ wasm:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasm prepare R=1
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasm optimize R=1
 
-wasmjs:
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasmjs prepare R=1
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasmjs optimize R=1
-
 docker:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=$(wORLD_PLATFORM_CONFIG) all-docker
 
@@ -119,9 +115,6 @@ clean-aarch64-linux:
 
 clean-wasm:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasm clean-all  R=1
-
-clean-wasmjs:
-	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=wasmjs clean-all  R=1
 
 clean-linux:
 	$(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=linux clean-all

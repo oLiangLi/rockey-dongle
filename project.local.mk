@@ -1,4 +1,4 @@
-﻿.PHONY : optimize
+.PHONY : optimize
 optimize : build-all
 all: optimize
 
@@ -30,8 +30,8 @@ wasm_add_cflags     = $(eval LOCAL_CFLAGS   += $1)
 wasm_add_cxxflags   = $(eval LOCAL_CXXFLAGS += $1)
 wasm_add_ldflags    = $(eval LOCAL_LDFLAGS  += $1)
 COMMON_CFLAGS	   += -DrLANG_WORLD_STANDALONE=1 -DX_ARCH_wasm=1
-COMMON_CFLAGS      += -I$(wORLD_ROOT)/third_party/build/wasm -I$(wORLD_ROOT)/third_party/build/wasmjs
-X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/wasm -L$(wORLD_ROOT)/third_party/build/wasmjs
+COMMON_CFLAGS      += -I$(wORLD_ROOT)/third_party/build/wasm
+X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/wasm
 X4C_COMMON_LDFLAGS += -s WASM=1 -s ERROR_ON_UNDEFINED_SYMBOLS=0 -s STANDALONE_WASM=1
 X4C_COMMON_CXXFLAGS+= -fno-rtti -fno-common -fno-use-cxa-atexit -std=c++17
 X4C_OPTIMIZE_OUTPUT:= $(wORLD_ROOT)/Web/Assembly
@@ -53,16 +53,7 @@ endif
 
 ##
 ##
-##
-ifeq ("$(X4C_ARCH)","wasmjs")
-wasmjs_add_cflags   = $(eval LOCAL_CFLAGS   += $1)
-wasmjs_add_cxxflags = $(eval LOCAL_CXXFLAGS += $1)
-wasmjs_add_ldflags  = $(eval LOCAL_LDFLAGS  += $1)
-COMMON_CFLAGS      += -I$(wORLD_ROOT)/third_party/build/wasmjs
-X4C_COMMON_LDFLAGS += -L$(wORLD_ROOT)/third_party/build/wasmjs
-X4C_COMMON_LDFLAGS += -s EXIT_RUNTIME=0 -s WASM=1 -s MODULARIZE=1
-X4C_COMMON_CXXFLAGS+= -fno-rtti -fno-common -fno-use-cxa-atexit -std=c++17
-endif
+##  (wasmjs 平台已删除 2026-09-07: 目标由用户移除, JS 封装改为手工生成, 见 ai-context §10.15)
 
 ##
 ##

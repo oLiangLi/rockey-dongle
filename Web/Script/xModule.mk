@@ -1,4 +1,4 @@
-﻿ifeq ("$(X4C_BUILD)","emscripten")
+ifeq ("$(X4C_BUILD)","emscripten")
 
 LOCAL_PATH := $(my-dir)
 
@@ -25,8 +25,6 @@ Script_WASM_LDFLAGS :=	\
 	-s INITIAL_MEMORY=64KB
 
 $(call wasm_add_ldflags, $(Script_WASM_LDFLAGS))
-$(call wasmjs_add_ldflags, $(Script_WASM_LDFLAGS))
-
 $(call call_add_optimize_module)
 $(call wasm_add_ldflags, --no-entry)
 

@@ -15,7 +15,7 @@
 ## 2. 项目关键事实(审查中核实,勿重复推导)
 
 ### 2.1 构建与模块结构
-- 平台:MCU 固件(arm-none-eabi,RockeyARM)/ Linux / Windows / Cygwin / aarch64-linux / WASM / wasmjs,自研 x4c 构建系统(`Build/`)。
+- 平台:MCU 固件(arm-none-eabi,RockeyARM)/ Linux / Windows / Cygwin / aarch64-linux / WASM / ~~wasmjs~~(wasmjs 已于 2026-09-07 删除,§10.15),自研 x4c 构建系统(`Build/`)。
 - **固件中 `Dongle` 的实现是 `Interface/rockey.cc`**(由 `Interface/xModule.mk:9-11` 选择);`dongle.cc` 是主机侧 USB 实现;`emulator.cc` 是模拟器实现。三个类同名,`secret.cc`/`master.cc`/`script.cc` 为共享成员函数。
 - 密码学有两套实现:`base/src/crypto.cc`(5,524 行,常量时间版本)与 `Interface/curve25519.cc`(当前 1,806 行,慢速路径,**dongle 固件 VM 指令实际走这套**;审查时 2,429 行,e3c7283 紧凑化净删 659 行,见 §10.2)。
 - **固件无除法约束(2026-09-04 发现)**:Cortex-M0 无硬件除法,/ 与 % 引入 `__aeabi_idiv → idivmod.o → crt.o → main` 依赖链,导致测试固件链接失败。固件侧拆包/打包/日期解析一律用移位序列递进替代除法(§10.2/§10.3,x509.cc 同样遵守)。
@@ -225,7 +225,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - micro-ecc default_RNG 加 `__attribute__((unused))`(本项目经 uECC_set_rng 注入自研 RNG);HelloWorld 测试 RSA_generate_key→RSA_generate_key_ex(弃用 API);emulator.cc -Wformat 枚举转换与 -Wclass-memaccess 取 `[0]`(foobar debug 才显)。
 - **TASSL 构建是 stamp 门控**(third_party/project.mk `.build-tassl-done`):源改动需手动 make -C 各配置 Build-TASSL + install_sw 再清二进制重链接;修改第三方源时注意 pk7_doit.c/s3_lib.c 是 **GBK 编码**,必须字节级编辑(UTF-8 工具会打乱上游中文注释,曾发生一次已恢复)。
 - 不可消除:设备固件 readelf "bogus end-of-sibling" 提示。~~glibc 静态链接 dlopen/getaddrinfo/gethostbyname 警告~~(原判不可消除)已由 65c3adc 根除——TASSL 内 weak 桩 + 符号重定向,见 §10.5。
-- 既有问题(未修):wasmjs 配置链接失败(Web/Emulator pki.cc 的 RockeyPKEY_Sign/Decrypt 为 rLANGIMPORT,宿主无 JS 实现)。
+- 既有问题(未修,后续已删除平台):wasmjs 配置链接失败(Web/Emulator pki.cc 的 RockeyPKEY_Sign/Decrypt 为 rLANGIMPORT,宿主无 JS 实现)——wasmjs 目标 2026-09-07 整体删除,问题不再需要解决(§10.15)。
 
 ### 9.4 协议重验(31f41fe 之后, 2026-09-03 晚)
 
@@ -368,7 +368,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **`make wasm X4C_NODE=node -j8` exit 0(本会话两轮验证,幂等)**:全部 `.wasm` 产出至 `.bin/wasm-emscripten-release`(dongle_entry/Emulator/Script/__Testing__* 共 11 个),wasm-opt 输出 `Web/Assembly/{Script,Emulator}.wasm` + 对应 `_wasm.ts`。TASSL(wasm)沿用 9/5 gen/System 产物(stamp 门控,与 emsdk 同 3.1.64);此前曾误判需重编,实际 clean-wasm 不清 gen。
 - **cygwin 登录 shell 直跑修复(2026-09-07 晚)**:新增 `/etc/profile.d/emsdk-aginx.sh`(cygwin)导出 `EMSDK/EMSDK_PYTHON/EMSDK_NODE` 与 **`X4C_NODE=node`**(Makefile 默认 `/Machine/System/bin/node` 在 Windows 不存在),并把 `emsdk\shim` 前置 PATH(幂等);`~/.bashrc` 交互守卫前 source 同文件(非 login 交互 shell 亦生效)。新开 cygwin 终端后**直接 `make wasm -j8`(无需任何参数/手动 env)**。
 - **TASSL(wasm)在 Windows 上全量重编要点(本会话踩坑)**:emconfigure.py 会把 CC 写成**带反斜杠绝对路径** `C:\...\emcc.bat` → cygwin sh 反斜杠被吞 `Error 127`;故 `shim/emconfigure` 直接替代它:以**裸名工具链 env**(`CC=emcc CXX=em++ AR=emar RANLIB=emranlib LD=em++`)+ **cygwin perl `/usr/bin/perl`(POSIX 路径)** 执行 Configure(POSIX 参数不做转换)。shim 现共 **6 个**:emcc/em++/emar/emranlib/emconfigure/emmake。验证:纯 cygwin `make wasm -j8` exit 0(首轮含 TASSL 重编→libcrypto.a 3.0MB,次轮幂等 0)。
-- 备注:wasmjs(wasmjs.conf)同工具链,§9.3 的 pki.cc rLANGIMPORT 链接问题未在本会话验证。
+- 备注:wasmjs 平台目标已于 2026-09-07 删除(用户决策:JS 封装改手工生成,§10.15);原 wasmjs.conf 的 pki.cc rLANGIMPORT 链接问题(§9.3)随之不再需要解决。
 
 ### 10.14 工作约定(2026-09-07 起,用户确认;后续会话遵守)
 
@@ -377,4 +377,10 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **格式化约定**:改写 C++ 文件后按仓库 **`.clang-format`** 执行格式化(clang-format **19.1.5** = `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang-format.exe`,即仓库现行格式版本;`.clang-format` StatementMacros 已含 AGINX 宏)。纯 JS(`.cjs/.ts`)与 `.md` 不适用。
 - **编码约定(UTF-8 BOM)**:**非 third_party 的 C/C++/asm/ts/js 程序文件默认以带 BOM 的 UTF-8 保存**,减少 Windows 下乱码可能。要点:① third_party 源码除外(§9.3/§10.5:dso_dlfcn.c 等 GBK/首行 BOM 需字节级编辑);② clang-format 19 重写会**剥掉 BOM** → 格式化后须按本约定补回(用 `EF BB BF` 前缀,勿用编辑器重复叠加);③ 文本编辑工具(如 edit 工具整文件重写)也可能剥 BOM,收尾需检查首 3 字节。
 - 真机多设备测试:`WT_RKEY_DEVICE`(默认 0)选择 Enum 索引,两把并行时分别设 0/1(§10.12);`WT_APP_DONGLE` 仅确需更新设备固件时设置,刷写次数有限(§10.7)。
+
+### 10.15 2026-09-07 决策:删除 wasmjs 平台(JS 封装改手工)
+
+- 用户删除 root Makefile 的 `wasmjs` / `clean-wasmjs` 目标;本会话同步清理:`Build/config/wasmjs.conf` 删除,project.local.mk 的 wasmjs 分支与 wasm 分支中的 wasmjs include/lib 引用移除,`Web/Script/xModule.mk` 的 `wasmjs_add_ldflags` 死调用移除。
+- 理由(用户):**ukey 代码过于重要**,wasm 的 JS 宿主封装改为**手工生成**,少一个平台(wasmjs)需要确认/维护;原 wasmjs 的 pki.cc RockeyPKEY rLANGIMPORT 无 JS 宿主实现问题(§9.3)随之不再需要解决。
+- 现状:仅保留 **wasm**(`make wasm`,STANDALONE_WASM)产出 `.wasm` 并经 `wasm2string.cjs` 生成 `Web/Assembly/*_wasm.ts`;JS 调用层由手工封装实现。
 
