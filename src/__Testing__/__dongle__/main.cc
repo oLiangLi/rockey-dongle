@@ -1988,10 +1988,9 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   result = rockey.RandBytes(Context->bytes, sizeof(Context->bytes));
   rlLOGXI(TAG, Context->bytes, sizeof(Context->bytes), "rockey.RandBytes %d/%08x", result, rockey.GetLastError());
 
-  result = rockey.SeedSecret(Context->argv_, sizeof(Context->argv_), Context->seed_);
-  rlLOGI(TAG, "rockey.SeedSecret %d/%08x", result, rockey.GetLastError(false));
-  Context->seed_[7] = rockey.GetLastError();
-  Context->seed_[6] = result;
+  /* SeedSecret 验证已删除(用户决策 2026-09-06):ukey 未初始化(PID 未设置)时该调用必然
+   * 失败(F0000006),失败值经 result 流入最终退出码(10086-(-1) mod 256 = 103),干扰
+   * 测试结果判定;且 Context->seed_ 无任何消费方,纯记录无意义。 */
 
   rockey.SetLEDState(LED_STATE::kBlink);
 

@@ -289,3 +289,18 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **设备端 rsa_pub 就地覆写签名区的处理**:单证书 RSA 负例用栈上 256B 备份恢复(master.cc OpManager_VerifyWorldPublic 栈上 world 同款思路);ExtendBuf 仅作 X509VerifySignature work 区(304B),**不可跨 FTRX 调用保数据**;EC 验签不覆写签名区,无需备份。dashboard 原件(flash)在每次调用开头重写,两轮协议天然稳定。
 - 验证:foobar 三子模式两轮 0 错;linux/aarch64-linux **零警告**;`make dongle` 通过(rodata/data 空断言、bss≤16);X509 代码已链入 rockey_dongle(59 个 X509 符号,text 48656B);stack-check 0 违规(RockeyTrust 不受影响,仍 49024B);紧凑回归(1..8+18×3,两轮)与 §9.1 基线一致(i8 的 124/126 源于用户本轮 KeyExec 模拟器循环 10000→1000 的改动,与本次无关)。
 - **真机检查点**:① COS rsa_pub 解填充行为(SHA256 DigestInfo 51B 分支;SHA384/512 本机无法验证);② work 区摘要缓冲在 COS 调用期间的存活(X509VerifySignature 的"证书在 InOutBuf、work 在 ExtendBuf"设计首次真机验证);③ SM2 sm2_verify 的 e=SM3(Z_A||tbs) 语义(注释称真机已验证)。
+
+### 10.7 2026-09-06 本机接入实体 ukey + amd64-linux 测试结果
+
+- 本机(WSL2)经 usbipd 接入实体 ukey(096e:0209,Ver 0x222,birthday 2024-11-26,PID/UID=ffffffff 未初始化;HID 00000000-efea115bfc084642)。已装 udev 规则 `/etc/udev/rules.d/99-rockey-dongle.rules`(GROUP=plugdev 0660),`dongle_entry` 免 sudo 可用(此前 Enum F0000001=NOT_FOUND 实为权限问题)。
+- **amd64-linux-release 套件结果(退出码 102=0 错)**:25519/sha256/micro_ecc/aes 均 102 ✅;x509 `total error = 0`(其中 9 行 "Verify False" 日志为篡改负例预期输出);HelloWorld 0 ✅;diff(foobar 模拟器)0 ✅。
+- **⚠️ __Testing__diff__ 真机(amd64-linux)跑不了,非缺陷**:RFC 8032/7748 向量段(纯软件)全过;随机差分 1000 轮全部 `RandBytes` → `Dongle_GenRandom` 返回 **F0000002=DONGLE_INVALID_HANDLE**。根因:`__diff__/main.cc:18` 用基类 `Dongle`,基类无 Open(`handle_` 恒 nullptr,dongle.h:462),仅子类 `RockeyARM::Open(int index)`(dongle.cc:976)会打开设备;模拟器 RandBytes 走本地 RAND_Bytes 不查 handle,故 foobar 全过。该差分段目前是模拟器导向设计;若要真机可跑需改用 RockeyARM+Open(0) 并做无设备优雅跳过。
+- **__Testing__dongle__(amd64=真机协议)未运行**:17+1 索引协议写真实 ukey(数据文件/KeyExec/i17 倒计数/dashboard 证书区),破坏性,须用户明确决定后再跑。
+
+#### 2026-09-06 晚补:真机 X509Tests(index 18)已跑(用户确认 ukey 未初始化/锁定、dashboard[0,4KB) 按约定易变可覆写)
+
+- 协议:`__Testing__dongle__ 12 0|1|2`(hex 索引 + 子模式;anonymous 权限,不触发 VerifyPIN/管理员块)。P256×2 轮 + SM2 + RSA 全部 **host 侧 0 错误**。
+- 真机验证成立的部分:Enum/Open/ResetState/TRNG RandBytes 全 0;证书通道 WriteDataFile→ReadDataFile 经真实 factory dataFile 0xFFFF 往返成功(leaf_len/ca_len 正确);前奏 PIN/PID 类操作全部无害失败(LimitSeedCount F0000008、ChangePIN/ResetUserPIN/SeedSecret F0000006——设备 PID=ffffffff 未初始化,与预期一致)。
+- **exit=103 不是错误**:SeedSecret 失败使 result=-1,`10086-(-1)=10087 mod 256=103`。判断 X509Tests 成败只看 "X509Tests total error"。
+- **⚠️ 设备端 FTRX 验签(§10.6 真机检查点①②③)未跑到**:本 ukey 刷的是**生产固件 RockeyTrust**——`ExecuteExeFile` mainRet 恒为 **-9**;测试固件 Start 只会返回 `10086-result`(不可能为 -9),而生产 Main 把测试 Context 当 VM 上下文解析、execute.cc 头部校验失败返回 -EBADF(-9)完全吻合。host 侧验签为 TASSL 本地(dongle.cc RSAVerifyPkcs1=RSA_verify 等,设计如此)。**要跑设备端 X509,须把 `.bin/arm-RockeyARM-native-release/rockey_dongle.bin` 测试固件刷入 ukey**;ukey 当前 Ver 0x222。
+- **刷写规则(用户 2026-09-06 告知)**:刷写经 `WT_APP_DONGLE` 环境变量(指向固件 bin,__Testing__dongle__ main.cc:1948 UpdateExeFile 路径);**ukey 刷写次数有限**——只有确实改动了设备侧程序并重编后才设置,纯测试/无改动严禁设置。

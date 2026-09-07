@@ -25,6 +25,7 @@ $(call build-executable)
 install-platform: install-rockey-dongle
 	$(hide) $(X4C_NODE) $(wORLD_ROOT)/MCU/RockeyARM/elf2bin.cjs $(X4C_BINARY)/rockey_dongle$(EXEEXT) $(X4C_BINARY)/rockey_dongle.bin
 	$(hide) $(X4C_NODE) $(wORLD_ROOT)/MCU/RockeyARM/elf2bin.cjs $(X4C_BINARY)/RockeyTrust$(EXEEXT) $(X4C_BINARY)/RockeyTrust.bin
-	$(hide) $(X4C_BUILD_CROSS)readelf -lS $(X4C_BINARY)/rockey_dongle$(EXEEXT)
-	$(hide) $(X4C_BUILD_CROSS)readelf -lS $(X4C_BINARY)/RockeyTrust$(EXEEXT)
+	## readelf 的 "bogus end-of-siblings" 等 .debug_info 警告在此无意义, 静默 stderr(用户 2026-09-06)
+	$(hide) $(X4C_BUILD_CROSS)readelf -lS $(X4C_BINARY)/rockey_dongle$(EXEEXT) 2>/dev/null
+	$(hide) $(X4C_BUILD_CROSS)readelf -lS $(X4C_BINARY)/RockeyTrust$(EXEEXT) 2>/dev/null
 	$(hide) ls -l $(X4C_BINARY)/rockey_dongle* $(X4C_BINARY)/RockeyTrust*
