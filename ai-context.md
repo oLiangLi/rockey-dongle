@@ -471,3 +471,5 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 2026-09-08 突破(第4轮): **根因** = rsaPublicKey DER 中 e 误按 LE u32 直接拼入(值变 0x01000100=16777472, 非 65537); 改 writeUInt32BE+去前导零后, NORMAL(ATOMC)帧在**模拟器与真机同时通过**。
 - 结果: 模拟器 emu suite 4/4(Initialize bootstrap + HelloWorld/RandBytes/VerifyPublic NORMAL); 真机(Windows 端, RKEY_ADMIN=1) CI&CD 3/3 PASS。真机原 -14→-13(EACCES)因该设备为 **Admin 类世界**(category=adm@k), 需管理员会话(加 '-' 登录) → 工具 run/suite 已支持 RKEY_ADMIN=1。
 - 遗留: EnTrust.dongle 需要真实托管密钥输入(EnTrustKey, 随机占位被设备拒绝 -22), 不作为默认流程; diag-rsa/diag-gen 保留为诊断命令; 真机未执行任何 factory/lock, 未跑会重置世界的 Initialize。
+- 2026-09-08 Agent 增强(用户): cjs 不再引用 .assets(随时可能被清理), 改用打包件 Web/Agent/Tests/js/jsWorld.js+jsCrypto.js(Node 可加载); 内置 **8 个 JS 模拟器**(globalThis.jsEmulatorEx[0..7], id 前缀 ff, uid 0x100+i, 每次 Create 随机 secret)。
+- 本会话新增: jsemu <file> [idx] 单跑; jsuite(Initialize bootstrap + CI&CD NORMAL, EMU_RANGE 默认 0-7) → **8 台全部 32/32 通过**; 支持多台并行/独立世界, 便于多 ukey 脚本(如密钥交换/EnTrust)后续选择不同 emu。
