@@ -1,10 +1,11 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <Interface/x509.h>
 #include <time.h>
 #include <cstdio>
 #include <string>
 #include <vector>
+#include "x509import.h"
 
 AGINX_DECLARE_MACHINE
 
@@ -12,12 +13,11 @@ namespace {
 /* rLANG_DECLARE_MAGIC_Xs 只取 s[0..4], 参数须匹配 [a-zA-Z0-9@$]{5}(>5 位尾部被忽略;
  * 曾误用 6 位 "@x509i" 与 __x509__ 的 "@x509" 同值, 日志 tag 冲突) */
 constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("x509i");
-}
+}  // namespace
 
 namespace {
 
 using machine::dongle::Dongle;
-using machine::dongle::Emulator;
 using machine::dongle::PERMISSION;
 using machine::dongle::SECRET_STORAGE_TYPE;
 using machine::dongle::X509FsmParse;
@@ -196,7 +196,7 @@ struct Buffers {
 };
 
 /* 以指定会话权限直接执行 OpExecute_ImportX509, 返回其 zero_(0 或负 errno) */
-static int RunImport(Emulator& rockey, Buffers& b, PERMISSION perm, int argc, int32_t argv[]) {
+static int RunImport(Dongle& rockey, Buffers& b, PERMISSION perm, int argc, int32_t argv[]) {
   memset(b.data, 0, sizeof(b.data));
   memset(b.buffer, 0, sizeof(b.buffer));
   machine::dongle::script::VM_t vm(&rockey, b.data, b.buffer);
@@ -204,17 +204,17 @@ static int RunImport(Emulator& rockey, Buffers& b, PERMISSION perm, int argc, in
   return vm.OpExecute_ImportX509(argc, argv);
 }
 
-static int SetDashboard(Emulator& rockey, const std::vector<uint8_t>& der) {
+static int SetDashboard(Dongle& rockey, const std::vector<uint8_t>& der) {
   return rockey.WriteDataFile(Dongle::kFactoryDataFileId, 0, der.data(), der.size());
 }
 
-static bool FileExists(Emulator& rockey, int df) {
+static bool FileExists(Dongle& rockey, int df) {
   uint8_t probe[4];
   return 0 == rockey.ReadDataFile(df, 0, probe, sizeof(probe));
 }
 
 /*! 校验导入产物: dataFile 大小 == 48+len, [0,48) 六元最小集与重解析一致, [48,..) == DER */
-static int CheckLayout(Emulator& rockey, int df, const std::vector<uint8_t>& der, const char* tag) {
+static int CheckLayout(Dongle& rockey, int df, const std::vector<uint8_t>& der, const char* tag) {
   const size_t kHeaderSize = sizeof(X509View);
   const size_t want = kHeaderSize + der.size();
   std::vector<uint8_t> file(want);
@@ -252,16 +252,41 @@ static int CheckLayout(Emulator& rockey, int df, const std::vector<uint8_t>& der
   return 0;
 }
 
+/*! 真机为持久存储: 运行前清掉本套件占用的 dataFile/pkey 槽位, 保证每次从空槽开始
+ *!(模拟器每次新建世界, 无残留, 不调用)。 */
+static void CleanupSlots(Dongle& rockey) {
+  const int kDataFiles[] = {1, 2, 3, 30, 32, 40, 41, 42, 50, 51, 60, 61, 62, 63, 64, 65, 66, 1000};
+  for (int id : kDataFiles) {
+    const int r = rockey.DeleteFile(SECRET_STORAGE_TYPE::kData, id);
+    rlLOGI(TAG, "cleanup data#%d -> %d", id, r);
+  }
+  const struct {
+    SECRET_STORAGE_TYPE type;
+    int id;
+  } kKeys[] = {
+      {SECRET_STORAGE_TYPE::kRSA, 1001}, {SECRET_STORAGE_TYPE::kP256, 1002}, {SECRET_STORAGE_TYPE::kSM2, 1003}};
+  for (auto& k : kKeys) {
+    const int r = rockey.DeleteFile(k.type, k.id);
+    rlLOGI(TAG, "cleanup key#%d -> %d", k.id, r);
+  }
+}
+
 }  // namespace
 
 rLANGEXPORT int main() {
   using machine::dongle::script::VM_t;
 
-  Emulator rockey(PERMISSION::kAdministrator);
-  if (0 != rockey.Create("__x509import__")) {
-    rlLOGE(TAG, "Emulator Create failed");
-    return 1;
+  /* Dongle 由各构建板 opener 提供: foobar=新建模拟器世界; windows=真机(缺省管理员 PIN 登录) */
+  Dongle* rockey_ = nullptr;
+  bool persistent = false;
+  const int open_result = X509ImportOpen(&rockey_, &persistent);
+  if (0 != open_result || !rockey_) {
+    rlLOGE(TAG, "X509ImportOpen failed (%d): emulator create or real device open/login", open_result);
+    return 0x51; /* 环境不可用(无设备/无法登录)时跳过, 与"跑完出错"区分 */
   }
+  Dongle& rockey = *rockey_;
+  if (persistent)
+    CleanupSlots(rockey);
   Buffers b;
   int32_t argv[5];
 
@@ -449,16 +474,19 @@ rLANGEXPORT int main() {
   /* ================= 4) 目标 dataFile 已存在 → 拒绝导入 ================= */
   {
     Check(0 == rockey.CreateDataFile(60, 64, PERMISSION::kAnonymous, PERMISSION::kAdministrator), "pre-create df#60");
+    /* 真机新建文件内容未必全零: 先记录基线, 断言导入失败后内容不变 */
+    uint8_t head0[4] = {0};
+    Check(0 == rockey.ReadDataFile(60, 0, head0, sizeof(head0)), "read df#60 baseline");
     Check(0 == SetDashboard(rockey, der_rsa), "SetDashboard exist");
     argv[0] = static_cast<int32_t>(SECRET_STORAGE_TYPE::kRSA);
     argv[1] = 900;
     argv[2] = 60;
     argv[3] = static_cast<int32_t>(der_rsa.size());
     Check(RunImport(rockey, b, PERMISSION::kAdministrator, 4, argv) < 0, "import onto existing df rejected");
-    /* 原文件内容未被改写: 仍是 64B 空文件(首 4B 全零), 而非 48+len */
-    uint8_t head[4] = {1, 1, 1, 1};
+    /* 原文件内容未被改写: 仍与新建基线一致(首 4B), 而非 48+len 的导入布局 */
+    uint8_t head[4] = {0};
     Check(0 == rockey.ReadDataFile(60, 0, head, sizeof(head)), "read existing df");
-    Check(0 == memcmp(head, "\0\0\0\0", 4), "existing df content untouched");
+    Check(0 == memcmp(head, head0, sizeof(head)), "existing df content untouched");
   }
 
   /* ================= 5) argv[4] 私钥↔证书公钥匹配校验 ================= */
@@ -467,7 +495,11 @@ rLANGEXPORT int main() {
     uint32_t rsa_e = 0;
     uint8_t rsa_n[256];
     Check(0 == rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 1001), "create pkey RSA#1001");
-    Check(0 == rockey.GenerateRSA(1001, &rsa_e, rsa_n, nullptr), "generate RSA#1001");
+    {
+      /* 真机主机 Dongle::GenerateRSA 成功返回 pubkey.bits(2048), 模拟器返回 0 */
+      const int gr = rockey.GenerateRSA(1001, &rsa_e, rsa_n, nullptr);
+      Check(0 == gr || 2048 == gr, "generate RSA#1001");
+    }
     EVP_PKEY* rsa_emu_pub = PubRSAKey(rsa_n, rsa_e);
     EVP_PKEY* rsa_host_signer = NewHostRSA();
     std::vector<uint8_t> der_rsa_match;

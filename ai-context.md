@@ -431,3 +431,13 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **TAG 规则**: `rLANG_DECLARE_MAGIC_Xs` 只取 `s[0..4]`, 字符串参数应匹配 `[a-zA-Z0-9@$]{5}`(超过 5 位尾部被忽略, 不报错但易踩同值陷阱)。本次全仓统一: 超长 tag 截前 5 位(数值与原来一致, 零行为变化)——
   SCRIPT→SCRIP(Web/Script)、Foobar→Fooba(Interface/emulator.cc、__HelloWorld__)、DONGLE→DONGL(Interface/dongle.cc)、SHA256→SHA25(__sha256__); __x509import__ 的 6 位 @x509i 曾与 __x509__ 的 @x509 同值, 改唯一 5 位 x509i。
 - 相关记录: §10.16/§10.17/§10.18 为本批 X509 主体(2KB 上限、dashboard FSM、运行时端到端用例与两处修复)。
+
+### 10.20 2026-09-08 真机 X509 导入测试(深度 B: 主机 VM_t + 真机 Dongle 后端)
+
+- 分支 feat/AGINX/ukey-x509-import-tests; 深度决策(用户): 先深度 B(主机跑 OpExecute_ImportX509, dashboard/存储/ACL/私钥走真机), 后攻深度 A(固件内执行, 需 script 编码 + 刷固件); 固件"需要时再刷"。
+- 结构(避免 #if 大块): `__x509import__` 拆为 共用用例 `main.cc`(Dongle& 驱动) + 按板 opener `X509ImportOpen(Dongle**, bool* persistent)`: emu/open.cc(模拟器新世界) / device/open.cc(真机 RockeyARM::Open + VerifyPIN 缺省管理员 PIN); xModule.mk 门控 foobar **或** windows 真机主机(X4C_BOARD 空), 手工 LOCAL_SRC_FILES 选 opener 单一实现。
+- 真机环境约定: 设备选择 `WT_RKEY_DEVICE`(默认 0); 管理员 PIN 先缺省(nullptr→CONST_ADMINPIN), 失败用 `WT_RKEY_X509_PIN`。
+- 结果: **模拟器与真机均 total error = 0**(真机当前 1 把: PID 3017f25e UID 00010086, 缺省管理员 PIN 可用)。真机跑通: RSA/P256/SM2 导入与布局校验、>1KB(1066B)与恰 2048B 证书、权限/错误矩阵、argv4 匹配正反例。
+- 真机差异三处(已适配, 非固件 bug): ① 主机 `Dongle::GenerateRSA` 成功返回 pubkey.bits=2048(模拟器返回 0) → 判定放宽; ② 真机新建 dataFile 内容未必全零 → "已存在不覆盖"断言改为与新建基线一致; ③ 真机持久存储跨运行残留 → 运行前按 persistent 标志清理本套件槽位(DeleteFile 打日志)。
+- 遗留: 深度 A(固件内执行 OpExecute_ImportX509 的 script/argv 编码 + 刷含 execute.cc 的固件)未做; 真机 dashboard/数据区写入容量上限未单独探明(2048B 用例已实测通过)。
+- 2026-09-08 补: 用户把 linux 目标也编入 device/open.cc(xModule.mk 加 X4C_BUILD==linux 分支)。通过 **usbipd-win → WSL Ubuntu-22.04** 直通 ukey 验证: `usbipd bind --force --busid 2-6` + `usbipd attach --wsl --busid 2-6`(需管理员, USBPcap 需 --force); ukey 枚举为 VID 096e:0209 Feitian ROCKEY ARM(HID), WSL 内见 /dev/hidraw0; linux 驱动为 third_party/RockeyARM/amd64-linux/lib/libRockeyARM.a; 以 root 跑 .bin/amd64-linux-release/__Testing__x509import__ → total error = 0。用完归还 Windows: `usbipd detach --busid 2-6`(可选 `usbipd unbind --busid 2-6`)。
