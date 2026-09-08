@@ -441,3 +441,10 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 真机差异三处(已适配, 非固件 bug): ① 主机 `Dongle::GenerateRSA` 成功返回 pubkey.bits=2048(模拟器返回 0) → 判定放宽; ② 真机新建 dataFile 内容未必全零 → "已存在不覆盖"断言改为与新建基线一致; ③ 真机持久存储跨运行残留 → 运行前按 persistent 标志清理本套件槽位(DeleteFile 打日志)。
 - 遗留: 深度 A(固件内执行 OpExecute_ImportX509 的 script/argv 编码 + 刷含 execute.cc 的固件)未做; 真机 dashboard/数据区写入容量上限未单独探明(2048B 用例已实测通过)。
 - 2026-09-08 补: 用户把 linux 目标也编入 device/open.cc(xModule.mk 加 X4C_BUILD==linux 分支)。通过 **usbipd-win → WSL Ubuntu-22.04** 直通 ukey 验证: `usbipd bind --force --busid 2-6` + `usbipd attach --wsl --busid 2-6`(需管理员, USBPcap 需 --force); ukey 枚举为 VID 096e:0209 Feitian ROCKEY ARM(HID), WSL 内见 /dev/hidraw0; linux 驱动为 third_party/RockeyARM/amd64-linux/lib/libRockeyARM.a; 以 root 跑 .bin/amd64-linux-release/__Testing__x509import__ → total error = 0。用完归还 Windows: `usbipd detach --busid 2-6`(可选 `usbipd unbind --busid 2-6`)。
+
+### 10.21 2026-09-08 dongle_entry --notice: 张贴用户数据到 dashboard[0,4096)
+
+- 需求(用户注释 TODO): 帮助脚本导入证书 —— 把用户提供的数据张贴到 dashboard[0,4096)。
+- 实现(src/app/main.cc Utilities): 单行输入 base64(notice[n] || SHA256(notice)), n=解码总长-32, 1<=n<=4096; SHA256 规范按"补 0 到 4096B 的 notice"(mode1, 与最终写入一致)校验, 另兼容按原始 n 字节计算哈希的输入(mode2); 通过后以 0 补齐到 4096B 写 dashboard[0,4096)。CLI: dongle_entry --notice <HID> [admin]。
+- 验证(linux + usbip 真机, Feitian ROCKEY ARM): 26B notice(mode2) post OK result 0; --dashboard 回读 base64(8192+32) 解码: 前缀匹配、0 补齐到 4096(total 8224)。
+- 2026-09-08 重构(用户要求): 抽出 ReadLineEx(line, sizeMin, sizeMax, encode, prompt) —— 变长行读取, 解码长度落于 [sizeMin, sizeMax] 返回长度否则 -EIO; notice 改由其读取(stdin 逻辑不再内嵌分支), 行为不变, 真机复测 OK。

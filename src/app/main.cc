@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <base/base.h>
 #include <tuple>
@@ -368,6 +368,42 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, 
     rlLOGE(TAG, "ReadLine %s size: %d, read: %d", prompt, size, bytes);
     return -EIO;
   };
+  /*! 变长行读取: 与 ReadLine 同交互(跳过空行), 解码长度落在 [sizeMin, sizeMax] 内才写入
+   *! line 并返回该长度, 否则返回 -EIO。notice 等变长输入使用。 */
+  auto ReadLineEx = [](uint8_t* line, int sizeMin, int sizeMax, EncodeFormat encode, const char* prompt) {
+    int bytes = 0;
+    constexpr int kInputLimit = 128 * 1024;
+    rlLOGW(TAG, "Input %s, size range: %d..%d:", prompt, sizeMin, sizeMax);
+    Dongle::SecretBuffer<kInputLimit, char> sline_;
+    Dongle::SecretBuffer<kInputLimit> buffer_;
+
+    memset(&buffer_[0], 0, kInputLimit);
+    for (;;) {
+      memset(&sline_[0], 0, kInputLimit);
+      if (!fgets(&sline_[0], kInputLimit - 1, stdin))
+        return -EIO;
+      if (sline_[0] && sline_[0] != '\r' && sline_[0] != '\n')
+        break;
+    }
+    for (int i = 0; i < kInputLimit; ++i) {
+      if (sline_[i] == '\r' || sline_[i] == '\n')
+        sline_[i] = 0;
+      if (sline_[i] == 0)
+        break;
+    }
+
+    if (encode == EncodeFormat::kBase64)
+      bytes = rl_BASE64_Read(&buffer_[0], &sline_[0], -1);
+    else
+      bytes = rl_HEX_Read(&buffer_[0], &sline_[0], -1);
+
+    if (bytes < sizeMin || bytes > sizeMax) {
+      rlLOGE(TAG, "ReadLineEx %s size: %d..%d, read: %d", prompt, sizeMin, sizeMax, bytes);
+      return -EIO;
+    }
+    memcpy(line, &buffer_[0], (size_t)bytes);
+    return bytes;
+  };
 
   rlLOGI(TAG, ">>>> Enter Utilities.%s ....", type);
   if (0 == strcmp(type, "dashboard")) {
@@ -381,6 +417,41 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, 
       line[len++] = '\n';
       if (len != write(stdout_, line, len))
         result = -EIO;
+    }
+  } else if (0 == strcmp(type, "notice")) {
+    /**
+     *! 将用户设置的数据张贴到 dashboard[0, 4096):
+     *! 输入 = 单行 Base64(notice[n] || SHA256(notice)); n = 解码总长 - 32, 1<=n<=4096。
+     *! SHA256 规范按"补齐 0 到 4096B 的 notice"校验(与最终写入内容一致), 亦兼容按原始 n 字节计算哈希的输入。
+     *! 校验通过后以 0 补齐到 4096B, 写 dashboard[0, 4096)(供脚本证书导入等使用)。
+     */
+    constexpr int kSizeNotice = 4096;
+    uint8_t raw_[kSizeNotice + 32];
+
+    const int bytes = ReadLineEx(&raw_[0], 33, kSizeNotice + 32, EncodeFormat::kBase64, "notice(<=4096B)+SHA256");
+    if (bytes < 0) {
+      result = bytes;
+    } else {
+      const int len_notice = bytes - 32;
+      uint8_t notice[kSizeNotice];
+      uint8_t check_padded[32], check_raw[32];
+      memset(notice, 0, sizeof(notice));
+      memcpy(notice, &raw_[0], (size_t)len_notice);
+
+      Sha256Ctx().Init().Update(notice, sizeof(notice)).Final(check_padded);
+      Sha256Ctx().Init().Update(notice, (size_t)len_notice).Final(check_raw);
+
+      int mode = 0 == memcmp(&raw_[len_notice], check_padded, 32)
+                     ? 1
+                     : (0 == memcmp(&raw_[len_notice], check_raw, 32) ? 2 : 0);
+      if (0 == mode) {
+        rlLOGE(TAG, "SHA256(notice) mismatch!");
+        result = -EBADMSG;
+      } else {
+        rlLOGI(TAG, "notice SHA256 OK (%dB, mode %d)", len_notice, mode);
+        result = dongle->WriteDataFile(dongle->kFactoryDataFileId, 0, notice, sizeof(notice));
+        rlLOGI(TAG, "post notice => dashboard[0,4096), result %d", result);
+      }
     }
   } else if (0 == strcmp(type, "--reset")) {
     ///
