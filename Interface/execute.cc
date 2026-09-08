@@ -1,4 +1,5 @@
 ﻿#include "script.h"
+#include <Interface/x509.h>
 
 rLANG_DECLARE_MACHINE
 
@@ -264,6 +265,8 @@ int VM_t::OpExecute(uint16_t op, int argc, int32_t argv[]) {
     if (valid_permission_ != PERMISSION::kAdministrator)
       return zero_ = -EACCES;
     return zero_ = OpExecute_ExchangeMasterSecret(argc, argv);
+  } else if (op == OpCode::kExecuteImportX509) {
+    return zero_ = OpExecute_ImportX509(argc, argv);
   } else {
     return zero_ = SIGILL;
   }
@@ -494,6 +497,240 @@ int VM_t::OpExecute_ImportMasterSecret(int argc, int32_t argv[]) {
   return error ? -EFAULT : 0;
 }
 
+/* ================= OpExecute_ImportX509 =================
+ * 证书 DER 位于 dashboard[0, len)(工厂 dataFile 0xFFFF), BER 宽松 FSM 流式解析;
+ * argv[0]=SECRET_STORAGE_TYPE(kRSA/kP256/kSM2) argv[1]=pkeyId argv[2]=dataFileId(已存在则报错)
+ * argv[3]=DER 长度(0<len<=2048), argv[4](可选)!=0 → 校验 argv[1] 私钥与证书公钥匹配。
+ *
+ * 导入数据文件布局 = [X509View][X509.DER](先 view 后 DER)。
+ * BSP:COS 验签/签名把 ExtendBuf 当工作区 → 三步走, 公钥/临时量全放 InOutBuf。 */
+namespace {
+
+static int X509_DashboardRead(void* ctx, size_t off, uint8_t* dst, size_t len) {
+  Dongle* d = static_cast<Dongle*>(ctx);
+  if (!d || (len && !dst)) return -EINVAL;
+  return len ? d->ReadDataFile(Dongle::kFactoryDataFileId, off, dst, len) : 0;
+}
+
+/* SPKI BIT STRING 内容解析: RSA = SEQ{INTEGER n, INTEGER e} → [e:u32LE][n:256B];
+ * EC = 04||X||Y 或裸 X||Y → xy(64)。返回 0。 */
+static int X509_KeyFromPub(const uint8_t* in, size_t in_len, uint8_t* out_e_n, const uint8_t** xy, size_t* xy_len) {
+  *xy = nullptr;
+  *xy_len = 0;
+  if (!in || in_len == 0) return -EBADMSG;
+  if (in[0] == 0x04) {
+    if (in_len < 65) return -EBADMSG;
+    *xy = in + 1;
+    *xy_len = 64;
+    return 0;
+  }
+  if (in[0] != 0x30) {
+    if (in_len < 64) return -EBADMSG;
+    *xy = in;
+    *xy_len = 64;
+    return 0;
+  }
+  /* RSA SEQUENCE{ INTEGER n, INTEGER e } */
+  size_t p = 1;
+  if (p >= in_len) return -EBADMSG;
+  uint8_t l = in[p++];
+  size_t total;
+  if (l & 0x80) {
+    uint8_t n = l & 0x7F;
+    if (!n || n > 2 || p + n > in_len) return -EBADMSG;
+    total = 0;
+    while (n--) total = (total << 8) | in[p++];
+  } else {
+    total = l;
+  }
+  if (p + total != in_len) return -EBADMSG;
+  uint8_t nbuf[256];
+  memset(nbuf, 0, sizeof(nbuf));
+  uint32_t e = 0;
+  bool have_n = false;
+  for (int k = 0; k < 2 && p < in_len; ++k) {
+    if (in[p++] != 0x02) return -EBADMSG;
+    if (p >= in_len) return -EBADMSG;
+    l = in[p++];
+    size_t ilen;
+    if (l & 0x80) {
+      uint8_t nn = l & 0x7F;
+      if (!nn || nn > 2 || p + nn > in_len) return -EBADMSG;
+      ilen = 0;
+      while (nn--) ilen = (ilen << 8) | in[p++];
+    } else {
+      ilen = l;
+    }
+    if (p + ilen > in_len) return -EBADMSG;
+    size_t start = p;
+    size_t vlen = ilen;
+    if (vlen && in[start] == 0x00) {
+      ++start;
+      --vlen;
+    }
+    if (!have_n) {
+      if (vlen > 256) return -EBADMSG;
+      memcpy(nbuf + (256 - vlen), in + start, vlen);
+      have_n = true;
+    } else {
+      if (vlen > 4) return -EBADMSG;
+      e = 0;
+      for (size_t i = 0; i < vlen; ++i) e = (e << 8) | in[start + i];
+    }
+    p += ilen;
+  }
+  if (!have_n || !out_e_n) return -EBADMSG;
+  out_e_n[0] = static_cast<uint8_t>(e);
+  out_e_n[1] = static_cast<uint8_t>(e >> 8);
+  out_e_n[2] = static_cast<uint8_t>(e >> 16);
+  out_e_n[3] = static_cast<uint8_t>(e >> 24);
+  memcpy(out_e_n + 4, nbuf, 256);
+  return 0;
+}
+
+}  // namespace
+
+int VM_t::OpExecute_ImportX509(int argc, int32_t argv[]) {
+  if (argc < 4 || argc > 5)
+    return zero_ = -EINVAL;
+  const int32_t storage = argv[0];
+  const int32_t pkey_id = argv[1];
+  const int32_t datafile_id = argv[2];
+  const int32_t len = argv[3];
+
+  if (valid_permission_ != PERMISSION::kAdministrator && valid_permission_ != PERMISSION::kNormal)
+    return zero_ = -EACCES;
+  if ((pkey_id < kUserFileID || datafile_id < kUserFileID) && valid_permission_ != PERMISSION::kAdministrator)
+    return zero_ = -EACCES;
+
+  if (len <= 0 || len > 2048)
+    return zero_ = -EINVAL;
+  if (storage != (int32_t)SECRET_STORAGE_TYPE::kRSA && storage != (int32_t)SECRET_STORAGE_TYPE::kP256 &&
+      storage != (int32_t)SECRET_STORAGE_TYPE::kSM2)
+    return zero_ = -EINVAL;
+  if (pkey_id < 1 || pkey_id > 0xffff || datafile_id < 1 || datafile_id > 0xffff)
+    return zero_ = -EINVAL;
+
+  /* dashboard[0, len) 流式 BER 解析(不整块驻留) */
+  X509View view;
+  X509FsmSource src;
+  uint8_t key_type = 0;
+  int sign_error = 0;
+  int error = 0;
+
+  src.Read = X509_DashboardRead;
+  src.ctx = dongle_;
+  src.total = static_cast<size_t>(len);
+
+  if (0 != X509FsmParse(&view, &src, &key_type))
+    return zero_ = -EBADMSG;
+  if ((int32_t)key_type != storage)
+    return zero_ = -EBADMSG; /* argv0 私钥类型与证书 SPKI 不一致 */
+
+  if (argc > 4 && argv[4]) {
+    /* ===== 三步密钥↔证书公钥匹配(COS 用 ExtendBuf, 公钥/临时量放 InOutBuf) ===== */
+    uint8_t* const inout = static_cast<uint8_t*>(data_);
+    /* 第 1 步: 拉取 SPKI 公钥内容到 InOutBuf+0 并解析(e/n 或 X||Y)。
+     * RSA-2048 的 SPKI 内容最大 ~271B(模数 257B DER INTEGER 带前导 0), 上限须 >260;
+     * 公钥读入 [0, 0x200) 临时区, 不与 +0x200 起的 block/sig 工作区重叠 */
+    if (view.len_spki_pub == 0 || view.len_spki_pub > 0x200 - 1)
+      return zero_ = -EBADMSG;
+    error = dongle_->ReadDataFile(Dongle::kFactoryDataFileId, view.off_spki_pub, inout, view.len_spki_pub);
+    if (0 != error)
+      return zero_ = -EFAULT;
+    const uint8_t* xy = nullptr;
+    size_t xy_len = 0;
+    if (0 != X509_KeyFromPub(inout, view.len_spki_pub, inout, &xy, &xy_len))
+      return zero_ = -EBADMSG;
+
+    /* 第 2 步(私钥签名) 与 第 3 步(证书公钥验签): 临时量放 InOutBuf[0x200, 0x400) */
+    uint8_t* const block = inout + 0x200;
+    uint8_t* const sig = inout + 0x300;
+    size_t sig_size = 256;
+    switch (static_cast<SECRET_STORAGE_TYPE>(storage)) {
+      case SECRET_STORAGE_TYPE::kP256:
+      case SECRET_STORAGE_TYPE::kSM2: {
+        sign_error = dongle_->RandBytes(block, 32);
+        if (0 == sign_error) {
+          if (storage == (int32_t)SECRET_STORAGE_TYPE::kP256)
+            sign_error = dongle_->P256Sign(pkey_id, block, sig, sig + 32);
+          else
+            sign_error = dongle_->SM2Sign(pkey_id, block, sig, sig + 32);
+        }
+        if (0 == sign_error && xy && xy_len == 64) {
+          if (storage == (int32_t)SECRET_STORAGE_TYPE::kP256)
+            sign_error = dongle_->P256Verify(xy, xy + 32, block, sig, sig + 32);
+          else
+            sign_error = dongle_->SM2Verify(xy, xy + 32, block, sig, sig + 32);
+        } else if (0 == sign_error) {
+          sign_error = -EBADMSG;
+        }
+        break;
+      }
+      case SECRET_STORAGE_TYPE::kRSA: {
+        const uint32_t e =
+            (uint32_t)inout[0] | ((uint32_t)inout[1] << 8) | ((uint32_t)inout[2] << 16) | ((uint32_t)inout[3] << 24);
+        /* PKCS#1 v1.5: 私钥/公钥操作上限 256-11 字节(COS 与模拟器同为有填充),
+         * 负载 245B 随机 → 私钥"加密"成 256B 签名 → 证书公钥解密回 245B 明文比对 */
+        constexpr size_t kPayload = 256 - 11;
+        sign_error = dongle_->RandBytes(block, kPayload);
+        if (0 == sign_error) {
+          memcpy(sig, block, kPayload);
+          sig_size = kPayload;
+          sign_error = dongle_->RSAPrivate(pkey_id, sig, &sig_size, true);
+        }
+        if (0 == sign_error && sig_size == 256)
+          sign_error = dongle_->RSAPublic(2048, e, inout + 4, sig, &sig_size, false);
+        if (0 == sign_error && (sig_size != kPayload || 0 != memcmp(sig, block, kPayload)))
+          sign_error = -EFAULT; /* 与证书公钥不匹配 */
+        break;
+      }
+      default:
+        sign_error = -EINVAL;
+        break;
+    }
+    memset(block, 0, 0x400 - 0x200);
+  }
+
+  /* argv[4] 请求的私钥↔证书匹配校验失败 → 不得创建数据文件 */
+  if (sign_error) {
+    rlLOGE(TAG, "ImportX509 pkey#%d cert mismatch: %d, 拒绝导入", (int)pkey_id, sign_error);
+    return zero_ = -EFAULT;
+  }
+
+  /* 导入 dataFile(argv[2], 须不存在): 布局 = [X509View][X509.DER] */
+  const size_t kHeaderSize = sizeof(X509View);
+  error = dongle_->CreateDataFile(datafile_id, kHeaderSize + static_cast<size_t>(len), PERMISSION::kAnonymous,
+                                  PERMISSION::kAdministrator);
+  if (0 == error)
+    error = dongle_->WriteDataFile(datafile_id, 0, &view, kHeaderSize);
+  if (0 == error) {
+    uint8_t chunk[96];
+    size_t pos = 0;
+    while (pos < static_cast<size_t>(len)) {
+      size_t n = static_cast<size_t>(len) - pos;
+      if (n > sizeof(chunk))
+        n = sizeof(chunk);
+      int r = dongle_->ReadDataFile(Dongle::kFactoryDataFileId, pos, chunk, n);
+      if (0 != r) {
+        error = r;
+        break;
+      }
+      r = dongle_->WriteDataFile(datafile_id, kHeaderSize + pos, chunk, n);
+      if (0 != r) {
+        error = r;
+        break;
+      }
+      pos += n;
+    }
+  }
+  if (0 != error)
+    return zero_ = -EFAULT;
+  rlLOGI(TAG, "ImportX509 file#%d layout=[view|DER] len=%d storage=%d OK", (int)datafile_id, (int)len, (int)storage);
+  if (argc > 4 && 0 != argv[4])
+    rlLOGI(TAG, "ImportX509 file#%d pkey#%d match cert OK", (int)datafile_id, (int)pkey_id);
+  return zero_ = 0;
+}
 }  // namespace script
 }  // namespace dongle
 

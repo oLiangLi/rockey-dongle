@@ -252,7 +252,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 ### 10.3 d3ec243 X509 证书验签原语(设备端基础原语)
 
 - 新增 `Interface/x509.{h,cc}`(815/107 行),编入 LOCAL_SRC_FILES(xModule.mk);dongle/emulator/rockey 三实现各加 X509 入口(+85/+85/+58);dongle.h 新增 `RSAVerifyPkcs1`/`SM2VerifyMessage` 虚函数(设备端 signature 就地覆写,输入输出共用,master.cc 同款)。
-- **严格 DER 解析**:≤1KB 证书就地零拷贝;拒绝 indefinite/非规范编码/尾随字节/负 INTEGER。
+- **严格 DER 解析**:≤1KB 证书就地零拷贝(2026-09-07 上限改为 **≤2KB**,见 §10.16);拒绝 indefinite/非规范编码/尾随字节/负 INTEGER。
 - API:`X509Parse / X509VerifySignature / X509VerifySelfSigned / X509ExtNext / X509CheckTime / X509GetPublicKey` + 9 个 `X509OID_*` 判断。
 - **验签全走硬件/宿主库**:RSA2048-SHA256(FTRX rsa_pub / TASSL RSA_verify)、P256-SHA256(FTRX ecc_verify / TASSL)、SM2-SM3(FTRX sm2_verify / TASSL EVP_SM2 别名路径,e = SM3(Z_A||tbs) 标准语义)。
 - 设计要点:时间检查只置警告位(设备 RTC 不可靠);遵守固件无 rodata/无除法约束(OID 立即数比对、拆包/日期解析无 / 与 %)。
@@ -282,7 +282,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 ### 10.6 X509Tests 测试项(2026-09-05, 未提交)
 
 - `src/__Testing__/__dongle__/main.cc` 新增测试项 **index 18 = X509Tests**(X509 验签原语真机测试),子模式由 argv_[1] 选择:0/缺省 = P256 链 | 1 = SM2 链 | 2 = RSA2048 自签 CA(单证书)。
-- **证书通道(用户决策)**:证书 DER 在进入测试前由 host/模拟器 `WriteX509Certs` 写入 **dashboard[0, 4KB)**(factory dataFile 0xFFFF **匿名可写区**,与 Initialize.dongle 的 `kOffsetX509Chain = 4*1024` 注释同源约定);测试内三平台统一 `ReadDataFile` 加载到 InOutBuf[360, 1024) 证书区。blob = [u16 leaf_len][u16 ca_len][leaf][ca];`kX509CertOffset = 360`,编译期断言 `sizeof(Context_t) == 360`。
+- **证书通道(用户决策)**:证书 DER 在进入测试前由 host/模拟器 `WriteX509Certs` 写入 **dashboard[0, 4KB)**(factory dataFile 0xFFFF **匿名可写区**,与 Initialize.dongle 的 `kOffsetX509Chain = 4*1024` 注释同源约定);测试内三平台统一 `ReadDataFile` 加载到 InOutBuf[360, 1024) 证书区(2026-09-07 起上限 ≤2KB,设备端将改由 dashboard 两段加载,§10.16)。blob = [u16 leaf_len][u16 ca_len][leaf][ca];`kX509CertOffset = 360`,编译期断言 `sizeof(Context_t) == 360`。
 - **固件 rodata 约束**(用户确认"ukey 下 rodata 不可读"):内置证书数组仅 `!__RockeyARM__` 构建编译(linux/aarch64/foobar/wasm),固件零静态数据;链接脚本 rodata/data 空断言兜底验证。
 - 内置证书:TASSL/BabaSSL libcrypto(gen/System 版本,仅无网络功能)生成——P256 CA+叶 610B、SM2 CA+叶 609B、**RSA2048 v1 自签 664B 恰好占满证书区**;统一有效期 2020-01-01~2030-01-01(GeneralizedTime);叶 issuer 指向 CA 名(自签判定负例用);RSA v1 无扩展最小化体积;生成时 OpenSSL `X509_verify` 交叉验证=1。
 - 覆盖:严格 DER 解析、X509CheckTime 固定 epoch 警告位(2025-06-01 窗口内 / 2035-01-01 After / 2015-01-01 Before,不取设备 RTC)、X509GetPublicKey(SPKI 分派,RSA e=65537 校验)、X509ExtNext 遍历(BC/KU critical)、链验签/自签根、篡改负例(CA 公钥 X/N 字节、叶签名首字节)、尾随字节与空/超长证书拒绝。
@@ -384,3 +384,40 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 理由(用户):**ukey 代码过于重要**,wasm 的 JS 宿主封装改为**手工生成**,少一个平台(wasmjs)需要确认/维护;原 wasmjs 的 pki.cc RockeyPKEY rLANGIMPORT 无 JS 宿主实现问题(§9.3)随之不再需要解决。
 - 现状:仅保留 **wasm**(`make wasm`,STANDALONE_WASM)产出 `.wasm` 并经 `wasm2string.cjs` 生成 `Web/Assembly/*_wasm.ts`;JS 调用层由手工封装实现。
 
+### 10.16 2026-09-07 决策:X509 证书上限 1KB → 2KB(设备端 InOutBuf+ExtendBuf 两段)
+
+- **背景**:早期按"证书只能放 InOutBuf(1KB)"把 X509 上限定在 1KB;未利用 dashboard[0,4096) 做数据交换。经检查当前实际使用的很多证书 **>1KB**,故上限放宽。
+- **决策(用户澄清)**:上限定为 **2048 字节**(不是 4KB)。实现时把新 OpCode 定义为 **OpExecute_\* 家族**(调用后自动 Exit、可将 VM.text/stack 作缓存),从而可用 **InOutBuf[0,1KB) + ExtendBuf[0,1KB) = 2KB**:证书前 1KB 装入 InOutBuf、后 1KB 装入 ExtendBuf;跨段读取/解析随该 OpCode 接入实现。
+- **本批次已落(host/模拟器/固件共同生效)**:
+  - `Interface/x509.cc`:`cursor_from` 上限 1024→**2048**(超限返回 -E2BIG),注释同步;单块连续输入契约不变(跨段解析待 OpExecute 接入,§10.3 X509 OpCode 待办)。
+  - `Interface/x509.h` 注释、`X509View`(uint16 偏移)无需改动即覆盖 2KB。
+  - `__x509__` 套件:超长负例 1025→2049;新增 **>1KB(≤2KB)回归用例**(22 个 dNSName SAN 撑大 RSA 叶证书,验证 parse/OpenSSL/链验签)。
+  - 验证:linux/foobar __x509__ total error = 0;linux 0 警告;`make dongle`(固件)通过。
+- 遗留:设备端 X509Tests(index 18)证书区仍为 InOutBuf[360,1024) 布局(内置小证书可用);>1KB 证书的真机/设备路径待 OpExecute_* 接入时改 dashboard 两段加载(见上)。
+### 10.17 2026-09-07 OpExecute_ImportX509: dashboard 流式 FSM + 导入布局 + 新约定
+
+- OpCode kExecuteImportX509(0x283, argc 4/5): argv0=SECRET_STORAGE_TYPE(kRSA/kP256/kSM2), argv1=pkeyId, argv2=目标 dataFileId(已存在即错不覆盖), argv3=证书 DER 长度(≤2048, dashboard[0,len)), argv4(可选)!=0 = 私钥↔证书公钥匹配校验。
+- 解析: X509FsmParse(X509FsmSource: 内存/dashboard 双源; BER 宽松; 64B cache) 流式, view 只填最小集(tbs 含 SEQ 头 + SPKI + key_type); sig/sig_type 字段留链验签 OpCode。
+- 导入数据文件布局 = [X509View][X509.DER](先 view 头后 DER, 96B chunk 流式拷自 dashboard)。
+- 流程(BSP: COS 验签/签名把 ExtendBuf 当工作区): dashboard FSM 解析 → (可选)三步匹配(拉 SPKI 公钥暂存 InOutBuf+0 → ukey 私钥签名 → 证书公钥验回) → 匹配失败拒绝导入 → 创建/写入数据文件; 公钥/临时量放 InOutBuf, COS 期间 ExtendBuf 交还。
+- 严重问题修正(用户复核): ① argv4 匹配须在 CreateDataFile 前完成, 失败不得建文件; ② 创建写权限由匿名改 kAdministrator(读匿名/写管理员)。
+- 新约定 ① 权限: dataFile/pkeyFile 的 id<kUserFileID(1000) 创建需 kAdministrator; ≥1000 仅需 kNormal; 所有 SECRET_STORAGE_TYPE 数据 id<1000 才需管理员创建。
+- 新约定 ② 结构偏移冻结: 已标注偏移的结构(如 X509View: 逐成员 /*0..48*/ + reserved_[5] + rLANG_ABIREQUIRE(sizeof==48))除 reserved_ 外不得再变更成员, 供 ts/js/dongle.script 按偏移操作。
+- 状态: FSM+__x509__ 差分(8 链+>1KB)全绿; linux 0 警告; make dongle 通过; 运行时端到端/真机待补。
+
+
+### 10.18 2026-09-08 OpExecute_ImportX509 运行时(模拟器)端到端用例 + 两处修复
+
+- 新增测试模块 `src/__Testing__/__x509import__`(xModule.mk 同 __x509__; main.cc 主体 `#if defined(__EMULATOR__)`, 其它构建仅打日志返回 0): 用 `Emulator(kAdministrator)+Create` 起内存世界, 证书 DER 写入工厂 dashboard(0xFFFF)后直接调 `script::VM_t::OpExecute_ImportX509`(按用例设 valid_permission_)并读回产物校验。
+- 校验器 CheckLayout: dataFile 总长 == 48+len; [0,48) 六元最小集(off/len_tbs、spki alg、spki pub)与 X509FsmParse 重解析逐项一致; [48,..) == DER 原字节。
+- 用例覆盖(全部通过: `make foobar` 后运行 `.bin/amd64-foobar-windows-debug/__Testing__x509import__.exe` → total error = 0):
+  - 普通导入 RSA/P256/SM2(dataFile#1/2/3)与 >1KB 大证书(#30, 1066B, 多 96B 分块路径), 布局逐项一致;
+  - 错误矩阵: 尾随字节 / storage 与 SPKI 类型不符 / 垃圾 DER / len=0、len=4096 → 拒绝且不建文件;
+  - 上界正例: 恰 **2048B** 证书(#32, RSA, 未知扩展精确填充)可导入, 布局一致(回归 2026-09-08: 用户复核删除 execute.cc 多余的 `len<=0||len>=2048` 二次检查, `len==2048` 不再被误拒);
+  - 权限矩阵: kAnonymous 一律拒绝; kNormal + 任一 id<1000 拒绝; kNormal + 两 id≥1000 放行(#1000 建文件+布局 OK);
+  - 目标 dataFile 已存在 → 拒绝且原文件内容不被改写(预建 64B 文件首 4B 仍全零);
+  - argv4 匹配校验: RSA/P256/SM2 各一正(私钥↔证书公钥同源, 建文件+布局 OK)一负(异源拒绝, 无文件); 负例日志可见 RSA_public_decrypt padding check failed / P256Verify False / SM2Verify False。
+- 过程中发现并修复两处(运行时才暴露):
+  1) execute.cc RSA 匹配分支负载取 256B, 而 RSAPrivate/RSAPublic(PKCS#1, 设备 rockey.cc 与模拟器同封装)上限 256-11=245 → 必 -E2BIG; 改为: RandBytes 245B 负载 → 私钥"签名"成 256B → 证书公钥解密回 245B → 逐字节比对;
+  2) execute.cc 拉取 SPKI 公钥上限 260B 太小: RSA-2048 模数 DER INTEGER 带前导 0 时 SPKI 内容 ~270B → argv4 校验分支恒 -EBADMSG; 上限放宽至 0x200-1(InOutBuf+0 临时区不与 +0x200 起的 block/sig 工作区重叠)。
+- 状态: 运行时端到端(模拟器)全绿; 真机路径待用户按需复测(需设备+固件刷写授权)。遗留: FSM 最小集暂不含 sig_type(链验签 OpCode 时扩展)。

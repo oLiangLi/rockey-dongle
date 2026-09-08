@@ -1,6 +1,8 @@
 ﻿#include <Interface/dongle.h>
 #include <Interface/x509.h>
 #include <time.h>
+#include <cstdio>
+#include <string>
 #include <vector>
 
 AGINX_DECLARE_MACHINE
@@ -15,6 +17,37 @@ struct CertPair {
   std::vector<uint8_t> ca;
   std::vector<uint8_t> leaf;
 };
+
+/* FSM 内存源 */
+static int MemCertRead(void* ctx, size_t off, uint8_t* dst, size_t len) {
+  auto* v = static_cast<std::vector<uint8_t>*>(ctx);
+  if (off + len > v->size()) return -1;
+  if (len) memcpy(dst, v->data() + off, len);
+  return 0;
+}
+
+/* FSM 最小集 + key_type 与现有解析差分(返回非 0 = 不一致) */
+static int DiffFsm(const std::vector<uint8_t>& leaf, const machine::dongle::X509View& ref, uint8_t expect_key) {
+  machine::dongle::X509FsmSource src;
+  src.Read = MemCertRead;
+  src.ctx = const_cast<std::vector<uint8_t>*>(&leaf);
+  src.total = leaf.size();
+  machine::dongle::X509View fv;
+  uint8_t kt = 0;
+  int fr = machine::dongle::X509FsmParse(&fv, &src, &kt);
+  if (0 != fr) return fr;
+  if (fv.off_tbs != ref.off_tbs || fv.len_tbs != ref.len_tbs || fv.off_spki_alg_oid != ref.off_spki_alg_oid ||
+      fv.len_spki_alg_oid != ref.len_spki_alg_oid || fv.off_spki_pub != ref.off_spki_pub ||
+      fv.len_spki_pub != ref.len_spki_pub || kt != expect_key) {
+    rlLOGE(TAG,
+           "FSM-detail leaf=%zu ref{tbs %u/%u alg %u/%u pub %u/%u} fsm{tbs %u/%u alg %u/%u pub %u/%u} kt %u/%u",
+           leaf.size(), ref.off_tbs, ref.len_tbs, ref.off_spki_alg_oid, ref.len_spki_alg_oid, ref.off_spki_pub,
+           ref.len_spki_pub, fv.off_tbs, fv.len_tbs, fv.off_spki_alg_oid, fv.len_spki_alg_oid, fv.off_spki_pub,
+           fv.len_spki_pub, kt, expect_key);
+    return -1;
+  }
+  return 0;
+}
 
 void SetNames(X509* cert, const char* cn) {
   X509_NAME* name = X509_get_subject_name(cert);
@@ -54,13 +87,15 @@ EVP_PKEY* NewECKey(int nid) {
   return pkey;
 }
 
-/*! 生成 CA(自签) + 叶证书(CA 签发), 返回 DER;ca/leaf 密钥类型可不同(混合链) */
+/*! 生成 CA(自签) + 叶证书(CA 签发), 返回 DER;ca/leaf 密钥类型可不同(混合链)。
+ *! san_leaf 非空时给叶证书附加 subjectAltName(测试 >1KB 证书用) */
 int MakeChain(int ca_key_nid /* 0 = RSA2048 */,
               int leaf_key_nid /* 0 = RSA2048 */,
               const EVP_MD* md,
               const char* cn_ca,
               const char* cn_leaf,
-              CertPair* out) {
+              CertPair* out,
+              const char* san_leaf = nullptr) {
   EVP_PKEY* ca_key = (ca_key_nid == 0) ? NewRSAKey() : NewECKey(ca_key_nid);
   EVP_PKEY* leaf_key = (leaf_key_nid == 0) ? NewRSAKey() : NewECKey(leaf_key_nid);
 
@@ -85,6 +120,8 @@ int MakeChain(int ca_key_nid /* 0 = RSA2048 */,
   X509_set_pubkey(leaf, leaf_key);
   AddExt(leaf, NID_basic_constraints, "critical,CA:FALSE");
   AddExt(leaf, NID_key_usage, "critical,digitalSignature");
+  if (san_leaf)
+    AddExt(leaf, NID_subject_alt_name, const_cast<char*>(san_leaf));
   if (X509_sign(leaf, ca_key, md) <= 0)
     return -1;
 
@@ -152,7 +189,7 @@ rLANGEXPORT int main() {
 
     for (int i = 0; i < 8; ++i) {
       const auto& c = chains[i];
-      if (c.leaf.size() > 1024 || c.ca.size() > 1024) {
+      if (c.leaf.size() > 2048 || c.ca.size() > 2048) {
         rlLOGE(TAG, "chain %d: DER too large leaf=%zu ca=%zu", i, c.leaf.size(), c.ca.size());
         ++error;
       }
@@ -170,6 +207,16 @@ rLANGEXPORT int main() {
       if (v.sig_type != kExpectType[i]) {
         rlLOGE(TAG, "chain %d: sig_type %d != %d", i, v.sig_type, kExpectType[i]);
         ++error;
+      }
+
+      /* FSM 流式解析差分(最小集字段 + key_type;SPKI 密钥类型与签名算法无关) */
+      {
+        const uint8_t exp_key = (i == 1 || i == 5 || i == 6) ? 2 : (i == 2 ? 3 : 1);
+        const int fr = DiffFsm(c.leaf, v, exp_key);
+        if (0 != fr) {
+          rlLOGE(TAG, "chain %d: FSM diff r=%d key=%d", i, fr, exp_key);
+          ++error;
+        }
       }
 
       /* OpenSSL ground truth */
@@ -335,8 +382,8 @@ rLANGEXPORT int main() {
         rlLOGE(TAG, "indefinite length accepted!");
         ++error;
       }
-      /* 超长证书 */
-      uint8_t big[1025] = {0};
+      /* 超长证书(>2KB) */
+      uint8_t big[2049] = {0};
       big[0] = 0x30;
       if (-E2BIG != X509Parse(&v, big, sizeof(big))) {
         rlLOGE(TAG, "oversize cert not rejected");
@@ -346,6 +393,46 @@ rLANGEXPORT int main() {
       if (-EINVAL != X509Parse(&v, nullptr, 0)) {
         rlLOGE(TAG, "null cert not rejected");
         ++error;
+      }
+    }
+
+    /* ---- 2KB 上限回归:构造 >1KB(≤2KB)叶证书(SAN 撑大), 必须能解析与验签 ---- */
+    {
+      CertPair big;
+      std::string san;
+      for (int i = 0; i < 22; ++i) {
+        char dns[64];
+        snprintf(dns, sizeof(dns), "DNS:entry%02d.very.long.subdomain.rockey-x509.test", i);
+        if (i) {
+          san += ",";
+        }
+        san += dns;
+      }
+      if (0 != MakeChain(0, 0, EVP_sha256(), "RSA Root CA", "RSA BigLeaf", &big, san.c_str())) {
+        rlLOGE(TAG, "big-cert MakeChain failed");
+        ++error;
+      } else {
+        if (!(big.leaf.size() > 1024 && big.leaf.size() <= 2048)) {
+          rlLOGE(TAG, "big-cert size out of (1KB, 2KB]: %zu", big.leaf.size());
+          ++error;
+        }
+        X509View bv;
+        if (0 != X509Parse(&bv, big.leaf.data(), big.leaf.size()) || bv.sig_type != kX509SigRSA_SHA256) {
+          rlLOGE(TAG, "big-cert parse/type failed size=%zu", big.leaf.size());
+          ++error;
+        } else if (0 != DiffFsm(big.leaf, bv, 1)) {
+          rlLOGE(TAG, "big-cert FSM diff failed size=%zu", big.leaf.size());
+          ++error;
+        }
+        if (!OpenSSLVerify(big)) {
+          rlLOGE(TAG, "big-cert OpenSSL ground truth failed size=%zu", big.leaf.size());
+          ++error;
+        }
+        if (0 !=
+            X509VerifySignature(&rockey, big.leaf.data(), big.leaf.size(), big.ca.data(), big.ca.size(), work, sizeof(work))) {
+          rlLOGE(TAG, "big-cert X509VerifySignature failed size=%zu", big.leaf.size());
+          ++error;
+        }
       }
     }
   }

@@ -107,6 +107,7 @@ struct VM_t {
   int OpExecute_HelloWorld(int argc, int32_t argv[]);
   int OpExecute_ImportMasterSecret(int argc, int32_t argv[]);
   int OpExecute_ExchangeMasterSecret(int argc, int32_t argv[]);
+  int OpExecute_ImportX509(int argc, int32_t argv[]);
 
   /**
    *!
@@ -571,6 +572,18 @@ enum class OpCode : uint16_t {
   kExecuteHelloWorld = 0x280,    // argc : 0, Exit(ExecuteHelloWorld()), 测试使用 ...
   kExecuteImportMasterSecret,    // argc : 0, Exit(ExecuteImportMasterSecret())  ...
   kExecuteExchangeMasterSecret,  // argc : 0, Exit(ExecuteExchangeMasterSecret()) ...
+
+  /**
+   *! 导入 X509 证书, 证书数据由 Dashboard[0, 2048) 输入, 4 <= argc <= 5
+   *! argv[0] : pkeyType, SECRET_STORAGE_TYPE::(kRSA||kP256||kSM2)
+   *! argv[1] : pkeyId
+   *! argv[2] : 目标 dataFileId(已存在则报错, 不覆盖)
+   *! argv[3] : 证书 DER 长度(0 < len <= 2048)
+   *! argv[4] != 0: 用 argv[1] 私钥签名随机数据并以此证书公钥验回(校验密钥匹配), 缺省不校验 ...
+   *!
+   *! 操作权限定义为 pkeyId < 1000 || dataFileId < 1000 则需要管理员权限 ...
+   */
+  kExecuteImportX509,            // argc : 4/5, Exit(OpExecute_ImportX509()) ...
 
   /**
    *! [0x300, 0x3FF]的OpCode为以后的扩展所保留 ...

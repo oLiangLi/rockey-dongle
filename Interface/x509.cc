@@ -1,8 +1,9 @@
-/*!
+﻿/*!
  * X509 证书验签原语:严格 DER 解析 + RSA2048-SHA256/384/512 / P256-SHA256/384/512 / SM2-SM3 验签
  *
  * 约束(固件/模拟器共享):
- *  - 证书 DER <= 1KB, 整块就地解析, 零拷贝(offset/len 直接指向证书字节)
+ *  - 证书 DER <= 2KB(InOutBuf[0,1KB) + ExtendBuf[0,1KB) 两段由 OpExecute_* 家族接入时提供,
+ *    当前 API 要求单块连续输入 <=2KB), 整块就地解析, 零拷贝
  *  - 无 rodata:全部常量走"逐字节立即数比对";无 / 与 %(M0 无硬件除法)
  *  - 栈纪律:本文件函数帧 <= ~320B;哈希上下文与摘要缓冲都放调用方 work 区(ExtendBuf)
  *  - 验签走设备硬件(FTRX)/宿主 TASSL;软件模幂/软件 ECDSA 不可用(ukey 性能)
@@ -85,7 +86,7 @@ static int der_tlv(DerCursor* c, uint8_t* tag, uint16_t* len, const uint8_t** co
   } else {
     uint8_t n = l & 0x7F;
     if (n == 0 || n > 2 || c->p + n > c->end)
-      return -EBADMSG; /* 严格:1KB 证书内长度编码 <= 2 字节 */
+      return -EBADMSG; /* 严格:<=2KB 证书内长度编码 <= 2 字节 */
     if (*c->p == 0)
       return -EBADMSG; /* 非规范:长形前导 0 */
     vlen = 0;
@@ -122,11 +123,11 @@ static int der_integer(const uint8_t* content, size_t len, uint8_t* out, size_t 
   return 0;
 }
 
-/*! 由证书字节指针构造视图游标(证书 <= 1KB, offset 用 uint16 即可) */
+/*! 由证书字节指针构造视图游标(证书 <= 2KB, offset 用 uint16 即可) */
 static int cursor_from(const uint8_t* der, size_t size, DerCursor* c) {
   if (!der)
     return -EINVAL;
-  if (size == 0 || size > 1024)
+  if (size == 0 || size > 2048)
     return -E2BIG;
   c->p = der;
   c->end = der + size;
@@ -913,6 +914,176 @@ int X509GetPublicKey(const uint8_t* der, size_t size, uint8_t* out, size_t* size
   return 0;
 }
 
+/* ---- 流式 FSM 解析(dashboard/内存源, BER 宽松, 最小集: tbs + SPKI + key_type) ---- */
+namespace {
+
+struct FsmRd {
+  const X509FsmSource* s;
+  size_t pos;
+  uint8_t cache[64];
+  size_t ncache;
+};
+
+static int fsm_byte(FsmRd* r, uint8_t* out) {
+  if (r->pos >= r->s->total) return -EBADMSG;
+  if (r->ncache == 0) {
+    size_t want = r->s->total - r->pos;
+    if (want > sizeof(r->cache)) want = sizeof(r->cache);
+    if (0 != r->s->Read(r->s->ctx, r->pos, r->cache, want)) return -EIO;
+    r->ncache = want;
+  }
+  *out = r->cache[0];
+  ++r->pos;
+  --r->ncache;
+  if (r->ncache) memmove(r->cache, r->cache + 1, r->ncache);
+  return 0;
+}
+
+static int fsm_read(FsmRd* r, uint8_t* out, size_t n) {
+  for (size_t i = 0; i < n; ++i)
+    if (0 != fsm_byte(r, &out[i])) return -EBADMSG;
+  return 0;
+}
+
+static int fsm_skip(FsmRd* r, size_t n) {
+  if (r->pos + n > r->s->total) return -EBADMSG;
+  r->pos += n;
+  r->ncache = 0;
+  return 0;
+}
+
+/* TLV 头;仅定长(BER 宽松:非最短长形编码放行). content = 内容起点 */
+static int fsm_tlv(FsmRd* r, uint8_t* tag, size_t* len, size_t* content) {
+  uint8_t t;
+  if (0 != fsm_byte(r, &t)) return -EBADMSG;
+  if ((t & 0x1F) == 0x1F) return -EBADMSG; /* 高 tag 编号在证书结构不出现 */
+  uint8_t l;
+  if (0 != fsm_byte(r, &l)) return -EBADMSG;
+  if (l < 0x80) {
+    *len = l;
+  } else if (l == 0x80) {
+    return -EBADMSG; /* indefinite: 定长子集 */
+  } else {
+    uint8_t n = l & 0x7F;
+    if (n == 0 || n > 2) return -EBADMSG;
+    *len = 0;
+    while (n--) {
+      uint8_t b;
+      if (0 != fsm_byte(r, &b)) return -EBADMSG;
+      *len = (*len << 8) | b;
+    }
+  }
+  *tag = t;
+  *content = r->pos;
+  return 0;
+}
+
+}  // namespace
+
+int X509FsmParse(X509View* view, const X509FsmSource* s, uint8_t* key_type) {
+  if (!view || !s || !s->Read || s->total == 0 || s->total > 2048) return -EINVAL;
+  memset(view, 0, sizeof(*view));
+  *key_type = 0;
+
+  FsmRd r;
+  r.s = s;
+  r.pos = 0;
+  r.ncache = 0;
+
+  /* 根: Certificate ::= SEQUENCE{ tbs, sigAlg, sig } */
+  uint8_t tag;
+  size_t len, content;
+  if (0 != fsm_tlv(&r, &tag, &len, &content) || tag != 0x30 || content + len != s->total) return -EBADMSG;
+  const size_t root_end = content + len;
+
+  /* child0 = tbsCertificate(SEQUENCE): 签名覆盖含 SEQ 头的完整 tbs DER(与 X509Parse 一致) */
+  {
+    size_t tbs_content, tbs_len, tbs_tlv_start;
+    tbs_tlv_start = r.pos;
+    if (0 != fsm_tlv(&r, &tag, &tbs_len, &tbs_content) || tag != 0x30) return -EBADMSG;
+    if (tbs_content + tbs_len > root_end) return -EBADMSG;
+    view->off_tbs = static_cast<uint16_t>(tbs_tlv_start);
+    view->len_tbs = static_cast<uint16_t>(tbs_len + (tbs_content - tbs_tlv_start));    const size_t tbs_end = tbs_content + tbs_len;
+
+    /* 扫 tbs 直接子节点, 定位 SPKI = SEQ{ alg:SEQ{OID,[params]}, BIT STRING } */
+    uint8_t alg_oid[16], curve_oid[16];
+    size_t alg_oid_off = 0, alg_oid_len = 0, curve_oid_len = 0;
+    bool found = false;
+    while (r.pos < tbs_end && !found) {
+      uint8_t ct;
+      size_t clen, cstart;
+      if (0 != fsm_tlv(&r, &ct, &clen, &cstart)) return -EBADMSG;
+      if (cstart + clen > tbs_end) return -EBADMSG;
+      if (ct != 0x30) {
+        if (0 != fsm_skip(&r, clen)) return -EBADMSG;
+        continue;
+      }
+      const size_t cend = cstart + clen;
+      /* 候选 SPKI 直接子0 = alg(SEQ):先读其第一个子节点, 要求 OID */
+      size_t a_start, a_len;
+      if (0 != fsm_tlv(&r, &tag, &a_len, &a_start) || tag != 0x30) {
+        if (0 != fsm_skip(&r, cend - r.pos)) return -EBADMSG;
+        continue;
+      }
+      const size_t a_end = a_start + a_len;
+      if (a_end > cend) return -EBADMSG;
+      /* alg 子0 = OID */
+      size_t o_start, o_len;
+      if (0 != fsm_tlv(&r, &tag, &o_len, &o_start) || tag != 0x06) {
+        if (0 != fsm_skip(&r, cend - r.pos)) return -EBADMSG;
+        continue;
+      }
+      if (o_len > sizeof(alg_oid)) {
+        if (0 != fsm_skip(&r, cend - r.pos)) return -EBADMSG;
+        continue;
+      }
+      if (0 != fsm_read(&r, alg_oid, o_len)) return -EBADMSG;
+      alg_oid_off = o_start;
+      alg_oid_len = o_len;
+      /* alg 参数(可选):命名曲线 OID 等 */
+      if (r.pos < a_end) {
+        size_t p_start, p_len;
+        if (0 == fsm_tlv(&r, &tag, &p_len, &p_start) && tag == 0x06 && p_len <= sizeof(curve_oid)) {
+          if (0 == fsm_read(&r, curve_oid, p_len)) curve_oid_len = p_len;
+        }
+      }
+      r.pos = a_end;
+      r.ncache = 0;
+      /* 候选 SPKI 直接子1 = BIT STRING */
+      size_t b_start, b_len;
+      if (0 != fsm_tlv(&r, &tag, &b_len, &b_start) || tag != 0x03) {
+        if (0 != fsm_skip(&r, cend - r.pos)) return -EBADMSG;
+        continue; /* 非 SPKI 的普通 SEQ(issuer/subject/扩展等) */
+      }
+      if (b_start + b_len > cend) return -EBADMSG;
+      view->off_spki_pub = static_cast<uint16_t>(b_start + 1);
+      view->len_spki_pub = static_cast<uint16_t>(b_len ? b_len - 1 : 0);
+      view->off_spki_alg_oid = static_cast<uint16_t>(alg_oid_off);
+      view->len_spki_alg_oid = static_cast<uint16_t>(alg_oid_len);
+      found = true;
+      if (X509OID_RSAEncryption(alg_oid, alg_oid_len)) {
+        *key_type = 1;
+      } else if (X509OID_ECPublicKey(alg_oid, alg_oid_len)) {
+        if (X509OID_Secp256r1(curve_oid, curve_oid_len))
+          *key_type = 2;
+        else if (X509OID_SM2p256v1(curve_oid, curve_oid_len))
+          *key_type = 3;
+      }
+      r.pos = tbs_end;
+      r.ncache = 0;
+    }
+    if (!found) return -EBADMSG;
+  }
+
+  /* 跳过剩余根子节点(sigAlg/signature 本次不记录), 保证结构可走通 */
+  while (r.pos < root_end) {
+    size_t clen, cstart;
+    if (0 != fsm_tlv(&r, &tag, &clen, &cstart)) return -EBADMSG;
+    if (cstart + clen > root_end) return -EBADMSG;
+    if (0 != fsm_skip(&r, clen)) return -EBADMSG;
+  }
+  return r.pos == root_end ? 0 : -EBADMSG;
+}
 }  // namespace dongle
 
 AGINX_DECLARE_END
