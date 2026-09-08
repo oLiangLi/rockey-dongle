@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
 #include <vector>
@@ -27,7 +27,7 @@ rLANG_DECLARE_MACHINE
 namespace dongle {
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Foobar");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Fooba");
 
 constexpr size_t kDongleFileSizeLimit = 64 * 1024;
 

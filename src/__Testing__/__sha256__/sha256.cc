@@ -6,7 +6,7 @@ rLANG_DECLARE_MACHINE
 namespace dongle {
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SHA256");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SHA25");
 }
 
 

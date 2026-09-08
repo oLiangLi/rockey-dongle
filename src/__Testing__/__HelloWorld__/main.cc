@@ -1,4 +1,4 @@
-﻿#include <base/base.h>
+#include <base/base.h>
 #include <locale.h>
 
 #ifndef __EMSCRIPTEN__
@@ -29,7 +29,7 @@
 rLANG_DECLARE_MACHINE
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Foobar");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("Fooba");
 }  // namespace
 
 void EVP_PKEY_CTX_Tests() {

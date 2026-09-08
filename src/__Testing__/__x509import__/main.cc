@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <Interface/x509.h>
 #include <time.h>
@@ -9,10 +9,10 @@
 AGINX_DECLARE_MACHINE
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("@x509i");
+/* rLANG_DECLARE_MAGIC_Xs 只取 s[0..4], 参数须匹配 [a-zA-Z0-9@$]{5}(>5 位尾部被忽略;
+ * 曾误用 6 位 "@x509i" 与 __x509__ 的 "@x509" 同值, 日志 tag 冲突) */
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("x509i");
 }
-
-#if defined(__EMULATOR__)
 
 namespace {
 
@@ -607,14 +607,5 @@ rLANGEXPORT int main() {
   rlLOGI(TAG, "__x509import__ total error = %d", g_error);
   return g_error;
 }
-
-#else /* !__EMULATOR__ */
-
-rLANGEXPORT int main() {
-  rlLOGI(TAG, "__x509import__ 需 __EMULATOR__(foobar/emscripten) 运行时, 本构建跳过");
-  return 0;
-}
-
-#endif /* __EMULATOR__ */
 
 AGINX_DECLARE_END

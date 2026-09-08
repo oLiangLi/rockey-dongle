@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <base/base.h>
 #include <tuple>
@@ -317,7 +317,7 @@ static int RockeyARM_Lock(RockeyARM* dongle, const char* hid) {
   /* escrow 记录已在 ChangePIN 前输出(见上, 崩溃安全); 此处仅处理失败提示:
    * 默认 Admin PIN 与 escrow 可解密的新 Admin PIN 两者必中其一 */
   if (0 != lock_result && escrow_used)
-    rlLOGE(TAG, "RockeyARM_Lock ChangePIN failed (%d)! 解锁候选: 默认 Admin PIN, 或 escrow 记录解密出的新 Admin PIN",
+    rlLOGE(TAG, "RockeyARM_Lock ChangePIN failed (%d)! unlock candidates: default Admin PIN, or new Admin PIN decrypted from escrow record",
            lock_result);
   return lock_result;
 }

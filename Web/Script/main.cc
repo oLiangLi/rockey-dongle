@@ -7,7 +7,7 @@ rLANG_DECLARE_MACHINE
 rLANGWASMIMPORT(void, jsGrammar_yyCopyValue, (int offset), {}, "rLANG", "jsGrammar_yyCopyValue")
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SCRIPT");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SCRIP");
 
 struct jsGrammar_t {
   int yyLen() const { return f_yylen; }  

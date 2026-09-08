@@ -1,4 +1,4 @@
-﻿#include "script.h"
+#include "script.h"
 #include <Interface/x509.h>
 
 rLANG_DECLARE_MACHINE
@@ -694,7 +694,7 @@ int VM_t::OpExecute_ImportX509(int argc, int32_t argv[]) {
 
   /* argv[4] 请求的私钥↔证书匹配校验失败 → 不得创建数据文件 */
   if (sign_error) {
-    rlLOGE(TAG, "ImportX509 pkey#%d cert mismatch: %d, 拒绝导入", (int)pkey_id, sign_error);
+    rlLOGE(TAG, "ImportX509 pkey#%d cert mismatch (%d): import rejected", (int)pkey_id, sign_error);
     return zero_ = -EFAULT;
   }
 

@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <base/base.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
@@ -25,7 +25,7 @@ IMPLEMENT_ASN1_FUNCTIONS(rLANG_SM2_Ciphertext)
 rLANG_DECLARE_MACHINE
 
 namespace {
-constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DONGLE");
+constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("DONGL");
 }
 
 namespace dongle {
