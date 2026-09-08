@@ -377,6 +377,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **格式化约定**:改写 C++ 文件后按仓库 **`.clang-format`** 执行格式化(clang-format **19.1.5** = `C:\Program Files\Microsoft Visual Studio\2022\Professional\VC\Tools\Llvm\x64\bin\clang-format.exe`,即仓库现行格式版本;`.clang-format` StatementMacros 已含 AGINX 宏)。纯 JS(`.cjs/.ts`)与 `.md` 不适用。
 - **编码约定(UTF-8 BOM)**:**非 third_party 的 C/C++/asm/ts/js 程序文件默认以带 BOM 的 UTF-8 保存**,减少 Windows 下乱码可能。要点:① third_party 源码除外(§9.3/§10.5:dso_dlfcn.c 等 GBK/首行 BOM 需字节级编辑);② clang-format 19 重写会**剥掉 BOM** → 格式化后须按本约定补回(用 `EF BB BF` 前缀,勿用编辑器重复叠加);③ 文本编辑工具(如 edit 工具整文件重写)也可能剥 BOM,收尾需检查首 3 字节。
 - 真机多设备测试:`WT_RKEY_DEVICE`(默认 0)选择 Enum 索引,两把并行时分别设 0/1(§10.12);`WT_APP_DONGLE` 仅确需更新设备固件时设置,刷写次数有限(§10.7)。
+- **提交同步文档(2026-09-08 起)**:每次提交(或同一批 squash merge 前的逻辑批次)都**同步更新 `ai-context.md`**,把决策/约定/验证结果一并记录,不留滞后;文档改动同样走分支提交。
 
 ### 10.15 2026-09-07 决策:删除 wasmjs 平台(JS 封装改手工)
 
@@ -421,3 +422,12 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
   1) execute.cc RSA 匹配分支负载取 256B, 而 RSAPrivate/RSAPublic(PKCS#1, 设备 rockey.cc 与模拟器同封装)上限 256-11=245 → 必 -E2BIG; 改为: RandBytes 245B 负载 → 私钥"签名"成 256B → 证书公钥解密回 245B → 逐字节比对;
   2) execute.cc 拉取 SPKI 公钥上限 260B 太小: RSA-2048 模数 DER INTEGER 带前导 0 时 SPKI 内容 ~270B → argv4 校验分支恒 -EBADMSG; 上限放宽至 0x200-1(InOutBuf+0 临时区不与 +0x200 起的 block/sig 工作区重叠)。
 - 状态: 运行时端到端(模拟器)全绿; 真机路径待用户按需复测(需设备+固件刷写授权)。遗留: FSM 最小集暂不含 sig_type(链验签 OpCode 时扩展)。
+
+### 10.19 2026-09-08 x509import 收尾(已并入 6461529)补记 + 提交同步文档约定
+
+- 背景: ai-context.md 未随 x509import-cleanup 分支同步(代码合并后才发现); 按 §10.14 新增约定"每次提交同步更新 ai-context.md", 本节补记该批内容。
+- **测试模块构建门控**: `__x509import__` 不再在 main.cc 里用大块 `#if defined(__EMULATOR__)/#else/#endif` 包裹, 改为 `xModule.mk` 仅当 `X4C_BOARD==foobar` 时 `build-executable`(规避跨编辑器条件编译语法着色问题); linux/wasm 不再编译该模块, foobar 编译运行 (total error = 0)。
+- **日志编码约定**: 日志输出字符串**不用中文**(此前 cl 按 GBK 嵌入窄字符串、UTF-8 控制台显示乱码); 已把 execute.cc ImportX509 mismatch 日志与 app/main.cc ChangePIN 提示改英文; 全仓 `rlLOG*` 字符串现均无中文, 中文只保留在注释/文档。
+- **TAG 规则**: `rLANG_DECLARE_MAGIC_Xs` 只取 `s[0..4]`, 字符串参数应匹配 `[a-zA-Z0-9@$]{5}`(超过 5 位尾部被忽略, 不报错但易踩同值陷阱)。本次全仓统一: 超长 tag 截前 5 位(数值与原来一致, 零行为变化)——
+  SCRIPT→SCRIP(Web/Script)、Foobar→Fooba(Interface/emulator.cc、__HelloWorld__)、DONGLE→DONGL(Interface/dongle.cc)、SHA256→SHA25(__sha256__); __x509import__ 的 6 位 @x509i 曾与 __x509__ 的 @x509 同值, 改唯一 5 位 x509i。
+- 相关记录: §10.16/§10.17/§10.18 为本批 X509 主体(2KB 上限、dashboard FSM、运行时端到端用例与两处修复)。
