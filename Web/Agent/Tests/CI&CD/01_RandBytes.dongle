@@ -1,0 +1,12 @@
+﻿public 1024;
+
+@ 0 [1024] : rLANG_RandBytes;
+
+RandBytes(0 * 128, 128);
+RandBytes(1 * 128, 128);
+RandBytes(2 * 128, 128);
+RandBytes(3 * 128, 128);
+RandBytes(4 * 128, 128);
+RandBytes(5 * 128, 128);
+RandBytes(6 * 128, 128);
+RandBytes(7 * 128, 128);

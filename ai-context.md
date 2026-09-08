@@ -448,3 +448,26 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 实现(src/app/main.cc Utilities): 单行输入 base64(notice[n] || SHA256(notice)), n=解码总长-32, 1<=n<=4096; SHA256 规范按"补 0 到 4096B 的 notice"(mode1, 与最终写入一致)校验, 另兼容按原始 n 字节计算哈希的输入(mode2); 通过后以 0 补齐到 4096B 写 dashboard[0,4096)。CLI: dongle_entry --notice <HID> [admin]。
 - 验证(linux + usbip 真机, Feitian ROCKEY ARM): 26B notice(mode2) post OK result 0; --dashboard 回读 base64(8192+32) 解码: 前缀匹配、0 补齐到 4096(total 8224)。
 - 2026-09-08 重构(用户要求): 抽出 ReadLineEx(line, sizeMin, sizeMax, encode, prompt) —— 变长行读取, 解码长度落于 [sizeMin, sizeMax] 返回长度否则 -EIO; notice 改由其读取(stdin 逻辑不再内嵌分支), 行为不变, 真机复测 OK。
+
+### 10.22 进行中(2026-09-08) Agent 脚本测试工具 __Testing_dongle.cjs —— 侦察结论与计划
+
+- 目标:参照 Web/Agent/Tests/index.html + Web/Agent/index.cjs 的可运行工具, 在 Web/Agent/Tests/__Testing_dongle.cjs 实现 ukey 脚本化测试; Tests/*.dongle 为样例(Initialize/EnTrust 前置); 新脚本放 Web/Agent/Tests/CI&CD/。约束: 不确定用默认值; 真机只用 Windows 端(无 usbip/UAC); 禁止 factory lock。
+- 已查清: index.cjs = HTTP agent(封装 RockeyTrust.exe, cmd=list/factory/lock/dashboard/execv; 每请求需 POW(18bit)+chacha20-poly1305(PSK 缺省 base64 "1234567812345678")+token(48B: TICK4+NONCE12+MD32), token md=SHA256(payload); cipher=SHA512(token||PSK)[64]。execv: spawn `RockeyTrust.exe ["-",hid,"-"?]`, stdin=base64帧(1024B, admin 时加 "-"); 响应 = Sealed JSON。
+- .dongle = rLANG DSL 源码(含 `${NONCE}` 等占位变量), 客户端(jsLibrary.js/jsWorld)先用 jsScriptParser(=jsCryptoFactory.ParseScript → Web/Script index.ts Parse, 纯 TS/grammar, code=200B(100 words)+data 段参数表) 解析, 再 ScriptExportHelper 组 1024B InOutBuffer(Header+code+data+签名), 经 jsDongleExecv 走 fetch 到 agent。
+- JS 包: Web/Agent/Tests/js/*.js 为浏览器 webpack 产物(jsWorld.js 暴露 CipherLoader/CryptoLoader/CreateEmulator/ParseScript; jsScriptBundled 内嵌全部样例 Map)。Node 复用源在 .assets/(World.js, Script/index.js grammar 等 CommonJS), 解析器无需 wasm; 加解密/帧签名依赖 jsCrypto(wasm) CipherSuiteV0。
+- 下一步(续做): ① 读完 jsLibrary ScriptExportHelper 组帧细节(1379-1605)与 jsDongleExecv(272-360)/OutputExecvResult; ② 在 Node 里复刻 Parse(grammar) → 组帧 → 直接 child_process.spawn RockeyTrust.exe 或 HTTP agent(二选一, 直接 spawn 更简单且与 index.cjs 同语义); ③ __Testing_dongle.cjs: argv=脚本名/目录, 支持先跑 Initialize.dongle(默认参数)与 EnTrust.dongle, 再跑目标脚本, 汇总 exit/out; ④ CI&CD/ 下放 Initialize/EnTrust/HelloWorld/自写基础脚本; ⑤ Windows 端真机验证(当前设备 HID 00000000-efea115bfc084642, 缺省管理员 PIN; RockeyTrust.exe 路径待定, 参考 .bin/amd64-windows-release/dongle_entry.exe 或 index.cjs argv2)。禁止 --factory/--lock。
+- 进展(2026-09-08 晚): 实现 Web/Agent/Tests/__Testing_dongle.cjs(Node):
+  * 解析=.assets/Script Parse(grammar, 纯 JS, 无需 wasm); 组 NORMAL(ATOMC 0x0543cd0f)帧: header=ScriptText{magic,ver,size_public,code200,nonce16,tag16}, key=SM3(header[0..224)), chacha(header[208..220))加密 data768, RSA(master WorldPublic@7KB+148) 包 header240→256; 纯 node crypto(SM3/chacha20-poly1305/RSA-PKCS1 均可用)。
+  * CLI: list/dashboard/run <dongle> [hid]/suite <dir>; 直调 RKEY_EXECV(缺省 .bin/amd64-windows-release/dongle_entry.exe), 未用 HTTP agent/POW; 无 factory/lock。
+  * CI&CD/: 00_HelloWorld / 01_RandBytes / 02_VerifyPublic(拷贝自 Tests)。
+  * 结果: list 正常(1 把 HID 00000000-efea115bfc084642), dashboard 读取 8192B OK, 主钥存在(e=65537); HelloWorld 真机 execv: dongle->ExecuteExeFile return 0/**-14**(设备执行错误)。帧与 jsLibrary ScriptExportHelper 逻辑逐行核对过布局一致(含 tag 进 header[224..240]、cipher 进 [256..1024]、key=SM3(header[0..224]))。
+- 假设(下轮验证): ① 设备 rlCryptoChaChaPoly 与 TASSL/node chacha 语义(如 nonce 取法)可能不一致 → 用设备/模拟器自验 chacha 对照; ② 需先在模拟器(WSL/foobar exe '-' 帧通道)复现以分离"帧问题 vs 真机世界状态问题"; ③ 若 rlCrypto 变体差异属实, 需按设备非 IETF 变体改 Seal(或将帧构建改用设备可解的规范), 再真机复测。
+- 注: Initialize/EnTrust(需 ADMIN 帧/托管密钥) 仍未打通, 属后续工作。
+- 2026-09-08 续: __Testing_dongle.cjs 增 bootstrap 帧与 emu 流程; 修复: Execv 传 exe 参数(此前误跑真机 exe)、.dongle BOM 剥离(ParseDongle)。
+- 本地模拟器(amd64-foobar-windows-debug dongle_entry '-' 帧通道, 世界 .bin/emu-world.bin)结果: **Initialize.dongle bootstrap 帧 PASS(建世界成功)**; EnTrust 与所有 NORMAL(ATOMC) 帧在模拟器与真机**同样** RSA.Master.Decode 失败(-14, RSA_private_decrypt padding) → 已用模拟器本地复现帧问题(非真机状态)。
+- 已核对: 世界文件 factory@256 内 7KB+148 主钥存在(e=65537, N big-endian); FrameNormal 与 jsLibrary 布局一致; N 字节序翻转实验(env RKEY_FLIP_N=1) 待验。下一步: 用模拟器二分定位(翻转 N/换 e 序/比对 C++ RockeyARM_VerifyExecvHelper 参考实现), 修复后真机复测 suite。
+- 遗留: EnTrust bootstrap 在"已建世界"上走 NORMAL 而非 bootstrap(疑似模拟器 Open 后非管理员会话), 需加 VerifyPIN/权限处理; ADMIN/BOOTSTRAP 未上真机(防破坏)。
+- 2026-09-08 诊断补充(第2/3轮): ① 世界文件布局确认: emulator world: factory(dashboard) 位于文件 [256,256+8192), WorldPublic 在 7KB(file@7424) 头 magic 1f4ec0c8 正确, RSA pub@+148 e=65537/N BE(9b9f...) 真实存在; ② RKEY_FLIP_N=1(N 翻转) 试验失败(仍 -14)→ 排除 N 字节序; ③ NORMAL 帧在模拟器复现同一 RSA.Master.Decode -14, 与真机一致 → 属帧封装问题而非设备状态; bootstrap(Initialize)数据加密封装已被设备接受(PASS), 故 chacha/布局对, 分歧仅在 RSA 封装一步。待查方向: 与 C++ RockeyARM_VerifyExecvHelper 参考实现逐字节对照 / 校验 node PKCS1 type2 vs 设备 private_decrypt 语义 / e 或 N 的存储约定复核。NORMAL 真机 suite 未绿, Initialize(bootstrap) 模拟器 PASS。
+- 2026-09-08 突破(第4轮): **根因** = rsaPublicKey DER 中 e 误按 LE u32 直接拼入(值变 0x01000100=16777472, 非 65537); 改 writeUInt32BE+去前导零后, NORMAL(ATOMC)帧在**模拟器与真机同时通过**。
+- 结果: 模拟器 emu suite 4/4(Initialize bootstrap + HelloWorld/RandBytes/VerifyPublic NORMAL); 真机(Windows 端, RKEY_ADMIN=1) CI&CD 3/3 PASS。真机原 -14→-13(EACCES)因该设备为 **Admin 类世界**(category=adm@k), 需管理员会话(加 '-' 登录) → 工具 run/suite 已支持 RKEY_ADMIN=1。
+- 遗留: EnTrust.dongle 需要真实托管密钥输入(EnTrustKey, 随机占位被设备拒绝 -22), 不作为默认流程; diag-rsa/diag-gen 保留为诊断命令; 真机未执行任何 factory/lock, 未跑会重置世界的 Initialize。

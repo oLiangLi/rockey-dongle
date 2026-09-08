@@ -1,0 +1,6 @@
+///
+/// [ 0x0271, 0x0c0f ]
+/// 1) kVerifyWorldPublic | 0x0000  ///  void = 0; argc = 0;
+/// 2) kExit | 0x0C00               ///  void = 1; argc = 1
+///
+Exit(VerifyWorldPublic());
