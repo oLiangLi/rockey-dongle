@@ -1,4 +1,4 @@
-/*!
+﻿/*!
  * __Testing_dongle.cjs — ukey 脚本化测试工具(Node 版, 参照 Web/Agent/Tests/index.html + index.cjs)
  *
  * 对 .dongle(rLANG DSL)解析(ggrammar, 纯 TS)并按"普通(ATOMC)模式"打包 1024B 帧,
@@ -390,10 +390,10 @@ function EmuJsExec(idx, frame) {
   EmuJsGet(idx).Execv(buf); // 期望就地写回 1024B 结果
   return buf;
 }
-async function EmuJsRun(idx, source, bootstrap) {
+async function EmuJsRun(idx, source, bootstrap, overrides) {
   const program = await ParseDongle(source);
   const frame = bootstrap
-    ? FrameBootstrap(program)
+    ? FrameBootstrap(program, overrides)
     : await FrameNormal(program, EmuJsDashboard(idx));
   const inout = EmuJsExec(idx, frame);
   const outputs = {};
@@ -407,8 +407,345 @@ async function EmuJsRun(idx, source, bootstrap) {
           : chunk.readInt8(0)
       : chunk.toString("hex");
   }
-  return { idx, outputs };
+  return { idx, outputs, inout };
 }
+
+/*! 双模拟器 MasterSecret 交换执行示例(编排语义待产品层确认, 此处按样例注入对端公钥执行两侧) */
+async function EmuXchg(aIdx, bIdx) {
+  const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+  const ready = (i) => EmuJsDashboard(i).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0);
+  if (!ready(aIdx)) await EmuJsRun(aIdx, initSrc, true);
+  if (!ready(bIdx)) await EmuJsRun(bIdx, initSrc, true);
+  const xb = EmuJsGet(bIdx).Export();
+  const xbBuf = Buffer.from(xb);
+  const bX25519 = xbBuf.subarray(96, 128); // SupperBlock.public_.master_xx25519_
+  const bRsa = Buffer.from(EmuJsDashboard(bIdx).subarray(7 * 1024 + 148, 7 * 1024 + 148 + 260));
+  const exSrc = fs.readFileSync(path.join(__dirname, "Tests", "EXCHANGE_PREV_MASTER_SECRET.dongle"), "utf8");
+  const exProg = await ParseDongle(exSrc);
+  const exOv = {};
+  for (let i = 0; i < 4; i++) {
+    const n = exProg.data.find((d) => d.name.indexOf("X25519_PUBKEY") >= 0 && d.name.endsWith(`_${i}`));
+    if (n) exOv[n.name] = Buffer.from(bX25519);
+  }
+  {
+    const n = exProg.data.find((d) => d.name.indexOf("RSA_PUBKEY") >= 0);
+    if (n) exOv[n.name] = Buffer.from(bRsa);
+  }
+  const rA = await EmuJsRun(aIdx, exSrc, true, exOv);
+  const cipher = rA.outputs.rLANG_ENCRYPT_PREV_MASTER_SECRET || "";
+  console.log(`xchg: emu[${aIdx}] EXCHANGE executed; cipher256=${cipher.slice(0, 16)}... len=${cipher.length / 2}`);
+
+  const imSrc = fs.readFileSync(path.join(__dirname, "Tests", "IMPORT_MASTER_SECRET.dongle"), "utf8");
+  const imProg = await ParseDongle(imSrc);
+  const imOv = {};
+  let encIdx = 0;
+  for (const d of imProg.data) {
+    if (d.name.indexOf("ENCRYPT_PREV_MASTER_SECRET_") >= 0 && d.sizeMax === 256) {
+      imOv[d.name] = Buffer.from(cipher, "hex").subarray(0, 256);
+      void encIdx;
+    }
+  }
+  const rB = await EmuJsRun(bIdx, imSrc, true, imOv);
+  console.log(`xchg: emu[${bIdx}] IMPORT executed; ids=${(rB.outputs.rLANG_DONGLE_ID_0 || "").slice(0, 8)}...`);
+  return { cipher, bX25519: bX25519.toString("hex") };
+}
+
+/*! 构造 EnTrust 输入条目(80B = hid12|kid3|zero|X||Y64, 受托者用其 SM2ECDSA(签名)公钥;
+ *! 参考 jsLibrary admin 签名的 SM2Decrypt(1, ...) —— 密文按受托者 SM2ECDSA pub 加密 */
+function BuildEnTrustEntry(trusteeIdx) {
+  const info = Buffer.from(EmuJsGet(trusteeIdx).GetDongleInfo());
+  const hid = info.subarray(28, 40); // 12B hid
+  const dash = EmuJsDashboard(trusteeIdx);
+  const xy = Buffer.from(dash.subarray(7 * 1024 + 20, 7 * 1024 + 20 + 64)); // SM2ECDSA pub
+  const entry = Buffer.alloc(80);
+  hid.copy(entry, 0);
+  sm3(xy).subarray(0, 3).copy(entry, 12); // kid = SM3(SM2ECDSA.pub)[0..3], 对齐参考实现
+  entry.fill(0, 15, 16); // zero_/Yodd 占位
+  xy.copy(entry, 16);
+  return { entry, hid: hid.toString("hex"), xy: xy.toString("hex") };
+}
+
+/*! 在 target 模拟器上执行 EnTrust.dongle, 把其 SM2ECIES 密钥托管给 trust 列表里的模拟器 */
+async function EmuJsEnTrust(targetIdx, trustIdxs, nonce) {
+  const src = fs.readFileSync(path.join(__dirname, "Tests", "EnTrust.dongle"), "utf8");
+  const program = await ParseDongle(src);
+  const overrides = { rLANG_EnTRUST_NONCE: nonce || crypto.randomBytes(32) };
+  const metas = [];
+  for (let i = 0; i < 5; ++i) {
+    const t = trustIdxs[i % trustIdxs.length];
+    const { entry, hid, xy } = BuildEnTrustEntry(t);
+    metas.push({ t, hid, xy });
+    overrides[`rLANG_EnTRUST_${i}`] = entry;
+  }
+  const frame = FrameBootstrap(program, overrides);
+  const inout = EmuJsExec(targetIdx, frame);
+  return { metas, inout };
+}
+
+/*! 从 target 的 6KB EnTrust 区取受托者为 trusteeIdx 的条目, 并还原 128B SM2 密文
+ *! 条目 112B: hid12|kid3|Yodd(byte15)|C1x[16..48)|(C3||C2)[48..112); 密文=C1x||Y||rest */
+function FindEnTrustCipher(targetIdx, trusteeIdx) {
+  const entrust = EmuJsDashboard(targetIdx).subarray(6 * 1024, 6 * 1024 + 1024);
+  const want = Buffer.from(EmuJsGet(trusteeIdx).GetDongleInfo()).subarray(28, 40);
+  let entry = null;
+  for (let off = 180; off + 112 <= 1024; off += 112) {
+    const e = entrust.subarray(off, off + 112);
+    if (Buffer.compare(e.subarray(0, 12), want) === 0) {
+      entry = Buffer.from(e);
+      break;
+    }
+  }
+  if (!entry) entry = Buffer.from(entrust.subarray(180, 292)); // 回退第一条
+  const x = entry.subarray(16, 48);
+  const yodd = (entry[15] & 1) === 1;
+  const Y = EmuJsGet(trusteeIdx).EmuDecompressPointSM2(x, yodd);
+  if (!Y || Y.length !== 32) throw Error(`entrust decompress Y failed`);
+  const cipher = Buffer.concat([x, Y, entry.subarray(48, 112)]);
+  return { cipher, entry };
+}
+
+/*! Admin 帧(ADMIN magic, data=704, 尾部 64B 为托管私钥签名) */
+function FrameAdmin(program, dash, sign64) {
+  const code = Buffer.from(program.code, "base64");
+  const data = BuildDataSegment(program, {}).subarray(0, 1024 - 256 - 64);
+  if (sign64.length !== 64) throw Error(`sign64 size ${sign64.length}`);
+  const header = Buffer.alloc(240);
+  header.writeUInt32LE(0x0443493b, 0); // 'ADMIN'
+  header[4] = 1;
+  header[5] = 1;
+  header.writeUInt16LE(program.size_public, 6);
+  code.copy(header, 8);
+  crypto.randomBytes(16).copy(header, 208);
+  const key = sm3(header.subarray(0, 224));
+  const sealed = chachaSeal(key, header.subarray(208, 220), data);
+  sealed.subarray(sealed.length - 16).copy(header, 224);
+  const pub = dash.subarray(7 * 1024 + 148, 7 * 1024 + 148 + 260);
+  const pubkey = rsaPublicKey(pub.readUInt32LE(0), pub.subarray(4));
+  const frame = Buffer.alloc(1024);
+  rsaEncrypt(pubkey, header).copy(frame, 0);
+  sealed.subarray(0, sealed.length - 16).copy(frame, 256);
+  sign64.copy(frame, 1024 - 64);
+  return frame;
+}
+
+/*! Limit 帧: header144(magic LIMIT+ver+size+code[0..136)) + sign64, data=768, 与 jsLibrary signedCode 布局一致 */
+function FrameLimit(program, dash, sign64) {
+  const code = Buffer.from(program.code, "base64");
+  if (sign64.length !== 64) throw Error(`sign64 size ${sign64.length}`);
+  for (let i = 136; i < 200; ++i) {
+    if (code[i]) throw Error(`limit code uses bytes >= 136`);
+  }
+  const data = BuildDataSegment(program, {});
+  const header = Buffer.alloc(240);
+  header.writeUInt32LE(0x30934953, 0); // 'LIMIT'
+  header[4] = 1;
+  header[5] = 1;
+  header.writeUInt16LE(program.size_public, 6);
+  code.subarray(0, 136).copy(header, 8);
+  sign64.copy(header, 8 + 136); // 144..208
+  crypto.randomBytes(16).copy(header, 208);
+  const key = sm3(header.subarray(0, 224));
+  const sealed = chachaSeal(key, header.subarray(208, 220), data);
+  sealed.subarray(sealed.length - 16).copy(header, 224);
+  const pub = dash.subarray(7 * 1024 + 148, 7 * 1024 + 148 + 260);
+  const pubkey = rsaPublicKey(pub.readUInt32LE(0), pub.subarray(4));
+  const frame = Buffer.alloc(1024);
+  rsaEncrypt(pubkey, header).copy(frame, 0);
+  sealed.subarray(0, sealed.length - 16).copy(frame, 256);
+  return frame;
+}
+
+/*! 保证 target 已初始化并把 ECIES 私钥托管给 trustee, 返回 {priv, cipher} */
+async function EnsureEntrust(targetIdx, trusteeIdx) {
+  const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+  const ready = (i) => EmuJsDashboard(i).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0);
+  if (!ready(targetIdx)) await EmuJsRun(targetIdx, initSrc, true);
+  if (!ready(trusteeIdx)) await EmuJsRun(trusteeIdx, initSrc, true);
+  const entrustOk = () => EmuJsDashboard(targetIdx).subarray(6 * 1024 + 896, 6 * 1024 + 960).some((b) => b !== 0);
+  if (!entrustOk()) await EmuJsEnTrust(targetIdx, [trusteeIdx]);
+  return FindEnTrustCipher(targetIdx, trusteeIdx);
+}
+
+/*! 受托者取回目标 ECIES 私钥并签名 msg32; tamper=1 翻转签名末字节(负例) */
+function TrusteeSign(targetIdx, trusteeIdx, msg32, tamper) {
+  const trustee = EmuJsGet(trusteeIdx);
+  const { cipher } = FindEnTrustCipher(targetIdx, trusteeIdx);
+  let priv = null;
+  for (const id of [1, 4]) {
+    try {
+      priv = trustee.SM2Decrypt(id, cipher);
+      if (priv && priv.length) break;
+    } catch (err) {
+      /* try next */
+    }
+  }
+  if (!priv || !priv.length) throw Error(`TrusteeSign: trustee ${trusteeIdx} decrypt failed`);
+  if (priv.length > 32) priv = Buffer.from(priv.subarray(0, 32));
+  const sign = Buffer.from(trustee.SM2Sign(priv, msg32));
+  if (tamper) sign[sign.length - 1] ^= 1;
+  return { sign, cipher };
+}
+
+/*! 真机执行 bootstrap 帧(带 overrides, 管理员会话) */
+async function RealBootstrapExec(hid, source, overrides) {
+  const program = await ParseDongle(source);
+  const frame = FrameBootstrap(program, overrides);
+  const args = ["-", hid, "-"];
+  const r = await spawnExe(args, frame.toString("base64"));
+  if (r instanceof Error) throw r;
+  const buf = Buffer.from(r.stdout.split(/\r?\n/)[0], "base64");
+  if (buf.length !== 1024 + 32) throw Error(`realbootstrap: invalid output ${buf.length}`);
+  return { program, inout: buf.subarray(0, 1024) };
+}
+
+/*! 真机执行帧(管理员会话) */
+async function RealExecFrame(hid, frame) {
+  const args = ["-", hid, "-"];
+  const r = await spawnExe(args, frame.toString("base64"));
+  if (r instanceof Error) throw r;
+  const buf = Buffer.from(r.stdout.split(/\r?\n/)[0], "base64");
+  if (buf.length !== 1024 + 32) throw Error(`realexec: invalid output ${buf.length}`);
+  return buf.subarray(0, 1024);
+}
+
+/*! 真机 EnTrust 托管给 JS 模拟器受托者(需先 Initialize 该模拟器以取得其 SM2ECDSA pub) */
+async function RealEnTrustToEmu(hid, trusteeIdx) {
+  const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+  if (!EmuJsDashboard(trusteeIdx).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0)) {
+    await EmuJsRun(trusteeIdx, initSrc, true);
+  }
+  const src = fs.readFileSync(path.join(__dirname, "Tests", "EnTrust.dongle"), "utf8");
+  const program = await ParseDongle(src);
+  const overrides = { rLANG_EnTRUST_NONCE: crypto.randomBytes(32) };
+  for (let i = 0; i < 5; ++i) {
+    const { entry } = BuildEnTrustEntry(trusteeIdx);
+    overrides[`rLANG_EnTRUST_${i}`] = entry;
+  }
+  await RealBootstrapExec(hid, src, overrides);
+}
+
+/*! 混合: 真机 EnTrust 给模拟器受托者后, 受托者签名并在真机执行 ADMIN/LIMIT 帧 */
+async function RealRunSigned(kind, hid, trusteeIdx, source, tamper) {
+  const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+  if (!EmuJsDashboard(trusteeIdx).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0)) {
+    await EmuJsRun(trusteeIdx, initSrc, true);
+  }
+  let dash = await Dashboard(hid, true);
+  const world = dash.subarray(7 * 1024, 8 * 1024);
+  const entrust = dash.subarray(6 * 1024, 7 * 1024);
+  const want = Buffer.from(EmuJsGet(trusteeIdx).GetDongleInfo()).subarray(28, 40);
+  let has = false;
+  for (let off = 180; off + 112 <= 1024; off += 112) {
+    if (Buffer.compare(entrust.subarray(off, off + 12), want) === 0) has = true;
+  }
+  if (!has) await RealEnTrustToEmu(hid, trusteeIdx);
+  dash = await Dashboard(hid, true);
+  const entrust2 = dash.subarray(6 * 1024, 7 * 1024);
+  let entry = Buffer.from(entrust2.subarray(180, 292));
+  for (let off = 180; off + 112 <= 1024; off += 112) {
+    const e = entrust2.subarray(off, off + 112);
+    if (Buffer.compare(e.subarray(0, 12), want) === 0) {
+      entry = Buffer.from(e);
+      break;
+    }
+  }
+  const x = entry.subarray(16, 48);
+  const Y = EmuJsGet(trusteeIdx).EmuDecompressPointSM2(x, (entry[15] & 1) === 1);
+  if (!Y || Y.length !== 32) throw Error(`real decrypt Y fail`);
+  const cipher = Buffer.concat([x, Y, entry.subarray(48, 112)]);
+
+  const program = await ParseDongle(source);
+  const msg =
+    kind === "LIMIT"
+      ? sm3(LimitHeader144(program))
+      : sm3(BuildDataSegment(program, {}).subarray(0, 1024 - 256 - 64));
+  const trustee = EmuJsGet(trusteeIdx);
+  let priv = null;
+  for (const id of [1, 4]) {
+    try {
+      priv = trustee.SM2Decrypt(id, cipher);
+      if (priv && priv.length) break;
+    } catch (err) {
+      /* try next */
+    }
+  }
+  if (!priv || !priv.length) throw Error(`real: trustee decrypt failed`);
+  if (priv.length > 32) priv = Buffer.from(priv.subarray(0, 32));
+  const sign = Buffer.from(trustee.SM2Sign(priv, msg));
+  if (tamper) sign[sign.length - 1] ^= 1;
+  const verify = trustee.SM2Verify(world.subarray(408, 472), msg, sign);
+  const frame = kind === "LIMIT" ? FrameLimit(program, dash, sign) : FrameAdmin(program, dash, sign);
+  const inout = await RealExecFrame(hid, frame);
+  return { kind, hid, trusteeIdx, verify, inout };
+}
+
+/*! 用受托者签名在 target 上跑 Admin 脚本: adminrun <target> <trustee> <file.dongle>
+ *! 自动补齐: 初始化 target/trustee; 若 target 尚无对应托管条目则先 EnTrust */
+async function EmuJsAdminRun(targetIdx, trusteeIdx, source) {
+  const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+  const dashOf = (i) => EmuJsDashboard(i);
+  const ready = (i) => dashOf(i).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0);
+  if (!ready(targetIdx)) await EmuJsRun(targetIdx, initSrc, true);
+  if (!ready(trusteeIdx)) await EmuJsRun(trusteeIdx, initSrc, true);
+
+  let { cipher } = FindEnTrustCipher(targetIdx, trusteeIdx);
+  const entrustAt = () => dashOf(targetIdx).subarray(6 * 1024 + 896, 6 * 1024 + 960).some((b) => b !== 0);
+  if (!entrustAt() || !cipher) {
+    await EmuJsEnTrust(targetIdx, [trusteeIdx]);
+    ({ cipher } = FindEnTrustCipher(targetIdx, trusteeIdx));
+  }
+
+  const program = await ParseDongle(source);
+  const dataPlain = BuildDataSegment(program, {}).subarray(0, 1024 - 256 - 64);
+  const sm3data = sm3(dataPlain);
+  const trustee = EmuJsGet(trusteeIdx);
+  let priv = null;
+  for (const id of [1, 4]) {
+    try {
+      priv = trustee.SM2Decrypt(id, cipher);
+      if (priv && priv.length) {
+        console.log(`adminrun: trustee[${trusteeIdx}] SM2Decrypt(id=${id}) ok len=${priv.length}`);
+        break;
+      }
+    } catch (err) {
+      /* try next */
+    }
+  }
+  if (!priv || !priv.length) throw Error(`adminrun: trustee ${trusteeIdx} decrypt failed`);
+  if (priv.length > 32) priv = Buffer.from(priv.subarray(0, 32));
+  const sign64 = trustee.SM2Sign(priv, sm3data);
+  const frame = FrameAdmin(program, dashOf(targetIdx), sign64);
+  const inout = EmuJsExec(targetIdx, frame);
+  return { inout };
+}
+
+/*! Limit 待签头 144B: magic LIMIT|ver|size|code[0..136) */
+function LimitHeader144(program) {
+  const h = Buffer.alloc(144);
+  h.writeUInt32LE(0x30934953, 0);
+  h[4] = 1;
+  h[5] = 1;
+  h.writeUInt16LE(program.size_public, 6);
+  Buffer.from(program.code, "base64").subarray(0, 136).copy(h, 8);
+  return h;
+}
+
+/*! 通用: 用受托者签名执行 ADMIN 或 LIMIT 帧, 并给出签名被目标 ECIES 公钥验证的证据 */
+async function EmuJsRunSigned(kind, targetIdx, trusteeIdx, source, tamper) {
+  await EnsureEntrust(targetIdx, trusteeIdx);
+  const program = await ParseDongle(source);
+  const msg =
+    kind === "LIMIT"
+      ? sm3(LimitHeader144(program))
+      : sm3(BuildDataSegment(program, {}).subarray(0, 1024 - 256 - 64));
+  const { sign } = TrusteeSign(targetIdx, trusteeIdx, msg, tamper);
+  const dash = EmuJsDashboard(targetIdx);
+  const verify = EmuJsGet(trusteeIdx).SM2Verify(dash.subarray(7 * 1024 + 408, 7 * 1024 + 472), msg, sign);
+  const frame = kind === "LIMIT" ? FrameLimit(program, dash, sign) : FrameAdmin(program, dash, sign);
+  const inout = EmuJsExec(targetIdx, frame);
+  return { kind, targetIdx, trusteeIdx, verify, inout };
+}
+
 
 /*! 诊断: 用设备(模拟器)私钥解密"我方公钥加密"的密文, 验证主钥匹配与填充语义 */
 async function EmuDiagRsa() {
@@ -522,6 +859,141 @@ async function RunScript(source, hid, admin) {
   };
 }
 
+// ---------------------------------------------------------------- randtest(真机随机数质量)
+const RAND_SRC = "public 1024;\nRandBytes(0, 1024);\n";
+
+async function RealRandOnce(hid, admin) {
+  const program = await ParseDongle(RAND_SRC);
+  const dash = await Dashboard(hid, true);
+  const frame = await FrameNormal(program, dash);
+  const args = ["-", hid];
+  if (admin) args.push("-");
+  const r = await spawnExe(args, frame.toString("base64"));
+  if (r instanceof Error) throw r;
+  const buf = Buffer.from(r.stdout.split(/\r?\n/)[0], "base64");
+  if (buf.length !== 1024 + 32 || Buffer.compare(sha256(buf.subarray(0, 1024)), buf.subarray(1024)) !== 0)
+    throw Error(`rand: invalid output`);
+  return Buffer.from(buf.subarray(0, 1024));
+}
+
+function Chi2Pvalue(chisq, df) {
+  // Wilson–Hilferty 正态近似 -> 双侧 p 值(报告展示用)
+  if (chisq <= 0) return 1;
+  const x = chisq / df;
+  const z = (Math.cbrt(x) - (1 - 2 / (9 * df))) / Math.sqrt(2 / (9 * df));
+  const a = Math.abs(z) / Math.SQRT2;
+  const t = 1 / (1 + 0.3275911 * a);
+  const erfc =
+    (0.254829592 * t -
+      0.284496736 * t * t +
+      1.421413741 * t * t * t -
+      1.453152027 * t * t * t * t +
+      1.061405429 * t * t * t * t * t) *
+    Math.exp(-a * a);
+  const pTwo = erfc; // 2*(1-Φ(|z|)) /2 简化: erfc(|z|/√2)
+  return Number.isFinite(pTwo) ? Math.min(1, Math.max(0, pTwo)) : 0;
+}
+
+function RandStats(all, count) {
+  const total = all.reduce((s, b) => s + b.length, 0); // 总字节数
+  const bits = total * 8;
+  let ones = 0, runs = 0, prev = -1;
+  const byteHist = new Array(256).fill(0);
+  const byteDev = new Array(256).fill(0);
+  for (const buf of all) {
+    for (let i = 0; i < buf.length; i++) {
+      const b = buf[i];
+      byteHist[b]++;
+      for (let bit = 0; bit < 8; bit++) {
+        const v = (b >> bit) & 1;
+        if (v) ones++;
+        if (prev !== -1 && v !== prev) runs++;
+        prev = v;
+      }
+    }
+  }
+  const p1 = ones / bits;
+  const chi2 = byteHist.reduce((s, c) => s + ((c - total / 256) ** 2) / (total / 256), 0);
+  let H = 0, minP = 0;
+  for (let c = 0; c < 256; c++) {
+    const p = byteHist[c] / total;
+    byteDev[c] = (byteHist[c] - total / 256) / Math.sqrt(total / 256 * (1 - 1 / 256));
+    if (p > 0) H -= p * Math.log2(p);
+    if (c === 0 || p < minP) minP = c === 0 ? p : minP;
+    if (byteHist[c] === 0) {
+      /* 未出现: 计入最小熵惩罚 */
+    }
+  }
+  const missing = byteHist.filter((c) => c === 0).length;
+  const minCount = Math.min(...byteHist);
+  const minEntropy = minCount > 0 ? -Math.log2(minCount / total) : 0;
+  // 自相关(字节取值相对期望 127.5, lag 1..5)
+  const autocorr = [];
+  const flat = Buffer.concat(all);
+  for (let lag = 1; lag <= 5; lag++) {
+    let num = 0, den = 0;
+    for (let i = 0; i + lag < total; i++) {
+      const d0 = flat[i] - 127.5;
+      const d1 = flat[i + lag] - 127.5;
+      num += d0 * d1;
+      den += d0 * d0;
+    }
+    autocorr.push(den ? num / den : 0);
+  }
+  const runExp = (bits - 1) / 2;
+  const zRuns = (runs - runExp) / Math.sqrt((bits - 1) / 4);
+  const zFreq = (ones - bits / 2) / Math.sqrt(bits / 4);
+  const pFreq = 1 - Math.abs(Chi2Pvalue(zFreq * zFreq, 1) - (zFreq >= 0 ? 0 : 0));
+  void pFreq;
+  return { total, bits, ones, p1, runs, zRuns, byteHist, byteDev, chi2, H, missing, minEntropy, autocorr, zFreq };
+}
+
+function RandHtml(stats, count, hid) {
+  const bound = 2.58;
+  const chiDoF = 255;
+  const chiP = Chi2Pvalue(stats.chi2, chiDoF);
+  const row = (k, v, note, verdict) =>
+    `<tr><td>${k}</td><td>${v}</td><td>${note}</td><td style="color:${verdict === "PASS" ? "#0a0" : "#b00"}">${verdict}</td></tr>`;
+  const ac = stats.autocorr.map((a, i) => `${i + 1}:${a.toFixed(4)}`).join(" ");
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>ukey 随机数质量报告</title>
+<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2em;background:#fafafa;color:#222}
+h1,h2{color:#0b3d91}table{border-collapse:collapse;background:#fff}td,th{border:1px solid #bbb;padding:6px 12px;text-align:left}
+th{background:#eef}.pass{color:#080}.warn{color:#c80}.fail{color:#c00}</style></head><body>
+<h1>RockeyARM 真实 ukey 随机数质量报告</h1>
+<p>设备: <code>${hid}</code> · 样本: ${count} 次 × 1024B · 总字节: ${stats.total} · 生成日期: ${new Date().toISOString().slice(0, 19).replace("T", " ")}</p>
+<h2>统计指标</h2>
+<table>
+<tr><th>指标</th><th>观测值</th><th>说明</th><th>结论</th></tr>
+${row("位频率 p(1)", stats.p1.toFixed(6), `期望≈0.5(采样 ${stats.bits} bit)`, Math.abs(stats.p1 - 0.5) < 0.005 ? "PASS" : Math.abs(stats.p1 - 0.5) < 0.02 ? "WARN" : "FAIL")}
+${row("字节直方图 χ²(df=255)", stats.chi2.toFixed(2), `双侧 p≈${chiP.toExponential(2)}`, chiP > 0.001 ? "PASS" : "WARN")}
+${row("Shannon 熵 / 字节", stats.H.toFixed(4), "理想=8", stats.H > 7.99 ? "PASS" : stats.H > 7.9 ? "WARN" : "FAIL")}
+${row("最小熵 / 字节", stats.minEntropy.toFixed(4), "理想=8", stats.minEntropy > 7.9 ? "PASS" : stats.minEntropy > 7.0 ? "WARN" : "FAIL")}
+${row("未出现字节数", stats.missing, `共 256(期望接近 0/样本较小时可为正)`, stats.missing <= 1 ? "PASS" : stats.missing <= 8 ? "WARN" : "WARN")}
+${row("游程检验 z", stats.zRuns.toFixed(3), `|z|<${bound} 通过`, Math.abs(stats.zRuns) < bound ? "PASS" : "WARN")}
+${row("单比特频率 z", stats.zFreq.toFixed(3), `|z|<${bound} 通过`, Math.abs(stats.zFreq) < bound ? "PASS" : "WARN")}
+${row("字节自相关 lag1..5", ac, `|ρ| 应远小于 1`, Math.max(...stats.autocorr.map((a) => Math.abs(a))) < 0.05 ? "PASS" : "WARN")}
+</table>
+<p>说明: 本报告为轻量统计(非完整 NIST STS); 随机源为设备 TRNG(脚本 RandBytes)。样本量 ${stats.total} 字节。</p>
+</body></html>`;
+}
+
+async function RandTest(count, report) {
+  const list = await List();
+  if (list.length === 0) throw Error("no dongle found");
+  const hid = process.env.RKEY_HID || list[0].id;
+  const admin = process.env.RKEY_ADMIN === "1";
+  const all = [];
+  for (let i = 0; i < count; i++) {
+    all.push(await RealRandOnce(hid, admin));
+    if (i % 8 === 0) console.log(`rand: ${i + 1}/${count} sampled`);
+  }
+  const stats = RandStats(all, count);
+  const html = RandHtml(stats, count, hid);
+  fs.writeFileSync(report, html);
+  console.log(`rand: wrote ${report} (${stats.total} bytes, chi2=${stats.chi2.toFixed(2)}, H=${stats.H.toFixed(4)}, p1=${stats.p1.toFixed(6)})`);
+  return 0;
+}
+
 // ---------------------------------------------------------------- cli
 async function main() {
   await initialize();
@@ -603,7 +1075,8 @@ async function main() {
     return 0;
   }
   if (cmd === "jsuite") {
-    /* 进程内 JS 模拟器全集: Initialize(bootstrap) + CI&CD(NORMAL), 每台独立世界 */
+    /* 进程内 JS 模拟器全集: Initialize(bootstrap) + CI&CD(NORMAL), 每台独立世界;
+     * RKEY_CI_ADV=1 时追加 托管签名 Admin/Limit(emu0 托管给 emu1) 步骤 */
     const dirTests = path.join(__dirname, "Tests");
     const dirCICD = path.join(__dirname, "CI&CD");
     const range = process.env.EMU_RANGE || "0-7";
@@ -614,8 +1087,11 @@ async function main() {
       .sort();
     let failed = 0;
     const kCount = b - a + 1;
-    const total = kCount * (1 + normals.length);
+    let total = kCount * (1 + normals.length);
+    const adv = process.env.RKEY_CI_ADV === "1";
+    if (adv && kCount > 1) total += 2;
     const initSrc = fs.readFileSync(path.join(dirTests, "Initialize.dongle"), "utf8");
+    const helloSrc = fs.readFileSync(path.join(dirCICD, normals.find((n) => n.endsWith("HelloWorld.dongle")) || "00_HelloWorld.dongle"), "utf8");
     for (let i = a; i <= b; ++i) {
       try {
         await EmuJsRun(i, initSrc, true);
@@ -631,6 +1107,17 @@ async function main() {
         } catch (err) {
           ++failed;
           console.error(`[FAIL] emu[${i}] ${f}: ${err.message}`);
+        }
+      }
+    }
+    if (adv && kCount > 1) {
+      for (const kind of ["ADMIN", "LIMIT"]) {
+        try {
+          const r = await EmuJsRunSigned(kind, 0, 1, helloSrc, false);
+          console.log(`[PASS] emu[0] ${kind}-run (trustee=1, sign-verify=${r.verify})`);
+        } catch (err) {
+          ++failed;
+          console.error(`[FAIL] emu[0] ${kind}-run: ${err.message}`);
         }
       }
     }
@@ -677,8 +1164,116 @@ async function main() {
   if (cmd === "diag-gen") {
     return EmuDiagGen();
   }
+  if (cmd === "entrust") {
+    /* 多模拟器 EnTrust: entrust <targetIdx> <trusteeIdx[,trusteeIdx...]> —— 目标 ECIES 密钥托管给受托者 */
+    const target = parseInt(argv[1], 10);
+    const trusts = String(argv[2] || "0")
+      .split(",")
+      .map((x) => parseInt(x.trim(), 10));
+    const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+    const ensureInit = async (i) => {
+      const dash = EmuJsDashboard(i);
+      const pub = dash.subarray(7 * 1024 + 408, 7 * 1024 + 472);
+      if (!pub.some((b) => b !== 0)) await EmuJsRun(i, initSrc, true);
+    };
+    for (const i of [target, ...trusts]) await ensureInit(i);
+    const r = await EmuJsEnTrust(target, trusts);
+    console.log(
+      `entrust: emu[${target}] <- ${trusts.join(",")} entries=${r.metas.map((m) => `${m.t}:${m.hid.slice(0, 6)}`).join(" ")}`,
+    );
+    const ok =
+      r.inout.subarray(180, 180 + 112).some((b) => b !== 0) &&
+      r.inout.subarray(896, 960).some((b) => b !== 0);
+    console.log(`entrust: ${ok ? "output written (sign 896B@ & entries non-zero)" : "NO output?!"}`);
+    return ok ? 0 : 1;
+  }
+  if (cmd === "jscheck") {
+    const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const info = Buffer.from(EmuJsGet(idx).GetDongleInfo());
+    const dash = EmuJsDashboard(idx);
+    const world = dash.subarray(7 * 1024, 8 * 1024);
+    const ecies = world.subarray(408, 472);
+    const ecdsa = world.subarray(20, 84);
+    const entrust = dash.subarray(6 * 1024, 7 * 1024);
+    console.log(
+      `emu[${idx}] id=${info.subarray(28, 40).toString("hex")} magic=${world.readUInt32LE(0).toString(16)} ecdsa_pub_nz=${ecdsa.some((b) => b !== 0)} ecies_pub_nz=${ecies.some((b) => b !== 0)} entrust_nz=${entrust.subarray(896, 960).some((b) => b !== 0)}`,
+    );
+    return 0;
+  }
+  if (cmd === "adminrun" || cmd === "limitrun") {
+    /* 受托者签名跑 ADMIN/LIMIT 帧: adminrun|limitrun <target> <trustee> <file.dongle>
+     * RKEY_TAMPER=1 翻签名字节(负例) */
+    const kind = cmd === "adminrun" ? "ADMIN" : "LIMIT";
+    const target = parseInt(argv[1], 10);
+    const trustee = parseInt(argv[2], 10);
+    const file = argv[3];
+    const source = fs.readFileSync(file, "utf8");
+    const tamper = process.env.RKEY_TAMPER === "1";
+    const r = await EmuJsRunSigned(kind, target, trustee, source, tamper);
+    console.log(
+      `${kind}run emu[${target}] trustee[${trustee}] ${path.basename(file)}: sign-verify=${r.verify}${tamper ? " (tampered)" : ""} out head=${r.inout.subarray(0, 8).toString("hex")}`,
+    );
+    return r.verify && !tamper ? 0 : r.verify ? 0 : 1;
+  }
+  if (cmd === "randtest") {
+    const count = argv[1] !== undefined ? parseInt(argv[1], 10) : 48;
+    const day = new Date().toISOString().slice(0, 10);
+    const report =
+      argv[2] || path.join(ROOT, "ai-doc", `ukey-rand-quality-${day}.html`);
+    fs.mkdirSync(path.dirname(report), { recursive: true });
+    return RandTest(count, report);
+  }
+  if (cmd === "sm2self") {
+    /* 验证模拟器 SM2 加解密 API 用法: sm2self <idx> */
+    const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+    const dash0 = EmuJsDashboard(idx);
+    if (!dash0.subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0)) {
+      await EmuJsRun(idx, initSrc, true);
+    }
+    const e = EmuJsGet(idx);
+    const text = crypto.randomBytes(32);
+    const eciesXY = Buffer.from(dash0.subarray(7 * 1024 + 408, 7 * 1024 + 408 + 64));
+    for (const id of [4, 1]) {
+      try {
+        const enc = e.SM2Encrypt(eciesXY, text);
+        console.log(`sm2self emu[${idx}] encrypt(eciesXY) -> len=${enc ? enc.length : null}`);
+        if (enc && enc.length) {
+          const dec = e.SM2Decrypt(id, enc);
+          console.log(`sm2self decrypt id=${id} len=${dec ? dec.length : null} match=${dec && Buffer.compare(Buffer.from(dec), text) === 0}`);
+        }
+      } catch (err) {
+        console.log(`sm2self emu[${idx}] id=${id} err ${err.message}`);
+      }
+    }
+    return 0;
+  }
+  if (cmd === "xchg") {
+    const a = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const b = argv[2] !== undefined ? parseInt(argv[2], 10) : 1;
+    const r = await EmuXchg(a, b);
+    console.log(`xchg: done, b_x25519=${r.bX25519.slice(0, 8)}`);
+    return 0;
+  }
+  if (cmd === "realadmin" || cmd === "reallimit") {
+    /* 混合真机: 真机 EnTrust 给模拟器受托者后执行 ADMIN/LIMIT 帧
+     * realadmin|reallimit <file.dongle> [hid] [trusteeIdx]; RKEY_TAMPER=1 负例 */
+    const kind = cmd === "realadmin" ? "ADMIN" : "LIMIT";
+    const file = argv[1];
+    const list = await List();
+    const hid = argv[2] || (process.env.RKEY_HID || list[0]?.id);
+    if (!hid) throw Error("no dongle");
+    const trustee = argv[3] !== undefined ? parseInt(argv[3], 10) : 0;
+    const tamper = process.env.RKEY_TAMPER === "1";
+    const source = fs.readFileSync(file, "utf8");
+    const r = await RealRunSigned(kind, hid, trustee, source, tamper);
+    console.log(
+      `${kind} real ${hid} trustee=emu[${trustee}]: sign-verify=${r.verify}${tamper ? " (tampered)" : ""}`,
+    );
+    return r.verify && !tamper ? 0 : 1;
+  }
   console.log(
-    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen`,
+    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|realadmin|reallimit <file> [hid] [trusteeIdx]`,
   );
   return 2;
 }

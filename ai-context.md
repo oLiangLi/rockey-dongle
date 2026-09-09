@@ -378,6 +378,7 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - **编码约定(UTF-8 BOM)**:**非 third_party 的 C/C++/asm/ts/js 程序文件默认以带 BOM 的 UTF-8 保存**,减少 Windows 下乱码可能。要点:① third_party 源码除外(§9.3/§10.5:dso_dlfcn.c 等 GBK/首行 BOM 需字节级编辑);② clang-format 19 重写会**剥掉 BOM** → 格式化后须按本约定补回(用 `EF BB BF` 前缀,勿用编辑器重复叠加);③ 文本编辑工具(如 edit 工具整文件重写)也可能剥 BOM,收尾需检查首 3 字节。
 - 真机多设备测试:`WT_RKEY_DEVICE`(默认 0)选择 Enum 索引,两把并行时分别设 0/1(§10.12);`WT_APP_DONGLE` 仅确需更新设备固件时设置,刷写次数有限(§10.7)。
 - **提交同步文档(2026-09-08 起)**:每次提交(或同一批 squash merge 前的逻辑批次)都**同步更新 `ai-context.md`**,把决策/约定/验证结果一并记录,不留滞后;文档改动同样走分支提交。
+- **测试 ukey 禁用 lock(2026-09-08 起,强约束)**:对**任何物理测试 ukey(当前 HID `00000000-efea115bfc084642`)** **永远不要执行 Utilities.lock / RockeyARM_Lock**(会改管理员 PIN,之后无法再用该测试 ukey);`Utilities.factory` 可按需对该 ukey 执行;今后新增测试 ukey 一律遵循“禁 lock”惯例。
 
 ### 10.15 2026-09-07 决策:删除 wasmjs 平台(JS 封装改手工)
 
@@ -473,3 +474,13 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 遗留: EnTrust.dongle 需要真实托管密钥输入(EnTrustKey, 随机占位被设备拒绝 -22), 不作为默认流程; diag-rsa/diag-gen 保留为诊断命令; 真机未执行任何 factory/lock, 未跑会重置世界的 Initialize。
 - 2026-09-08 Agent 增强(用户): cjs 不再引用 .assets(随时可能被清理), 改用打包件 Web/Agent/Tests/js/jsWorld.js+jsCrypto.js(Node 可加载); 内置 **8 个 JS 模拟器**(globalThis.jsEmulatorEx[0..7], id 前缀 ff, uid 0x100+i, 每次 Create 随机 secret)。
 - 本会话新增: jsemu <file> [idx] 单跑; jsuite(Initialize bootstrap + CI&CD NORMAL, EMU_RANGE 默认 0-7) → **8 台全部 32/32 通过**; 支持多台并行/独立世界, 便于多 ukey 脚本(如密钥交换/EnTrust)后续选择不同 emu。
+- 2026-09-09(进行中) 进阶脚本化(目标 goal-b5c8a404): 基于 8 台 JS 模拟器做 Initialize→EnTrust→Admin/Limit→多机密钥交换。
+- 已实现: entrust <targetIdx> <trusteeIdx...>(构造 80B 条目=hid12|kid3|zero|SM2ECIES X||Y64, EnTrust.dongle bootstrap 注入, 目标 0 托管给 1 已产生输出); jscheck(查看 7K world/6K entrust 状态); adminrun 脚手架(FrameAdmin 704+sign64, 受托者 SM2Decrypt 取回 ECIES 私钥并 SM2Sign)。EmuJsRun 现返回 inout。
+- 待办/问题: 受托 SM2Decrypt(4/1, cipher96) 均失败 → 需核对 emulator SM2Decrypt 签名(是否 id 是 1? cipher 格式 96 vs 128?) 与 EnTrust 输出条目偏移; 随后做 Admin 验收脚本与 Limit(kScriptLimit) 帧; EXCHANGE/IMPORT_MASTER_SECRET 双机示例; 新脚本入 CI&CD。
+- 2026-09-08 真机随机数质量: 新增 randtest [count] [html] —— 真实 ukey(00000000-efea115bfc084642, Windows 端 RKEY_ADMIN=1)跑脚本 RandBytes(0,1024) 48 次共 49152B, 统计 p(1)=0.4996 / χ²(df255)=253.6(p≈0.97, PASS) / Shannon 7.9963 / 最小熵/游程/自相关均 PASS; 报告 ai-doc/ukey-rand-quality-2026-09-08.html。
+- 2026-09-08 突破(round2): EnTrust 输出条目格式确认(来自 jsCheckEnTrust 参考): 112B = hid12|kid3|Yodd(byte15)|C1x[16..48)|C3||C2[48..112); SM2 密文还原为 128B = C1x||解压Y||rest; 受托者用 **SM2ECDSA 私钥 id=1** 解密得 32B 目标 ECIES 私钥。BuildEnTrustEntry kid=SM3(pub)[0..3] 对齐参考。
+- adminrun 0 1 HelloWorld: trustee SM2Decrypt(id=1) ok len=32, Admin 帧执行无错(out head 000000001f4ec0c8)。待办: 用"篡改签名对照/需管理员操作"验证 Admin 权限确实生效; 再实现 Limit(kScriptLimit) 帧; 双模拟器 EXCHANGE/IMPORT_MASTER_SECRET; CI&CD 收编。
+- 2026-09-08(round3): ADMIN/LIMIT 帧打通并验证: adminrun/limitrun <target> <trustee> <file>, 签名覆盖 ADMIN=SM3(data704), LIMIT=SM3(header144); 受托者 SM2Decrypt(id1)->目标 ECIES 私钥签名; 有效签名被执行, RKEY_TAMPER=1 篡改签名被设备拒绝(dongle.Execv Error -8)。HelloWorld 两帧 sign-verify=true 且执行。
+- 2026-09-08(round4): 双模拟器交换脚手架 xchg <A> <B>: 注入对端 X25519(Export SupperBlock@96..128)与 RSA pub, 执行 EXCHANGE_PREV_MASTER_SECRET 报设备端错误(1078001620, VM 编码错误)→ 该 op 需产品级多设备编排与密钥状态, Web 工具无参考编排, 语义化自动验证不可行; IMPORT_MASTER_SECRET 同。功能框架已留(EmuJsRun 支持 overrides; outputs/inout 齐)。
+- 结论: 目标 ①(Initialize/EnTrust/Admin/Limit 托管签名)已达并可复验(有效执行+篡改被拒); 目标 ② 的多设备 MasterSecret 交换语义需用户提供编排规范或真机双 ukey 流程后才能完成验证; ③ CI&CD 现有基础集 + 待收编进阶脚本。
+- 2026-09-08(round6): 真机 EnTrust 成功执行(Execute OK), 但受托者(JS 模拟器 SM2Decrypt id1)解不开真机托管密文 —— 真机固件与宿主模拟器的 SM2 ECIES 托管编解码存在差异(或需"母钥/第二把受托 ukey"产品流程); 该项与多设备 EXCHANGE 同属需产品级规范/母钥的边界。realadmin/reallimit(混合真机) 留作实验命令。
