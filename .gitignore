@@ -39,3 +39,6 @@ log
 
 ## ? Interface/script.h ??(? Build/tools/script/opcode.cjs / make jsWrapper)
 /Web/Script/lib/opcode.ts
+
+## 随机数质量分析数据采集
+/ai-doc/randdata/*.bin

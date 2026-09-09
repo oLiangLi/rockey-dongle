@@ -1,4 +1,4 @@
-﻿/*!
+/*!
  * __Testing_dongle.cjs — ukey 脚本化测试工具(Node 版, 参照 Web/Agent/Tests/index.html + index.cjs)
  *
  * 对 .dongle(rLANG DSL)解析(ggrammar, 纯 TS)并按"普通(ATOMC)模式"打包 1024B 帧,
@@ -994,6 +994,331 @@ async function RandTest(count, report) {
   return 0;
 }
 
+// ---------------------------------------------------------------- NIST 采集与分析(诚实子集)
+async function CollectRand(outFile, count, hid) {
+  fs.mkdirSync(path.dirname(outFile), { recursive: true });
+  const fd = fs.openSync(outFile, "a");
+  const admin = process.env.RKEY_ADMIN === "1";
+  let got = 0;
+  try {
+    for (let i = 0; i < count; i++) {
+      const buf = await RealRandOnce(hid, admin);
+      fs.writeSync(fd, buf);
+      got += buf.length;
+      if (got % (64 * 1024) < 1024) console.log(`collect: ${got} bytes (${Math.round(got / 1024)}KB)`);
+    }
+  } finally {
+    fs.closeSync(fd);
+  }
+  return got;
+}
+
+function erfcInvApprox(x) {
+  // 误差函数补 1 - erf
+  const t = 1 / (1 + 0.3275911 * Math.abs(x));
+  const y = t * (0.254829592 + t * (-0.284496736 + t * (1.421413741 + t * (-1.453152027 + t * 1.061405429))));
+  return y * Math.exp(-x * x);
+}
+function PErfc(z) {
+  return erfcInvApprox(z / Math.SQRT2);
+}
+function lnGamma(x) {
+  const g = 7;
+  const C = [0.99999999999980993, 676.5203681218851, -1259.1392167224028, 771.3234287776531, -176.6150291621406,
+    12.507343278686905, -0.13857109526572012, 9.9843695780195716e-6, 1.5056327351493116e-7];
+  if (x < 0.5) return Math.log(Math.PI) - Math.log(Math.sin(Math.PI * x)) - lnGamma(1 - x);
+  x -= 1;
+  let a = C[0];
+  const t = x + g + 0.5;
+  for (let i = 1; i < g + 2; i++) a += C[i] / (x + i);
+  return 0.5 * Math.log(2 * Math.PI) + (x + 0.5) * Math.log(t) - t + Math.log(a);
+}
+function igamc(a, x) {
+  // 上尾正则化不完全伽马 (x>0, a>0), 数值稳定版
+  if (x <= 0) return 1;
+  if (a > 0 && x < a + 1) {
+    // 级数求下尾, 上尾=1-P
+    const logP = a * Math.log(x) - x - lnGamma(a + 1);
+    let term = Math.exp(logP);
+    let sum = term;
+    for (let k = 1; k < 100000; k++) {
+      term *= x / (a + k);
+      sum += term;
+      if (term / sum < 1e-14) break;
+    }
+    const P = Math.max(0, Math.min(1, sum));
+    return Math.max(0, Math.min(1, 1 - P));
+  }
+  // 连分式(Lentz)求上尾
+  const b0 = x + 1 - a;
+  const c0 = 1e-30;
+  let d = 1 / b0, c = c0;
+  let h = d;
+  for (let i = 1; i < 200000; i++) {
+    const an = -i * (i - a);
+    const b = b0 + 2 * i;
+    d = an * d + b;
+    if (Math.abs(d) < 1e-30) d = 1e-30;
+    c = b + an / c;
+    if (Math.abs(c) < 1e-30) c = 1e-30;
+    d = 1 / d;
+    const del = d * c;
+    h *= del;
+    if (Math.abs(del - 1) < 1e-14) break;
+  }
+  const res = Math.exp(a * Math.log(x) - x - lnGamma(a)) * h;
+  return Math.max(0, Math.min(1, res));
+}
+function NistRun(bits, n) {
+  const res = [];
+  const add = (name, p, note) => res.push({ name, p, pass: p !== null && p >= 0.01, note });
+
+  // 1) Frequency
+  {
+    let s = 0;
+    for (let i = 0; i < n; i++) s += bits[i] ? 1 : -1;
+    const obs = Math.abs(s) / Math.sqrt(n);
+    add("Frequency (monobit)", PErfc(obs), `S=${s}`);
+  }
+  // 2) BlockFrequency M=128
+  {
+    const M = 128;
+    const N = Math.floor(n / M);
+    let chi2 = 0;
+    for (let b = 0; b < N; b++) {
+      let ones = 0;
+      for (let j = 0; j < M; j++) if (bits[b * M + j]) ones++;
+      chi2 += ((ones / M - 0.5) ** 2) * 4 * M;
+    }
+    add("BlockFrequency M=128", igamc(N / 2, chi2 / 2), `N=${N}, χ²=${chi2.toFixed(3)}`);
+  }
+  // 3) Runs
+  {
+    let ones = 0;
+    for (let i = 0; i < n; i++) if (bits[i]) ones++;
+    const pi = ones / n;
+    if (Math.abs(pi - 0.5) >= 2 / Math.sqrt(n)) {
+      add("Runs", 0, `pi0 偏差过大 ${pi.toFixed(6)}`);
+    } else {
+      let V = 1;
+      for (let i = 1; i < n; i++) if (bits[i] !== bits[i - 1]) V++;
+      const num = Math.abs(V - 2 * n * pi * (1 - pi));
+      const den = 2 * Math.sqrt(2 * n) * pi * (1 - pi);
+      add("Runs", PErfc(num / den), `V=${V}`);
+    }
+  }
+  // 4) LongestRunOfOnes (M=10000, 需 n≥750000)
+  {
+    if (n >= 750000) {
+      const M = 10000;
+      const N = Math.floor(n / M);
+      const v = [0, 0, 0, 0, 0, 0, 0];
+      const pi = [0.0882, 0.2092, 0.2483, 0.1933, 0.1208, 0.0675, 0.0727];
+      for (let b = 0; b < N; b++) {
+        let run = 0, best = 0;
+        for (let j = 0; j < M; j++) {
+          if (bits[b * M + j]) { run++; best = Math.max(best, run); } else run = 0;
+        }
+        const idx = best <= 10 ? 0 : best >= 16 ? 6 : best - 10;
+        v[idx]++;
+      }
+      let chi2 = 0;
+      for (let k = 0; k < 7; k++) chi2 += ((v[k] - N * pi[k]) ** 2) / (N * pi[k]);
+      add("LongestRunOfOnes M=10000", igamc(3, chi2 / 2), `χ²=${chi2.toFixed(3)}`);
+    } else {
+      add("LongestRunOfOnes M=10000", null, "需 ≥750000 bit 才能评估");
+    }
+  }
+  // 9) Approximate Entropy m=5 (需 n 足够)
+  {
+    const m = 5;
+    const mlen = 1 << m;
+    const count = new Float64Array(mlen);
+    for (let i = 0; i < n; i++) {
+      let pat = 0;
+      for (let k = 0; k < m; k++) pat = ((pat << 1) | (bits[(i + k) % n] ? 1 : 0)) & (mlen - 1);
+      count[pat]++;
+    }
+    let sum = 0;
+    for (let k = 0; k < mlen; k++) if (count[k] > 0) sum += count[k] * Math.log(count[k] / n);
+    const phi_m = sum / n;
+    const mlen1 = 1 << (m + 1);
+    const count2 = new Float64Array(mlen1);
+    for (let i = 0; i < n; i++) {
+      let pat = 0;
+      for (let k = 0; k < m + 1; k++) pat = ((pat << 1) | (bits[(i + k) % n] ? 1 : 0)) & (mlen1 - 1);
+      count2[pat]++;
+    }
+    let sum2 = 0;
+    for (let k = 0; k < mlen1; k++) if (count2[k] > 0) sum2 += count2[k] * Math.log(count2[k] / n);
+    const phi_m1 = sum2 / n;
+    const apen = phi_m - phi_m1;
+    const dof = mlen >> 1;
+    const chi2 = 2 * n * (Math.LN2 - apen);
+    add("ApproximateEntropy m=5", igamc(dof, chi2 / 2), `ApEn=${apen.toFixed(5)}, χ²≈${chi2.toFixed(3)}`);
+  }
+  // 6) BinaryMatrixRank 32x32
+  {
+    const rows = 32, cols = 32, M = rows * cols;
+    const N = Math.min(Math.floor(n / M), 4096); // 秩测试用前 ≤4096 个矩阵(避免过慢)
+    if (N >= 38) {
+      let cFull = 0, cFull1 = 0;
+      for (let b = 0; b < N; b++) {
+        const mtx = new Uint8Array(rows * cols);
+        for (let r = 0; r < rows; r++)
+          for (let c = 0; c < cols; c++) mtx[r * cols + c] = bits[b * M + r * cols + c] ? 1 : 0;
+        let rank = 0;
+        // GF(2) 高斯消元求秩
+        const R = new Array(rows).fill(0).map((_, r) => r);
+        const C = new Array(cols).fill(0).map((_, c) => c);
+        let rr = 0;
+        for (let c = 0; c < cols && rr < rows; c++) {
+          let sel = -1;
+          for (let r = rr; r < rows; r++) if (mtx[r * cols + c]) { sel = r; break; }
+          if (sel < 0) continue;
+          if (sel !== rr) for (let cc = 0; cc < cols; cc++) { const t = mtx[rr * cols + cc]; mtx[rr * cols + cc] = mtx[sel * cols + cc]; mtx[sel * cols + cc] = t; }
+          for (let r = 0; r < rows; r++) {
+            if (r !== rr && mtx[r * cols + c]) for (let cc = 0; cc < cols; cc++) mtx[r * cols + cc] ^= mtx[rr * cols + cc];
+          }
+          rr++;
+        }
+        rank = rr;
+        void R; void C;
+        if (rank === 32) cFull++;
+        else if (rank === 31) cFull1++;
+      }
+      const cOther = N - cFull - cFull1;
+      const pi = [0.2888, 0.5776, 0.1336];
+      const chi2 = ((cFull - N * pi[0]) ** 2) / (N * pi[0]) + ((cFull1 - N * pi[1]) ** 2) / (N * pi[1]) + ((cOther - N * pi[2]) ** 2) / (N * pi[2]);
+      add("BinaryMatrixRank 32x32", igamc(1, chi2 / 2), `N=${N}, χ²=${chi2.toFixed(3)}`);
+    } else {
+      add("BinaryMatrixRank 32x32", null, "需 ≥38 个矩阵");
+    }
+  }
+  // 7) NonOverlappingTemplate m=9(近似: 每 256 bit 块内统计 '000000001' 非重叠匹配)
+  {
+    const M = 256;
+    const N = Math.floor(n / M);
+    if (N >= 8) {
+      const pat = [0, 0, 0, 0, 0, 0, 0, 0, 1];
+      let chi2 = 0;
+      for (let b = 0; b < N; b++) {
+        let count = 0, pos = 0;
+        while (pos + pat.length <= M) {
+          let ok = true;
+          for (let k = 0; k < pat.length; k++) if ((bits[b * M + pos + k] ? 1 : 0) !== pat[k]) { ok = false; break; }
+          if (ok) { count++; pos += pat.length; } else pos++;
+        }
+        chi2 += ((count - M / 512) ** 2) / (M / 512);
+      }
+      add("NonOverlappingTemplate m=9(近似)", igamc(N / 2, chi2 / 2), `N=${N}`);
+    } else {
+      add("NonOverlappingTemplate m=9(近似)", null, "需更多 bit");
+    }
+  }
+  // 8) Serial m=8
+  {
+    const nbits = n;
+    const m = 8;
+    const p2 = [];
+    for (const L of [m, m - 1, m - 2]) {
+      const size = 1 << L;
+      const cnt = new Float64Array(size);
+      for (let i = 0; i < nbits; i++) {
+        let pat = 0;
+        for (let k = 0; k < L; k++) pat = ((pat << 1) | (bits[(i + k) % nbits] ? 1 : 0)) & (size - 1);
+        cnt[pat]++;
+      }
+      let sum2 = 0;
+      for (let k = 0; k < size; k++) sum2 += cnt[k] * cnt[k];
+      p2.push(sum2 * (size / nbits) - nbits);
+    }
+    const psi = p2;
+    const pSerial1 = igamc(1 << (m - 2), (psi[0] - psi[1]) / 4);
+    const pSerial2 = igamc(1 << (m - 3), (psi[0] - 2 * psi[1] + psi[2]) / 8);
+    add("Serial m=8", pSerial1, `P1; P2=${pSerial2.toExponential(2)}`);
+    add("Serial m=8 (P2)", pSerial2, "第二个 p-value");
+  }
+  // 10) CumulativeSums
+  {
+    let S = 0, mx = 0;
+    for (let i = 0; i < n; i++) { S += bits[i] ? 1 : -1; mx = Math.max(mx, Math.abs(S)); }
+    let z = mx;
+    let pv = 0;
+    for (let k = Math.floor((-n / z + 1) / 4); k <= Math.floor((n / z - 1) / 4); k++) {
+      pv += PErfc(((4 * k + 1) * z) / Math.sqrt(n)) - PErfc(((4 * k - 1) * z) / Math.sqrt(n));
+    }
+    pv += PErfc(z / Math.sqrt(n));
+    add("CumulativeSums", Math.max(0, Math.min(1, pv)), `z=${z}`);
+  }
+  return res;
+}
+
+function NistHtml(results, meta) {
+  const row = (r) =>
+    `<tr><td>${r.name}</td><td>${r.p === null ? "N/A" : r.p.toExponential(3)}</td><td>${r.note}</td><td style="color:${r.pass ? "#0a0" : "#b00"}">${r.p === null ? "SKIP" : r.pass ? "PASS" : "FAIL"}</td></tr>`;
+  return `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>NIST RNG 报告</title>
+<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2em;background:#fafafa}h1{color:#0b3d91}table{border-collapse:collapse;background:#fff}td,th{border:1px solid #bbb;padding:6px 12px}th{background:#eef}</style></head><body>
+<h1>真实 ukey 硬件随机数 NIST 风格报告</h1>
+<p>设备: ${meta.hid} · 文件: ${meta.file} · 总字节: ${meta.bytes} · 分析位数: ${meta.n} bit · 时间: ${meta.time}</p>
+<p><b>注意</b>: 非官方 NIST STS 全量; 为实现子集(单比特/分块频率/游程/最长游程/近似熵/累积和等), p≥0.01 视为通过。</p>
+<table><tr><th>测试</th><th>p-value</th><th>说明</th><th>结论</th></tr>${results.map(row).join("")}</table></body></html>`;
+}
+
+async function NistReport(file, report) {
+  const stat = fs.statSync(file);
+  const data = fs.readFileSync(file);
+  const hid = process.env.RKEY_HID || "00000000-efea115bfc084642";
+  const n = Math.min(data.length * 8, 32 * 1024 * 1024); // 至多 32Mbit 参与
+  const bits = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bits[i] = (data[i >> 3] >> (7 - (i & 7))) & 1;
+  const results = NistRun(bits, n);
+  const html = NistHtml(results, { hid, file, bytes: data.length, n, time: new Date().toISOString() });
+  fs.writeFileSync(report, html);
+  const pass = results.filter((r) => r.p !== null && r.p >= 0.01).length;
+  const done = results.filter((r) => r.p !== null).length;
+  console.log(`nist: ${report} bytes=${data.length} tests=${pass}/${done} pass`);
+  return pass === done && done > 0 ? 0 : 1;
+}
+
+/*! 合并报告: 字节级指标 + NIST 子集, 输出到指定 html(用于更新 ai-doc/ukey-rand-quality-*.html) */
+async function FullReport(file, report) {
+  const data = fs.readFileSync(file);
+  const hid = process.env.RKEY_HID || "00000000-efea115bfc084642";
+  const n = Math.min(data.length * 8, 32 * 1024 * 1024);
+  const bits = new Uint8Array(n);
+  for (let i = 0; i < n; i++) bits[i] = (data[i >> 3] >> (7 - (i & 7))) & 1;
+  const nist = NistRun(bits, n);
+  const stats = RandStats([data], 1);
+  const rowN = (r) =>
+    `<tr><td>${r.name}</td><td>${r.p === null ? "N/A" : r.p.toExponential(3)}</td><td>${r.note}</td><td style="color:${r.pass ? "#0a0" : "#b00"}">${r.p === null ? "SKIP" : r.pass ? "PASS" : "FAIL"}</td></tr>`;
+  const rowB = (k, v, note, verdict) =>
+    `<tr><td>${k}</td><td>${v}</td><td>${note}</td><td style="color:${verdict === "PASS" ? "#0a0" : "#b00"}">${verdict}</td></tr>`;
+  const html = `<!doctype html><html lang="zh"><head><meta charset="utf-8"><title>ukey 随机数质量报告</title>
+<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2em;background:#fafafa}h1,h2{color:#0b3d91}table{border-collapse:collapse;background:#fff}td,th{border:1px solid #bbb;padding:6px 12px;text-align:left}th{background:#eef}</style></head><body>
+<h1>RockeyARM 真实 ukey 随机数质量报告</h1>
+<p>设备: <code>${hid}</code> · 采样源: ${file} · 总字节: ${stats.total} · 分析位数: ${n} bit · 更新: ${new Date().toISOString().slice(0, 19).replace("T", " ")}</p>
+<h2>1. 字节级指标(全量)</h2>
+<table><tr><th>指标</th><th>观测值</th><th>说明</th><th>结论</th></tr>
+${rowB("位频率 p(1)", stats.p1.toFixed(6), `期望≈0.5(共 ${stats.bits} bit)`, Math.abs(stats.p1 - 0.5) < 0.005 ? "PASS" : Math.abs(stats.p1 - 0.5) < 0.02 ? "WARN" : "FAIL")}
+${rowB("字节直方图 χ²(df=255)", stats.chi2.toFixed(2), "期望≈255", Math.abs(stats.chi2 - 255) < 3 * Math.sqrt(510) ? "PASS" : "WARN")}
+${rowB("Shannon 熵 / 字节", stats.H.toFixed(4), "理想=8", stats.H > 7.99 ? "PASS" : stats.H > 7.9 ? "WARN" : "FAIL")}
+${rowB("最小熵 / 字节", stats.minEntropy.toFixed(4), "理想=8", stats.minEntropy > 7.9 ? "PASS" : "WARN")}
+${rowB("未出现字节数", stats.missing, "共 256", stats.missing <= 1 ? "PASS" : "WARN")}
+</table>
+<h2>2. NIST SP800-22 风格子集(非官方全量; p≥0.01 通过)</h2>
+<table><tr><th>测试</th><th>p-value</th><th>说明</th><th>结论</th></tr>
+${nist.map(rowN).join("")}
+</table>
+<p>说明: 随机源为设备 TRNG(脚本 RandBytes, 每帧 1024B 追加采集)。采集与分析命令: __Testing_dongle.cjs collect / nistreport / fullreport。</p>
+</body></html>`;
+  fs.writeFileSync(report, html);
+  const pass = nist.filter((r) => r.p !== null && r.p >= 0.01).length;
+  const done = nist.filter((r) => r.p !== null).length;
+  console.log(`full: ${report} bytes=${data.length} nist=${pass}/${done} pass p1=${stats.p1.toFixed(6)} H=${stats.H.toFixed(4)}`);
+  return 0;
+}
+
 // ---------------------------------------------------------------- cli
 async function main() {
   await initialize();
@@ -1223,6 +1548,29 @@ async function main() {
     fs.mkdirSync(path.dirname(report), { recursive: true });
     return RandTest(count, report);
   }
+  if (cmd === "collect") {
+    /* 空闲采集: collect <outFile> <count> [hid]; 追加式(断点续采), 每块 1024B */
+    const outFile = argv[1] || path.join(ROOT, "ai-doc", "randdata", "ukey-rng-00000000-efea115bfc084642.bin");
+    const count = argv[2] !== undefined ? parseInt(argv[2], 10) : Infinity;
+    const list = await List();
+    const hid = argv[3] || (process.env.RKEY_HID || list[0]?.id);
+    if (!hid) throw Error("no dongle");
+    const got = await CollectRand(outFile, count, hid);
+    console.log(`collect: done, total=${got} bytes -> ${outFile}`);
+    return 0;
+  }
+  if (cmd === "nistreport") {
+    const file = argv[1];
+    const report = argv[2] || file.replace(/\.bin$/, "") + "-nist.html";
+    fs.mkdirSync(path.dirname(report), { recursive: true });
+    return NistReport(file, report);
+  }
+  if (cmd === "fullreport") {
+    const file = argv[1];
+    const report = argv[2] || path.join(ROOT, "ai-doc", "ukey-rand-quality-2026-09-08.html");
+    fs.mkdirSync(path.dirname(report), { recursive: true });
+    return FullReport(file, report);
+  }
   if (cmd === "sm2self") {
     /* 验证模拟器 SM2 加解密 API 用法: sm2self <idx> */
     const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
@@ -1273,7 +1621,7 @@ async function main() {
     return r.verify && !tamper ? 0 : 1;
   }
   console.log(
-    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|realadmin|reallimit <file> [hid] [trusteeIdx]`,
+    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|realadmin|reallimit <file> [hid] [trusteeIdx]|collect <out> [count]|nistreport <bin> [html]`,
   );
   return 2;
 }

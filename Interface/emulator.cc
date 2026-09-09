@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
 #include <vector>
@@ -586,7 +586,12 @@ class DongleHandle {
   static constexpr size_t kSharedMemorySize = 32;
   uint8_t shared_memory_[kSharedMemorySize] = {0};
   uint8_t factory_datafile_[kFactoryFileSize] = {0};
-  const PERMISSION permission_;
+  PERMISSION permission_;
+
+  int SetPermission(PERMISSION perm) {
+    permission_ = perm;
+    return 0;
+  }
 
  protected:
   DongleHandle(PERMISSION perm) : permission_(perm) {}
@@ -1639,6 +1644,16 @@ int Dongle::CheckError(DWORD error) {
 Emulator::Emulator(PERMISSION perm) : permission_(perm) {}
 Emulator::~Emulator() {
   Close();
+}
+
+/*! 运行时切换会话权限(测试模拟"登录后权限变化"); 已打开世界时同步更新句柄权限 */
+int Emulator::SetPermission(PERMISSION perm) {
+  permission_ = perm;
+  if (handle_) {
+    DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+    thiz->SetPermission(perm);
+  }
+  return 0;
 }
 
 int Emulator::Close() {

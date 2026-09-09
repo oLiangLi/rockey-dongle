@@ -70,6 +70,10 @@ rLANGWASMEXPORT int EmuGetPINState(Dongle* dongle, PERMISSION* state) {
   return dongle->GetPINState(state);
 }
 
+rLANGWASMEXPORT int EmuSetPermission(Emulator* emu, PERMISSION permission) {
+  return emu->SetPermission(permission);
+}
+
 rLANGWASMEXPORT int EmuSetLEDState(Dongle* dongle, LED_STATE state) {
   return dongle->SetLEDState(state);
 }

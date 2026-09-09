@@ -535,13 +535,14 @@ public:
   virtual int Create(const uint8_t master_secret[64], uint32_t uid = 0, int loop = 256);
   virtual int Open(const char* file, const uint8_t master_secret[64], int loop = 256);
   virtual int Write(const char* file);
+  virtual int SetPermission(PERMISSION perm);
 
 public:
   int Create(const char* master_secret, uint32_t uid = 0, int loop = 256);
   int Open(const char* file, const char* master_secret, int loop = 256);
 
 protected:
-  const PERMISSION permission_;
+  PERMISSION permission_; /* 可变: SetPermission 可运行时切换(测试用) */
 };
 
 

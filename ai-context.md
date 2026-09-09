@@ -484,3 +484,8 @@ L-01 `grammar.ts:903/1481` 移位≥32 静默截断 · L-02 `grammar.ts:1101/101
 - 2026-09-08(round4): 双模拟器交换脚手架 xchg <A> <B>: 注入对端 X25519(Export SupperBlock@96..128)与 RSA pub, 执行 EXCHANGE_PREV_MASTER_SECRET 报设备端错误(1078001620, VM 编码错误)→ 该 op 需产品级多设备编排与密钥状态, Web 工具无参考编排, 语义化自动验证不可行; IMPORT_MASTER_SECRET 同。功能框架已留(EmuJsRun 支持 overrides; outputs/inout 齐)。
 - 结论: 目标 ①(Initialize/EnTrust/Admin/Limit 托管签名)已达并可复验(有效执行+篡改被拒); 目标 ② 的多设备 MasterSecret 交换语义需用户提供编排规范或真机双 ukey 流程后才能完成验证; ③ CI&CD 现有基础集 + 待收编进阶脚本。
 - 2026-09-08(round6): 真机 EnTrust 成功执行(Execute OK), 但受托者(JS 模拟器 SM2Decrypt id1)解不开真机托管密文 —— 真机固件与宿主模拟器的 SM2 ECIES 托管编解码存在差异(或需"母钥/第二把受托 ukey"产品流程); 该项与多设备 EXCHANGE 同属需产品级规范/母钥的边界。realadmin/reallimit(混合真机) 留作实验命令。
+- 2026-09-08 NIST 随机数采集(进行中): __Testing_dongle.cjs 新增 collect(追加式, RKEY_ADMIN=1)与 nistreport(诚实子集: Frequency/BlockFrequency/Runs/LongestRunM10000/ApproxEntropy/CumulativeSums; 需≥750kbit 跑 LongestRun, α=0.01)。ai-doc/randdata/ukey-rng-00000000-efea115bfc084642.bin 追加采集; 首 300KB 单比特显著偏负(S=-4608 FAIL), 追加至 600KB 后 6/6 PASS(疑首窗预热/波动); 后台长采集中(count 4000)。
+- 2026-09-08 汇总更新: ai-doc/ukey-rand-quality-2026-09-08.html 已合并为 fullreport(字节级 + NIST 子集); 当前样本 768,000B, p1=0.499786, H=7.9998, NIST 6/6 PASS; 后台 collect 持续追加中(后续可重复 fullreport 刷新)。
+- 2026-09-09: 样本 4.71MB; 分析上限提至 32Mbit; fullreport: p1=0.500012, H=8.0000, NIST 子集 6/6 PASS; ai-doc/ukey-rand-quality-2026-09-08.html 已刷新; 长程后台采集(≈20MB, pwsh-49)进行中, 后续轮可 fullreport 刷新。
+- 2026-09-09: NIST 子集扩展至 10 项(新增 BinaryMatrixRank 32x32 / NonOverlappingTemplate m=9近似 / Serial m=8×2), 当前 4.85MB 样本 10/10 PASS(p1=0.500013,H=8.0000); 报告已刷; 长采 pwsh-49 持续中。
+- 2026-09-09 收尾: 样本达 8.45MB(8,446,976B), fullreport: p1=0.500000, H=8.0000, NIST 风格子集 10/10 PASS; ai-doc/ukey-rand-quality-2026-09-08.html 为最终汇总; 采集作业已按用户指示停止。

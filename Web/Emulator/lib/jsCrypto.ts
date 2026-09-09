@@ -1,4 +1,4 @@
-import { integer, Addr, CipherSuiteV0 } from "../../World.js";
+﻿import { integer, Addr, CipherSuiteV0 } from "../../World.js";
 import * as jsCryptoText from "../../Assembly/Emulator_wasm.js";
 import * as jsScript from "../../Script/index.js";
 
@@ -123,6 +123,7 @@ export interface RockeyEmulator {
 
   GetDongleInfo(): Buffer;
   GetPINState(): PERMISSION;
+  SetPermission(perm: PERMISSION): void;
   SetLEDState(state: LED_STATE): void;
 
   ReadShareMemory(): Buffer;
@@ -229,6 +230,7 @@ interface Native0_ {
   EmuExecv(thiz: Addr, InOutBuf: Addr): integer;
   EmuGetDongleInfo(thiz: Addr, info: Addr): integer;
   EmuGetPINState(thiz: Addr, state: Addr): integer;
+  EmuSetPermission(thiz: Addr, perm: integer): integer;
   EmuSetLEDState(thiz: Addr, state: Addr): integer;
 
   EmuReadShareMemory(thiz: Addr, buffer: Addr): integer;
@@ -1049,6 +1051,7 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       EmuExecv,
       EmuGetDongleInfo,
       EmuGetPINState,
+      EmuSetPermission,
       EmuSetLEDState,
       EmuReadShareMemory,
       EmuWriteShareMemory,
@@ -1266,6 +1269,13 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
         const result = EmuSetLEDState(thiz, state);
         if (0 !== result)
           throw jsCipher.Annihilus_(`dongle.SetLEDState Error ${result}`);
+      }
+
+      SetPermission(perm: PERMISSION): void {
+        const thiz = CheckInstance();
+        const result = EmuSetPermission(thiz, <integer>perm);
+        if (0 !== result)
+          throw jsCipher.Annihilus_(`dongle.SetPermission Error ${result}`);
       }
 
       ReadShareMemory(): Buffer {

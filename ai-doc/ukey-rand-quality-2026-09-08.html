@@ -1,20 +1,18 @@
 <!doctype html><html lang="zh"><head><meta charset="utf-8"><title>ukey 随机数质量报告</title>
-<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2em;background:#fafafa;color:#222}
-h1,h2{color:#0b3d91}table{border-collapse:collapse;background:#fff}td,th{border:1px solid #bbb;padding:6px 12px;text-align:left}
-th{background:#eef}.pass{color:#080}.warn{color:#c80}.fail{color:#c00}</style></head><body>
+<style>body{font-family:Segoe UI,Arial,sans-serif;margin:2em;background:#fafafa}h1,h2{color:#0b3d91}table{border-collapse:collapse;background:#fff}td,th{border:1px solid #bbb;padding:6px 12px;text-align:left}th{background:#eef}</style></head><body>
 <h1>RockeyARM 真实 ukey 随机数质量报告</h1>
-<p>设备: <code>00000000-efea115bfc084642</code> · 样本: 48 次 × 1024B · 总字节: 49152 · 生成日期: 2026-09-08 17:07:34</p>
-<h2>统计指标</h2>
-<table>
-<tr><th>指标</th><th>观测值</th><th>说明</th><th>结论</th></tr>
-<tr><td>位频率 p(1)</td><td>0.499619</td><td>期望≈0.5(采样 393216 bit)</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>字节直方图 χ²(df=255)</td><td>253.60</td><td>双侧 p≈9.74e-1</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>Shannon 熵 / 字节</td><td>7.9963</td><td>理想=8</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>最小熵 / 字节</td><td>8.3088</td><td>理想=8</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>未出现字节数</td><td>0</td><td>共 256(期望接近 0/样本较小时可为正)</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>游程检验 z</td><td>0.678</td><td>|z|<2.58 通过</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>单比特频率 z</td><td>-0.478</td><td>|z|<2.58 通过</td><td style="color:#0a0">PASS</td></tr>
-<tr><td>字节自相关 lag1..5</td><td>1:0.0028 2:-0.0054 3:-0.0027 4:0.0018 5:-0.0026</td><td>|ρ| 应远小于 1</td><td style="color:#0a0">PASS</td></tr>
+<p>设备: <code>00000000-efea115bfc084642</code> · 采样源: X:\MyWork\RockeyDongle\ai-doc\randdata\ukey-rng-00000000-efea115bfc084642.bin · 总字节: 8446976 · 分析位数: 33554432 bit · 更新: 2026-09-09 03:17:57</p>
+<h2>1. 字节级指标(全量)</h2>
+<table><tr><th>指标</th><th>观测值</th><th>说明</th><th>结论</th></tr>
+<tr><td>位频率 p(1)</td><td>0.500000</td><td>期望≈0.5(共 67575808 bit)</td><td style="color:#0a0">PASS</td></tr>
+<tr><td>字节直方图 χ²(df=255)</td><td>267.36</td><td>期望≈255</td><td style="color:#0a0">PASS</td></tr>
+<tr><td>Shannon 熵 / 字节</td><td>8.0000</td><td>理想=8</td><td style="color:#0a0">PASS</td></tr>
+<tr><td>最小熵 / 字节</td><td>8.0198</td><td>理想=8</td><td style="color:#0a0">PASS</td></tr>
+<tr><td>未出现字节数</td><td>0</td><td>共 256</td><td style="color:#0a0">PASS</td></tr>
 </table>
-<p>说明: 本报告为轻量统计(非完整 NIST STS); 随机源为设备 TRNG(脚本 RandBytes)。样本量 49152 字节。</p>
+<h2>2. NIST SP800-22 风格子集(非官方全量; p≥0.01 通过)</h2>
+<table><tr><th>测试</th><th>p-value</th><th>说明</th><th>结论</th></tr>
+<tr><td>Frequency (monobit)</td><td>7.694e-1</td><td>S=-1698</td><td style="color:#0a0">PASS</td></tr><tr><td>BlockFrequency M=128</td><td>8.848e-1</td><td>N=262144, χ²=261275.781</td><td style="color:#0a0">PASS</td></tr><tr><td>Runs</td><td>6.749e-1</td><td>V=16775498</td><td style="color:#0a0">PASS</td></tr><tr><td>LongestRunOfOnes M=10000</td><td>1.000e+0</td><td>χ²=12.097</td><td style="color:#0a0">PASS</td></tr><tr><td>ApproximateEntropy m=5</td><td>4.427e-1</td><td>ApEn=0.69315, χ²≈32.490</td><td style="color:#0a0">PASS</td></tr><tr><td>BinaryMatrixRank 32x32</td><td>6.714e-1</td><td>N=4096, χ²=0.797</td><td style="color:#0a0">PASS</td></tr><tr><td>NonOverlappingTemplate m=9(近似)</td><td>1.000e+0</td><td>N=131072</td><td style="color:#0a0">PASS</td></tr><tr><td>Serial m=8</td><td>1.000e+0</td><td>P1; P2=1.00e+0</td><td style="color:#0a0">PASS</td></tr><tr><td>Serial m=8 (P2)</td><td>1.000e+0</td><td>第二个 p-value</td><td style="color:#0a0">PASS</td></tr><tr><td>CumulativeSums</td><td>4.168e-1</td><td>z=4704</td><td style="color:#0a0">PASS</td></tr>
+</table>
+<p>说明: 随机源为设备 TRNG(脚本 RandBytes, 每帧 1024B 追加采集)。采集与分析命令: __Testing_dongle.cjs collect / nistreport / fullreport。</p>
 </body></html>
