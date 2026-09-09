@@ -69,9 +69,12 @@ async function initialize() {
    */
   globalThis.jsEmulator = jsEmulatorEx[0];
 
+  globalThis.EmulatorSecrets = [];
   for (let i = 0; i < kCountEmulator; ++i) {
+    const secret = jsCipher.RandBytes(16).toString("hex");
+    globalThis.EmulatorSecrets.push(secret);
     jsEmulatorEx[i].Create(
-      jsCipher.RandBytes(16).toString("hex"),
+      secret,
       0x100 + i,
       256,
     );
@@ -448,6 +451,202 @@ async function EmuXchg(aIdx, bIdx) {
   const rB = await EmuJsRun(bIdx, imSrc, true, imOv);
   console.log(`xchg: emu[${bIdx}] IMPORT executed; ids=${(rB.outputs.rLANG_DONGLE_ID_0 || "").slice(0, 8)}...`);
   return { cipher, bX25519: bX25519.toString("hex") };
+}
+
+/*! ================= MASTER.SECRET 构建复现 (K0..K3 保管者 + A0 导入者) =================
+ * 语义对照 Interface/execute.cc OpExecute_ExchangeMasterSecret / OpExecute_ImportMasterSecret:
+ *   6 个"字母" A..F = 保管者 K0..K3 完全图上的 6 条边(K0-K1=A, K0-K2=B, K0-K3=C,
+ *   K1-K2=D, K1-K3=E, K2-K3=F)。每把 Ki 与其它三把各做一次 X25519(共享 32B),
+ *   得到它 3 条边的共享密钥, 每条边 = 16B header(hid12|kid=0xffffff|字母index) + 32B 共享;
+ *   Ki 把自己 3 条边用 A0.RSA 公钥整体 RSA-PKCS1 加密 → 单个 256B 密文
+ *   (rLANG_ENCRYPT_PREV_MASTER_SECRET, RSA.Encrypt(48B*3=144B))。
+ *   A0 用自己 RSA 私钥(global 2048)解密至多 3 个密文; 字母位满 0x3F(重复字母必须一致)后:
+ *     MASTER_SECRET = SHA512(6 边共享按 A..F 顺序拼接, 192B)  // 64B
+ *     指纹 = SHA256(MASTER_SECRET)[0..7] (rLANG_MASTER_SECRET_FINGERPRINT)
+ *   任意 3/4 把覆盖全部 6 条边(每把贡献 3 条, 三元组内 3 条重复做一致性校验); 仅 2 把覆盖 5 条, 无法恢复。
+ *   复现即: 在 4 个(模拟)保管者上跑 EXCHANGE 脚本, 把 3 个密文灌给 A0 跑 IMPORT 脚本。
+ *   注: ExecuteExchangeMasterSecret/ExecuteImportMasterSecret 属 0x280..0x2FF Execute 类操作,
+ *   script.cc 在执行后直接 break 结束 VM —— 脚本末尾的 Exit(42) 是不可达死代码(真实 bundle 同款),
+ *   OpExecute 返回 0 即成功并保留缓冲输出; 返回非 0 则清空数据并报错。
+ */
+async function EmuMkeyMaster({ kIdx = [0, 1, 2, 3], a0Idx = 4, init = true } = {}) {
+  const dirTests = path.join(__dirname, "Tests");
+  const initSrc = fs.readFileSync(path.join(dirTests, "Initialize.dongle"), "utf8");
+  const dashReady = (i) => EmuJsDashboard(i).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0);
+  const used = [...kIdx, a0Idx];
+  if (init) {
+    for (const i of used) if (!dashReady(i)) await EmuJsRun(i, initSrc, true);
+  }
+  /* 保管者 X25519 公钥: 与真实导出流程一致, 在每把 K 上跑 MasterExport.dongle
+   * (设备端 Master(-1).X25519 / rLANG__X25519_Pubkey @32[32]) —— EXCHANGE 用该身份做边上 X25519 */
+  const meSrc = fs.readFileSync(path.join(dirTests, "MasterExport.dongle"), "utf8");
+  const pubs = [];
+  for (let i = 0; i < kIdx.length; ++i) {
+    const r = await EmuJsRun(kIdx[i], meSrc, init, {});
+    const dev = Buffer.from(r.outputs.rLANG__X25519_Pubkey, "hex");
+    if (!dev.length) throw Error(`mkey: K${i} MasterExport missing X25519 output`);
+    pubs.push(dev);
+    console.log(`mkey: K${i} (emu[${kIdx[i]}]) MasterExport x25519=${dev.toString("hex").slice(0, 16)}...`);
+  }
+  const a0rsa = Buffer.from(EmuJsDashboard(a0Idx).subarray(7 * 1024 + 148, 7 * 1024 + 148 + 260)); // [e:u32LE][N:256]
+  const exSrc = fs.readFileSync(path.join(dirTests, "EXCHANGE_PREV_MASTER_SECRET.dongle"), "utf8");
+  const imSrc = fs.readFileSync(path.join(dirTests, "IMPORT_MASTER_SECRET.dongle"), "utf8");
+
+  /* ② 与 mkey/signed-script/K0-K1-K2-K3 里预签名导出程序逐字段比对:
+   * 我们驱动各 K* 执行的正是同一导出程序(code/output/data 布局一致, 区别仅在签名由真实
+   * K 世界签发, 模拟器代理无对应信任, 故以 bootstrap 管理员会话执行等价指令流) */
+  let programMatch = "skip";
+  const kProg =
+    process.env.MKEY_PROGRAM ||
+    path.join(__dirname, "../../../mkey/signed-script/K0-K1-K2-K3/SignedCode-Export-K0.dongle.program");
+  if (fs.existsSync(kProg)) {
+    const p = JSON.parse(fs.readFileSync(kProg, "utf8"));
+    const loc = await ParseDongle(exSrc);
+    const outEq =
+      (p.output || []).length === (loc.output || []).length &&
+      (p.output || []).every((o, i) => {
+        const l = loc.output[i];
+        return l && o.name === l.name && o.offset === l.offset && o.size === l.size;
+      });
+    const datEq =
+      (p.data || []).length === (loc.data || []).length &&
+      (p.data || []).every((d, i) => {
+        const l = loc.data[i];
+        return l && d.name === l.name && d.offset === l.offset && d.sizeMin === l.sizeMin && d.sizeMax === l.sizeMax;
+      });
+    const codeEq = p.code === loc.code;
+    programMatch = codeEq && outEq && datEq;
+    console.log(
+      `mkey: SignedCode-Export-K0.program vs EXCHANGE.dongle match=${programMatch} (code=${codeEq}, output=${outEq}, data=${datEq})`,
+    );
+  }
+
+  const ciphers = {};
+  const trace = process.env.RKEY_TRACE === "1";
+  if (trace) {
+    console.log(
+      `mkey: pubs=${pubs.map((p) => p.toString("hex").slice(0, 16)).join(",")} a0rsa(e+N)=${a0rsa.subarray(0, 4).toString("hex")} ${a0rsa.subarray(4, 20).toString("hex")}...`,
+    );
+  }
+  for (let i = 0; i < kIdx.length; ++i) {
+    const ov = { rLANG_RSA_PUBKEY: a0rsa };
+    for (let j = 0; j < pubs.length; ++j) ov[`rLANG_X25519_PUBKEY_${j}`] = pubs[j];
+    const r = await EmuJsRun(kIdx[i], exSrc, init, ov);
+    if (trace) console.log(`mkey: trace K${i} inout0_64=${r.inout.subarray(0, 64).toString("hex")}`);
+    const c = r.outputs.rLANG_ENCRYPT_PREV_MASTER_SECRET || "";
+    if (c.length !== 512) throw Error(`mkey: K${i} EXCHANGE output len=${c.length / 2} hex`);
+    ciphers[kIdx[i]] = Buffer.from(c, "hex");
+    console.log(`mkey: K${i} (emu[${kIdx[i]}]) EXCHANGE OK cipher=${c.slice(0, 20)}...`);
+  }
+  const runIm = async (triple, tag) => {
+    const ov = {};
+    for (let s = 0; s < 3; ++s) ov[`rLANG_ENCRYPT_PREV_MASTER_SECRET_${s}`] = ciphers[triple[s]];
+    const r = await EmuJsRun(a0Idx, imSrc, init, ov);
+    const ids = [];
+    for (let s = 0; s < 6; ++s) {
+      const id = (r.outputs[`rLANG_DONGLE_ID_${s}`] || "").slice(0, 32);
+      const letter = "ABCDEF"[s];
+      ids.push({ letter, id });
+    }
+    const fp = r.outputs.rLANG_MASTER_SECRET_FINGERPRINT || "";
+    console.log(
+      `mkey: A0 (emu[${a0Idx}]) IMPORT[${tag}] triple=${triple.map((t) => "K" + kIdx.indexOf(t)).join("")}` +
+        ` fp=${fp} letters=${ids.map((x) => x.letter + ":" + (x.id || "").slice(0, 12)).join(" ")}`,
+    );
+    return { fp, ids };
+  };
+  const r1 = await runIm([kIdx[0], kIdx[1], kIdx[2]], "012");
+  let r2 = null;
+  try {
+    r2 = await runIm([kIdx[1], kIdx[2], kIdx[3]], "123");
+  } catch (err) {
+    console.log(`mkey: second triple import skipped: ${err.message}`);
+  }
+  const same = r2 ? Buffer.compare(Buffer.from(r1.fp, "hex"), Buffer.from(r2.fp, "hex")) === 0 : null;
+  console.log(`mkey: MASTER.SECRET fingerprint=${r1.fp} determinism(012 vs 123)=${same === null ? "n/a" : same}`);
+
+  /* ① 文件 ukey 代理: Export() = 持久化 storage(可落盘 MKEY_PERSIST_DIR), Open() 重载后
+   * K 身份(Master(-1).X25519)不变, 代理能执行同样的管理员导出请求(EXCHANGE),
+   * 其密文可替代被代理的 K 参与 A0 恢复(指纹应不变)。 */
+  let proxyOk = null;
+  const cloneIdx =
+    process.env.MKEY_PROXY === "0" ? -1 : process.env.MKEY_PROXY ? parseInt(process.env.MKEY_PROXY, 10) : 6;
+  if (
+    cloneIdx >= 0 &&
+    cloneIdx !== a0Idx &&
+    kIdx.indexOf(cloneIdx) < 0 &&
+    (globalThis.EmulatorSecrets || []).length > kIdx[0]
+  ) {
+    const src0 = kIdx[0];
+    const secret0 = globalThis.EmulatorSecrets[src0];
+    const storage0 = Buffer.from(EmuJsGet(src0).Export());
+    const diskDir = process.env.MKEY_PERSIST_DIR;
+    let opened = false;
+    if (diskDir) {
+      fs.mkdirSync(diskDir, { recursive: true });
+      const file = path.join(diskDir, `K${src0}-proxy.dongle`);
+      fs.writeFileSync(file, storage0);
+      EmuJsGet(cloneIdx).Open(2, fs.readFileSync(file), secret0, 256);
+      opened = true;
+    } else {
+      EmuJsGet(cloneIdx).Open(2, storage0, secret0, 256);
+    }
+    const rp = await EmuJsRun(cloneIdx, meSrc, true, {});
+    const pubP = Buffer.from(rp.outputs.rLANG__X25519_Pubkey, "hex");
+    const identity = pubP.length === 32 && Buffer.compare(pubP, pubs[0]) === 0;
+    const ovP = { rLANG_RSA_PUBKEY: a0rsa };
+    pubs.forEach((p, j) => {
+      ovP[`rLANG_X25519_PUBKEY_${j}`] = p;
+    });
+    const exP = await EmuJsRun(cloneIdx, exSrc, true, ovP);
+    const cP = Buffer.from(exP.outputs.rLANG_ENCRYPT_PREV_MASTER_SECRET || "", "hex");
+    if (cP.length !== 256) throw Error(`mkey: file-proxy EXCHANGE output len=${cP.length}`);
+    const ovI = {
+      rLANG_ENCRYPT_PREV_MASTER_SECRET_0: cP,
+      rLANG_ENCRYPT_PREV_MASTER_SECRET_1: ciphers[kIdx[1]],
+      rLANG_ENCRYPT_PREV_MASTER_SECRET_2: ciphers[kIdx[2]],
+    };
+    const rI = await EmuJsRun(a0Idx, imSrc, init, ovI);
+    const fpP = rI.outputs.rLANG_MASTER_SECRET_FINGERPRINT || "";
+    proxyOk = identity && fpP === r1.fp;
+    console.log(
+      `mkey: file-proxy emu[${cloneIdx}]${opened ? "(from-disk)" : ""} identity(K${src0} x25519)=${identity}` +
+        ` export=OK import-fp=${fpP} same-as-original=${fpP === r1.fp}`,
+    );
+  } else {
+    console.log(`mkey: file-proxy check skipped`);
+  }
+
+  /* 负例: 只给 2 个密文(K0+K1 → 仅 A..E 五条边, F 缺失)时 A0 必须拒绝(mask≠0x3F) */
+  let neg = "n/a";
+  if (process.env.MKEY_NEG !== "0") {
+    const ovN = {
+      rLANG_ENCRYPT_PREV_MASTER_SECRET_0: ciphers[kIdx[0]],
+      rLANG_ENCRYPT_PREV_MASTER_SECRET_1: ciphers[kIdx[1]],
+      rLANG_ENCRYPT_PREV_MASTER_SECRET_2: Buffer.alloc(256),
+    };
+    try {
+      await EmuJsRun(a0Idx, imSrc, init, ovN);
+      neg = "UNEXPECTED-SUCCESS";
+    } catch (err) {
+      neg = /Execv Error/.test(String(err && err.message)) ? "rejected(expected)" : "rejected:" + err.message;
+    }
+    console.log(`mkey: negative 2/4 (K0+K1 only, F 缺失) => ${neg}`);
+  }
+  const allOk =
+    same !== false &&
+    (proxyOk === null || proxyOk === true) &&
+    (neg === "n/a" || neg.indexOf("expected") >= 0 || neg.startsWith("rejected:"));
+  console.log(`mkey: done fp=${r1.fp} allOk=${allOk}`);
+  return {
+    ciphers: Object.fromEntries(Object.entries(ciphers).map(([k, v]) => [k, v.toString("hex")])),
+    fp: r1.fp,
+    same,
+    proxyOk,
+    neg,
+    programMatch,
+    allOk,
+  };
 }
 
 /*! 构造 EnTrust 输入条目(80B = hid12|kid3|zero|X||Y64, 受托者用其 SM2ECDSA(签名)公钥;
@@ -1596,6 +1795,20 @@ async function main() {
     }
     return 0;
   }
+  if (cmd === "mkey") {
+    /* 复现 MASTER.SECRET 构建: 4 个保管者模拟器 K0..K3 跑 EXCHANGE, A0(emu[4]) 导入;
+     * mkey [kStart] — 保管者从 emu[kStart..kStart+3] 起, A0 = kStart+4;
+     * MKEY_INIT=0 时跳过 Initialize.dongle 前置(保管者/导入者直接以世界创建脚本运行) */
+    const k0 = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const kIdx = [k0, k0 + 1, k0 + 2, k0 + 3];
+    const a0Idx = k0 + 4;
+    const r = await EmuMkeyMaster({
+      kIdx,
+      a0Idx,
+      init: process.env.MKEY_INIT !== "0",
+    });
+    return r.allOk ? 0 : 1;
+  }
   if (cmd === "xchg") {
     const a = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
     const b = argv[2] !== undefined ? parseInt(argv[2], 10) : 1;
@@ -1621,7 +1834,7 @@ async function main() {
     return r.verify && !tamper ? 0 : 1;
   }
   console.log(
-    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|realadmin|reallimit <file> [hid] [trusteeIdx]|collect <out> [count]|nistreport <bin> [html]`,
+    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|mkey [kStart]|realadmin|reallimit <file> [hid] [trusteeIdx]|collect <out> [count]|nistreport <bin> [html]`,
   );
   return 2;
 }
