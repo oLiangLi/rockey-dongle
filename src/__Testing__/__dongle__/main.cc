@@ -53,7 +53,9 @@ enum class kTestingIndex : int {
 
   PKeyCountDownTest,
 
-  X509Tests
+  X509Tests,
+
+  RsaPrimeGenPerf
 
 };
 
@@ -648,6 +650,50 @@ int Testing_RSAExec(Dongle& rockey, Context_t* Context_, void* ExtendBuf) {
   }
 
   return error;
+}
+
+/*! 素数生成性能探测(RsaPrimeGenPerf, index 见 kTestingIndex):
+ *! 设备端 RSA2048 密钥生成需要找到两个 1024 位素数(Miller–Rabin 主搜索),
+ *! 以设备 GenerateRSA 的耗时作为该搜索代价的代理 —— 回答"在低性能 ukey 上
+ *! 做 1024 位 RM 是否可行(<1h)"。argv_[1]=循环次数(默认 1)。
+ *! 注意: 这是整机密钥生成(两素数+系数)耗时; 单素数估算约为其一半数量级,
+ *! 取决于候选命中率, 需结合真实实现精测。 */
+int Testing_RsaPrimeGenPerf(Dongle& rockey, Context_t* Context, void* /*ExtendBuf*/) {
+  int loops = (int)(Context->argv_[1] & 0xFFFF);
+  if (loops < 1) loops = 1;
+  if (loops > 64) loops = 64;
+
+  std::ignore = rockey.DeleteFile(SECRET_STORAGE_TYPE::kRSA, 100);
+  if (rockey.CreatePKEYFile(SECRET_STORAGE_TYPE::kRSA, 2048, 100) < 0) {
+    rlLOGE(TAG, "RsaPrimeGenPerf: CreatePKEYFile 100 error %d", rockey.GetLastError());
+    return -1;
+  }
+
+  uint8_t pubkey[256], prikey[256];
+  uint32_t modules = 0;
+  DWORD tick_all = 0;
+  for (int i = 0; i < loops; ++i) {
+    DWORD tick0 = 0, tick1 = 0;
+    rockey.GetTickCount(&tick0);
+    const int rc = rockey.GenerateRSA(100, &modules, pubkey, prikey);
+    rockey.GetTickCount(&tick1);
+    if (rc < 0) {
+      rlLOGE(TAG, "RsaPrimeGenPerf: GenerateRSA #%d error %d/%08x", i, rc, rockey.GetLastError());
+      return rc;
+    }
+    tick_all += tick1 - tick0;
+    rlLOGI(TAG, "RsaPrimeGenPerf: gen[%d/%d] %u ms(两个 1024 位素数搜索)", i + 1, loops,
+           static_cast<unsigned>(tick1 - tick0));
+  }
+
+  rlLOGI(TAG, "RsaPrimeGenPerf: total %u ms, avg %u ms/2048-bit-key (x%d)",
+         static_cast<unsigned>(tick_all), static_cast<unsigned>(tick_all / loops), loops);
+  const double hour_ms = 3600.0 * 1000.0;
+  const double per = static_cast<double>(tick_all) / loops;
+  rlLOGI(TAG, "RsaPrimeGenPerf: <= 1h? %s (单次 %.1f ms; 单 1024 位素数约 %.1f ms 数量级)",
+         per < hour_ms ? "YES" : "NO", per, per / 2.0);
+  std::ignore = modules;
+  return 0;
 }
 
 int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
@@ -2018,6 +2064,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(Ed25519Test);
   DONGLE_RUN_TESTING(PKeyCountDownTest);
   DONGLE_RUN_TESTING(X509Tests);
+  DONGLE_RUN_TESTING(RsaPrimeGenPerf);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
