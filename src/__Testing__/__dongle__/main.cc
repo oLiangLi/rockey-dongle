@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/x509.h>
 #include <base/base.h>
 #include "../__rsamr__/rsa_mr.h"
@@ -702,37 +702,129 @@ int Testing_RsaPrimeGenPerf(Dongle& rockey, Context_t* Context, void* /*ExtendBu
 /*! RsaPrimeMR(kTestingIndex=20): 自研 1024 位素数搜索可行性测试(设备内执行)。
  *! 注入两段 128B 随机数(设备 RandBytes)后, 用自研 Miller–Rabin(rsa_mr.h, 定长数组、
  *! 无堆/无 .rodata 表)以 +2 递增找回 p/q —— 直接测出 ukey 上"找素数"耗时。
- *! argv_[1]=MR 轮数(默认 8)。host/wasm 计时不具参考性, 以 ukey 内执行为准。 */
-int Testing_RsaPrimeMR(Dongle& rockey, Context_t* Context, void* /*ExtendBuf*/) {
+ *! argv_[1]=MR 轮数(默认 8)。host/wasm 计时不具参考性, 以 ukey 内执行为准。
+ *!
+ *! 设备侧无日志通道, 用 SetLEDState(kOff/kOn) 反馈状态(诊断协议):
+ *!   A) 进入测试项: 亮~120ms 灭(一次短闪)         —— 未闪=挂在分发前;
+ *!   B) 自检失败(M127 合/M67 素): LED 常亮死循环   —— MR 大数路径异常;
+ *!   C) p/q 搜索中: 每 64 probes 翻转一次 LED      —— 持续翻转=在推进;
+ *!                                                冻结 >~20-30s=卡在单次探测;
+ *!   D) p 找到: 长亮 ~400ms; q 找到: 长亮 ~400ms 后熄灭返回。 */
+#if defined(__RockeyARM__)
+static void RsaMR_Led(Dongle& rockey, bool on) {
+  rockey.SetLEDState(on ? LED_STATE::kOn : LED_STATE::kOff);
+}
+static void RsaMR_LedWait(Dongle& rockey, DWORD ms) {
+  DWORD t0 = 0, t = 0;
+  rockey.GetTickCount(&t0);
+  do {
+    rockey.GetTickCount(&t);
+  } while ((DWORD)(t - t0) < ms);
+}
+static void RsaMR_ProbeLed(long long probes, void* ctx) {
+  Dongle* d = static_cast<Dongle*>(ctx);
+  if (!d) return;
+  RsaMR_Led(*d, ((probes >> 6) & 1) != 0); /* 每 64 probes 翻转 */
+}
+#endif /* __RockeyARM__ */
+
+int Testing_RsaPrimeMR(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int rounds = (int)(Context->argv_[1] & 0xff);
   if (rounds < 1) rounds = 8;
   if (rounds > 16) rounds = 16;
 
-  uint8_t seed_p[128], seed_q[128];
-  if (rockey.RandBytes(seed_p, sizeof(seed_p)) < 0 ||
-      rockey.RandBytes(seed_q, sizeof(seed_q)) < 0) {
-    rlLOGE(TAG, "RsaPrimeMR: RandBytes seed error");
-    return -1;
+  /* MR 大数临时(prod/rem/bs)放进 ExtendBuf(≥1KB 辅助区, 非栈) ——
+   * 栈上只剩 findPrime/isPrimeMR 的 nm1/d/x 等, 全链 ≤2KB, 无需搬 SP。 */
+  rsa_mr::MRWork* w = reinterpret_cast<rsa_mr::MRWork*>(ExtendBuf);
+#if defined(__RockeyARM__)
+  RsaMR_Led(rockey, true);
+  RsaMR_LedWait(rockey, 120);
+  RsaMR_Led(rockey, false);
+  RsaMR_LedWait(rockey, 120);
+#else
+  rlLOGI(TAG, "RsaPrimeMR: enter rounds=%d w=%p sizeof(MRWork)=%zu", rounds,
+         static_cast<void*>(w), sizeof(rsa_mr::MRWork));
+#endif
+
+  /* 快速自检: 2^127-1 素、2^67-1 合 —— 验证设备上大数路径 MR 本身工作 */
+  {
+    rsa_mr::BN m127, m67;
+    m127.clear();
+    m127.v[0] = 0xFFFFFFFFu; m127.v[1] = 0xFFFFFFFFu;
+    m127.v[2] = 0xFFFFFFFFu; m127.v[3] = 0x7FFFFFFFu; m127.n = 4; /* 2^127-1 */
+    m67.clear();
+    m67.v[0] = 0xFFFFFFFFu; m67.v[1] = 0xFFFFFFFFu;
+    m67.v[2] = 0x7FFFFFFFu; m67.n = 3;                           /* 2^67-1 */
+    const bool ok_m127 = rsa_mr::isPrimeMRW(m127, 2, *w);
+    const bool ok_m67 = !rsa_mr::isPrimeMRW(m67, 2, *w);
+#if defined(__RockeyARM__)
+    if (!ok_m127 || !ok_m67) { /* 自检失败 → LED 常亮, 便于区分 */
+      RsaMR_Led(rockey, true);
+      for (;;) {
+      }
+    }
+#else
+    rlLOGI(TAG, "RsaPrimeMR: sanity M127=%d M67=%d", ok_m127 ? 1 : 0, ok_m67 ? 1 : 0);
+    if (!ok_m127 || !ok_m67) return -2;
+#endif
   }
 
-  rsa_mr::BN p, q;
+  uint8_t seed[128];
+  rsa_mr::BN buf; /* p、q 顺序复用同一缓冲(各自找到后立刻取 top 记录) */
   long long probe_p = 0, probe_q = 0;
   DWORD tp0 = 0, tp1 = 0, tq0 = 0, tq1 = 0;
+  uint32_t p_hi[2] = {0, 0}, q_hi[2] = {0, 0};
 
   rockey.GetTickCount(&tp0);
-  const bool ok_p = rsa_mr::findPrime(p, seed_p, rounds, probe_p);
+  const bool ok_p =
+      rockey.RandBytes(seed, sizeof(seed)) < 0
+          ? false
+          : rsa_mr::findPrimeW(
+                buf, seed, rounds, probe_p, *w,
+#if defined(__RockeyARM__)
+                RsaMR_ProbeLed, &rockey
+#else
+                nullptr, nullptr
+#endif
+            );
   rockey.GetTickCount(&tp1);
+  p_hi[1] = buf.v[buf.n - 1];
+  p_hi[0] = buf.v[buf.n > 1 ? buf.n - 2 : 0];
+#if defined(__RockeyARM__)
+  RsaMR_Led(rockey, true);
+  RsaMR_LedWait(rockey, 400);
+  RsaMR_Led(rockey, false);
+  RsaMR_LedWait(rockey, 150);
+#endif
 
   rockey.GetTickCount(&tq0);
-  const bool ok_q = rsa_mr::findPrime(q, seed_q, rounds, probe_q);
+  const bool ok_q =
+      rockey.RandBytes(seed, sizeof(seed)) < 0
+          ? false
+          : rsa_mr::findPrimeW(
+                buf, seed, rounds, probe_q, *w,
+#if defined(__RockeyARM__)
+                RsaMR_ProbeLed, &rockey
+#else
+                nullptr, nullptr
+#endif
+            );
   rockey.GetTickCount(&tq1);
+  q_hi[1] = buf.v[buf.n - 1];
+  q_hi[0] = buf.v[buf.n > 1 ? buf.n - 2 : 0];
+#if defined(__RockeyARM__)
+  RsaMR_Led(rockey, true);
+  RsaMR_LedWait(rockey, 400);
+  RsaMR_Led(rockey, false);
+  RsaMR_LedWait(rockey, 150);
+#endif
 
   rlLOGI(TAG, "RsaPrimeMR: p ok=%d probes=%lld ms=%u top=%08x%08x", ok_p ? 1 : 0,
          static_cast<long long>(probe_p), static_cast<unsigned>(tp1 - tp0),
-         static_cast<unsigned>(p.v[p.n > 1 ? p.n - 2 : 0]), static_cast<unsigned>(p.v[p.n - 1]));
+         static_cast<unsigned>(p_hi[0]), static_cast<unsigned>(p_hi[1]));
   rlLOGI(TAG, "RsaPrimeMR: q ok=%d probes=%lld ms=%u top=%08x%08x", ok_q ? 1 : 0,
          static_cast<long long>(probe_q), static_cast<unsigned>(tq1 - tq0),
-         static_cast<unsigned>(q.v[q.n > 1 ? q.n - 2 : 0]), static_cast<unsigned>(q.v[q.n - 1]));
+         static_cast<unsigned>(q_hi[0]), static_cast<unsigned>(q_hi[1]));
 
   return (ok_p && ok_q) ? 0 : -1;
 }
@@ -2142,6 +2234,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
 rLANG_DECLARE_END
 
+#if !defined(__RockeyARM__)
 int main(int argc, char* argv[]) {
   using namespace machine;
   using namespace machine::dongle;
@@ -2184,3 +2277,4 @@ int main(int argc, char* argv[]) {
 
   return Start(Context, ExtendBuf);
 }
+#endif

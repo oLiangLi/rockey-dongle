@@ -1,9 +1,10 @@
-/*! TRNG 失败注入自测(host): 用 Dongle 子类覆写 HwARandBytes 制造失败/成功两态,
+﻿/*! TRNG 失败注入自测(host): 用 Dongle 子类覆写 HwARandBytes 制造失败/成功两态,
  *! 验证共享 DRBG(Interface/TRNG.cc Dongle::RandBytes):
  *!   1) HwARandBytes 失败 → RandBytes 必须返回 -EFAULT(M-12/H-01 修复面: 调用方须检查);
  *!   2) 成功路径 → RandBytes 返回 0(多尺寸)。
  *! 不触碰真实设备/镜像; 属宿主单元测试。 */
 #include <Interface/dongle.h>
+#include <initializer_list>
 #include <cstdio>
 #include <cstring>
 
