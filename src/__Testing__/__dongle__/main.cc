@@ -1,6 +1,7 @@
 #include <Interface/dongle.h>
 #include <Interface/x509.h>
 #include <base/base.h>
+#include "../__rsamr__/rsa_mr.h"
 
 #if !defined(__RockeyARM__) && !defined(__EMULATOR__)
 #include <signal.h>
@@ -55,7 +56,9 @@ enum class kTestingIndex : int {
 
   X509Tests,
 
-  RsaPrimeGenPerf
+  RsaPrimeGenPerf,
+
+  RsaPrimeMR
 
 };
 
@@ -694,6 +697,44 @@ int Testing_RsaPrimeGenPerf(Dongle& rockey, Context_t* Context, void* /*ExtendBu
          per < hour_ms ? "YES" : "NO", per, per / 2.0);
   std::ignore = modules;
   return 0;
+}
+
+/*! RsaPrimeMR(kTestingIndex=20): 自研 1024 位素数搜索可行性测试(设备内执行)。
+ *! 注入两段 128B 随机数(设备 RandBytes)后, 用自研 Miller–Rabin(rsa_mr.h, 定长数组、
+ *! 无堆/无 .rodata 表)以 +2 递增找回 p/q —— 直接测出 ukey 上"找素数"耗时。
+ *! argv_[1]=MR 轮数(默认 8)。host/wasm 计时不具参考性, 以 ukey 内执行为准。 */
+int Testing_RsaPrimeMR(Dongle& rockey, Context_t* Context, void* /*ExtendBuf*/) {
+  int rounds = (int)(Context->argv_[1] & 0xff);
+  if (rounds < 1) rounds = 8;
+  if (rounds > 16) rounds = 16;
+
+  uint8_t seed_p[128], seed_q[128];
+  if (rockey.RandBytes(seed_p, sizeof(seed_p)) < 0 ||
+      rockey.RandBytes(seed_q, sizeof(seed_q)) < 0) {
+    rlLOGE(TAG, "RsaPrimeMR: RandBytes seed error");
+    return -1;
+  }
+
+  rsa_mr::BN p, q;
+  long long probe_p = 0, probe_q = 0;
+  DWORD tp0 = 0, tp1 = 0, tq0 = 0, tq1 = 0;
+
+  rockey.GetTickCount(&tp0);
+  const bool ok_p = rsa_mr::findPrime(p, seed_p, rounds, probe_p);
+  rockey.GetTickCount(&tp1);
+
+  rockey.GetTickCount(&tq0);
+  const bool ok_q = rsa_mr::findPrime(q, seed_q, rounds, probe_q);
+  rockey.GetTickCount(&tq1);
+
+  rlLOGI(TAG, "RsaPrimeMR: p ok=%d probes=%lld ms=%u top=%08x%08x", ok_p ? 1 : 0,
+         static_cast<long long>(probe_p), static_cast<unsigned>(tp1 - tp0),
+         static_cast<unsigned>(p.v[p.n > 1 ? p.n - 2 : 0]), static_cast<unsigned>(p.v[p.n - 1]));
+  rlLOGI(TAG, "RsaPrimeMR: q ok=%d probes=%lld ms=%u top=%08x%08x", ok_q ? 1 : 0,
+         static_cast<long long>(probe_q), static_cast<unsigned>(tq1 - tq0),
+         static_cast<unsigned>(q.v[q.n > 1 ? q.n - 2 : 0]), static_cast<unsigned>(q.v[q.n - 1]));
+
+  return (ok_p && ok_q) ? 0 : -1;
 }
 
 int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
@@ -2065,6 +2106,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(PKeyCountDownTest);
   DONGLE_RUN_TESTING(X509Tests);
   DONGLE_RUN_TESTING(RsaPrimeGenPerf);
+  DONGLE_RUN_TESTING(RsaPrimeMR);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
