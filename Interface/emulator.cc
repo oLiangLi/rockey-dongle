@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <openssl/asn1.h>
 #include <openssl/asn1t.h>
 #include <vector>
@@ -518,6 +518,7 @@ class DongleHandle {
     size_t size = header.size_;
     current_file_size_ -= FileStorageSize(size);
     secret_files_.erase(iter);
+    key_licence_.erase({(int)type, (int)index});
     return 0;
   }
 
@@ -590,6 +591,33 @@ class DongleHandle {
 
   int SetPermission(PERMISSION perm) {
     permission_ = perm;
+    return 0;
+  }
+
+  /*! 私钥文件 licence 使用计数(对齐真实固件行为: 每次私钥操作递减, 减到 0 拒绝)。
+   *! count: -1(0xFFFFFFFF)=不限; >=0 每次私钥操作递减; 0 后拒绝该 key 私钥操作。
+   *! decOnRAM/reset 字段仅为语义记录(真实固件按 decOnRAM 在 FLASH/RAM 递减)——
+   *! 模拟器统一在**内存表**(打开会话内)递减, **不做**跨 Export()/Open() 持久化:
+   *! 导出的 storage 文件是可备份的(设计使然), 若把计数写回文件存储等于把"已耗次数"也备份,
+   *! 与备份语义冲突, 这正是模拟器此前不实现此部分的原因(用户确认)。 */
+  struct KeyLicence {
+    int32_t count;
+    uint8_t permission;
+    uint8_t decOnRAM;
+    uint8_t reset;
+  };
+  std::map<std::pair<int, int>, KeyLicence> key_licence_;
+  int KeyLicenceUse(SECRET_STORAGE_TYPE type, uint16_t index) {
+    auto it = key_licence_.find({(int)type, (int)index});
+    if (it == key_licence_.end())
+      return 0; /* 无 licence 记录 ⇒ 不限 */
+    KeyLicence& lc = it->second;
+    if (0 == lc.count) {
+      rlLOGE(rLANG_DECLARE_MAGIC_Xs("LIC"), "KeyLicence deny type=%d id=%d (count=0)", (int)type, (int)index);
+      return -EPERM;
+    }
+    if (lc.count > 0)
+      --lc.count;
     return 0;
   }
 
@@ -839,7 +867,18 @@ int Dongle::CreatePKEYFile(SECRET_STORAGE_TYPE type_, int bits, int id, const PK
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
-  return DONGLE_CHECK(thiz->CreateSecretFile(type_, id, size));
+  int result = thiz->CreateSecretFile(type_, id, size);
+  if (0 == result) {
+    DongleHandle::KeyLicence lc;
+    lc.count = licence.count_limit_;
+    lc.permission = static_cast<uint8_t>(licence.permission_);
+    lc.decOnRAM = licence.global_decrease_ ? 0 : 1; /* 与 Dongle_CreateFile attr.m_Lic 一致 */
+    lc.reset = licence.logout_force_ ? 1 : 0;
+    thiz->key_licence_[{(int)type_, (int)id}] = lc;
+    rlLOGI(rLANG_DECLARE_MAGIC_Xs("LIC"), "CreatePKEYFile type=%d id=%d count=%d perm=%u decRAM=%u", (int)type_, (int)id,
+           lc.count, lc.permission, lc.decOnRAM);
+  }
+  return DONGLE_CHECK(result);
 }
 
 int Dongle::GenerateRSA(int id, uint32_t* modulus, uint8_t public_[], uint8_t* private_) {
@@ -1032,6 +1071,8 @@ int Dongle::RSAPrivate(int id,
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  if (0 != thiz->KeyLicenceUse(SECRET_STORAGE_TYPE::kRSA, (uint16_t)id))
+    return last_error_ = -EPERM;
   auto callback = [&](const void* p, size_t size) -> int {
     if (size != sizeof(DongleHandle::RSA2048File))
       return last_error_ = -EFAULT;
@@ -1183,6 +1224,8 @@ int Dongle::P256Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[3
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  if (0 != thiz->KeyLicenceUse(SECRET_STORAGE_TYPE::kP256, (uint16_t)id))
+    return last_error_ = -EPERM;
   auto callback = [&](const void* p, size_t size) -> int {
     if (size != 32)
       return last_error_ = -EFAULT;
@@ -1295,6 +1338,8 @@ int Dongle::SM2Sign(int id, const uint8_t hash_[32], uint8_t R[32], uint8_t S[32
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  if (0 != thiz->KeyLicenceUse(SECRET_STORAGE_TYPE::kSM2, (uint16_t)id))
+    return last_error_ = -EPERM;
   auto callback = [&](const void* p, size_t size) -> int {
     if (size != 32)
       return last_error_ = -EFAULT;
@@ -1460,6 +1505,8 @@ int Dongle::SM2Decrypt(int id, const uint8_t cipher[], size_t size_cipher, uint8
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
+  if (0 != thiz->KeyLicenceUse(SECRET_STORAGE_TYPE::kSM2, (uint16_t)id))
+    return last_error_ = -EPERM;
   auto callback = [&](const void* p, size_t size) -> int {
     if (size != 32)
       return last_error_ = -EFAULT;

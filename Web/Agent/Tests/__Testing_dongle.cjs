@@ -649,6 +649,142 @@ async function EmuMkeyMaster({ kIdx = [0, 1, 2, 3], a0Idx = 4, init = true } = {
   };
 }
 
+/*! ================= SESSION_KEY(会话世界密钥)复现 (全新模拟器, 不触碰 mkey/* 真机) =================
+ * 参考 ai-doc/session-key-flow-2026-09-09.md 与 Interface/master.cc:
+ *   签发者(持有自身 master → 可派生 World-ROOT-Prikey=ComputeSecretBytes(·, type=42))
+ *   为客户端签发会话: 临时 X25519 × 客户端 Master(-1).X25519 的 DH 种子即会话 Ed25519 种子;
+ *   root Ed25519 私钥(派生)对 180B 会话头签名; 头(含 mac16)用共享种子 ChaCha20-Poly1305 封装成链。
+ *   客户端用自己的 master 重算共享并解链, 头+混淆会话私钥落 0x100+Type, 再跑 SESSION_KEY_SIGNATURE。
+ * 本编排(emu[issuer]=签发者, emu[client]=客户端):
+ *   MasterExport(客户端 CV25519) → EXPORT_SESSION_KEY → IMPORT_SESSION_KEY →
+ *   SESSION_KEY_SIGNATURE; 外部核对: ① MASTER_SIGNATURE(type=42) 复算签发者根公钥 == 会话头 RootCA;
+ *   ② 根 Ed25519 验签(头 0..116); ③ 会话 Ed25519 验签(SHA512(INPUT64))。
+ */
+function Ed25519PubKey(raw32) {
+  if (raw32.length !== 32) throw Error(`Ed25519 raw pub len ${raw32.length}`);
+  const spki = Buffer.concat([Buffer.from("302a300506032b6570032100", "hex"), raw32]);
+  return crypto.createPublicKey({ key: spki, format: "der", type: "spki" });
+}
+async function EmuSkeyFlow({ issuer = 0, client = 1 } = {}) {
+  const dirTests = path.join(__dirname, "Tests");
+  const read = (f) => fs.readFileSync(path.join(dirTests, f), "utf8");
+  const initSrc = read("Initialize.dongle");
+  const dashReady = (i) => EmuJsDashboard(i).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0);
+  for (const i of [issuer, client]) if (!dashReady(i)) await EmuJsRun(i, initSrc, true);
+
+  /* ① 客户端主身份(发给签发者的 CV25519 公钥) */
+  const meSrc = read("MasterExport.dongle");
+  const meR = await EmuJsRun(client, meSrc, true, {});
+  const clientCv = Buffer.from(meR.outputs.rLANG__X25519_Pubkey, "hex");
+  if (clientCv.length !== 32) throw Error(`skey: client MasterExport missing CV25519 pub`);
+  console.log(`skey: client(emu[${client}]) Master(-1).CV25519=${clientCv.toString("hex").slice(0, 16)}...`);
+
+  /* ② 签发(EXPORT_SESSION_KEY): 参数对齐 A0/T0 记录(Message='Hello world!'+零填充, Type=1,
+   * Category=pub 0xC35880AF, NB/NA=2282/2465) */
+  const message32 = Buffer.alloc(32);
+  Buffer.from("Hello world!", "ascii").copy(message32, 0);
+  const exSrc = read("EXPORT_SESSION_KEY.dongle");
+  const exOv = {
+    rLANG_INPUT_CV25519_Pubkey: clientCv,
+    rLANG_INPUT_SESSION_Type: 1,
+    rLANG_INPUT_Category: 0xc35880af,
+    rLANG_INPUT_NotBefore: 2282,
+    rLANG_INPUT_NotAfter: 2465,
+    rLANG_INPUT_Message: message32,
+  };
+  const ex = await EmuJsRun(issuer, exSrc, true, exOv);
+  const chain = Buffer.from(ex.outputs.rLANG_OUTPUT_ENCRYPT_CHAIN || "", "hex");
+  const ephemeral = Buffer.from(ex.outputs.rLANG_OUTPUT_CV25519_Pubkey || "", "hex");
+  if (chain.length !== 196 || ephemeral.length !== 32)
+    throw Error(`skey: EXPORT outputs len chain=${chain.length} eph=${ephemeral.length}`);
+  console.log(
+    `skey: issuer(emu[${issuer}]) EXPORT OK chain196=${chain.toString("hex").slice(0, 12)}... eph=${ephemeral.toString("hex").slice(0, 12)}...`,
+  );
+
+  /* ③ 客户端导入(IMPORT_SESSION_KEY) → 输出会话头(RootCA/Message/SESSION_Pubkey/…/ROOT_Signature) */
+  const imSrc = read("IMPORT_SESSION_KEY.dongle");
+  const im = await EmuJsRun(client, imSrc, true, {
+    rLANG_INPUT_ENCRYPT_CHAIN: chain,
+    rLANG_INPUT_CV25519_Pubkey: ephemeral,
+  });
+  const head = {
+    root: Buffer.from(im.outputs.rLANG_ROOT_Pubkey || "", "hex"),
+    msg: Buffer.from(im.outputs.rLANG_INPUT_Message || "", "hex"),
+    sess: Buffer.from(im.outputs.rLANG_SESSION_Pubkey || "", "hex"),
+    type: im.outputs.rLANG_INPUT_SESSION_Type,
+    cat: im.outputs.rLANG_INPUT_Category,
+    nb: im.outputs.rLANG_INPUT_NotBefore,
+    na: im.outputs.rLANG_INPUT_NotAfter,
+    sig: Buffer.from(im.outputs.rLANG_ROOT_Signature || "", "hex"),
+  };
+  if (head.root.length !== 32 || head.sess.length !== 32 || head.sig.length !== 64)
+    throw Error(`skey: IMPORT output head invalid (root=${head.root.length}, sess=${head.sess.length}, sig=${head.sig.length})`);
+  console.log(
+    `skey: client(emu[${client}]) IMPORT OK root=${head.root.toString("hex").slice(0, 16)}... sess=${head.sess.toString("hex").slice(0, 16)}...` +
+      ` type=${head.type} cat=0x${(head.cat >>> 0).toString(16)} nb=${head.nb} na=${head.na}`,
+  );
+
+  /* ④ 会话签名(SESSION_KEY_SIGNATURE, 客户端还原混淆私钥后签名) */
+  const sigSrc = read("SESSION_KEY_SIGNATURE.dongle");
+  const message64 = Buffer.concat([message32, Buffer.alloc(32)]);
+  const sg = await EmuJsRun(client, sigSrc, true, {
+    rLANG_INPUT_Message: message64,
+    rLANG_INPUT_Type: 1,
+  });
+  const sgRoot = Buffer.from(sg.outputs.rLANG_ROOT_Pubkey || "", "hex");
+  const sgSess = Buffer.from(sg.outputs.rLANG_SESSION_Pubkey || "", "hex");
+  const sgSig = Buffer.from(sg.outputs.rLANG_SESSION_Signature || "", "hex");
+  console.log(
+    `skey: client(emu[${client}]) SESSION_KEY_SIGNATURE OK sess-sig=${sgSig.length === 64 ? sgSig.toString("hex").slice(0, 12) : "BAD"}...`,
+  );
+
+  /* ⑤ 签发者根公钥外部复算: MASTER_SIGNATURE(type=42, SEEDS=0) 应等于会话头 RootCA */
+  let rootExt = null;
+  let rootMatch = null;
+  try {
+    const msSrc = read("MASTER_SIGNATURE.dongle");
+    const zeros64 = Buffer.alloc(64);
+    const ms = await EmuJsRun(issuer, msSrc, true, {
+      rLANG_INPUT: zeros64,
+      rLANG_SEEDS: zeros64,
+      rLANG_TYPES: 42,
+    });
+    rootExt = Buffer.from(ms.outputs.rLANG_ED25519_Pubkey || "", "hex");
+    rootMatch = rootExt.length === 32 && Buffer.compare(rootExt, head.root) === 0;
+  } catch (err) {
+    console.log(`skey: root-external probe skipped: ${err.message}`);
+  }
+  console.log(
+    `skey: root external(type42)=${rootExt ? rootExt.toString("hex").slice(0, 16) : "n/a"}... head.RootCA match=${rootMatch === null ? "n/a" : rootMatch}`,
+  );
+
+  /* ⑥ 验签: ① 根签名覆盖头 0..116; ② 会话签名覆盖 SHA512(INPUT64)
+   * 头 0..116 = ROOT pub32|Message32|SESSION pub32|worldmagic4|type4|cat4|nb4|na4 */
+  const head116 = Buffer.concat([
+    head.root, head.msg, head.sess,
+    (() => {
+      const b = Buffer.alloc(20);
+      b.writeUInt32LE(0xc8c04e1f, 0);
+      b.writeInt32LE(head.type, 4);
+      b.writeUInt32LE(head.cat >>> 0, 8);
+      b.writeInt32LE(head.nb, 12);
+      b.writeInt32LE(head.na, 16);
+      return b;
+    })(),
+  ]).subarray(0, 116);
+  const verifyRoot = crypto.verify(null, head116, Ed25519PubKey(head.root), head.sig);
+  const verifySess = crypto.verify(
+    null,
+    sha512(message64),
+    Ed25519PubKey(sgSess.length === 32 ? sgSess : head.sess),
+    sgSig,
+  );
+  console.log(`skey: verify root-signature=${verifyRoot} session-signature=${verifySess}`);
+  const ok = rootMatch !== false && verifyRoot && verifySess && head.type === 1 && head.nb === 2282 && head.na === 2465;
+  console.log(`skey: done ok=${ok}`);
+  return { head, chain: chain.toString("hex"), ephemeral: ephemeral.toString("hex"), rootExt, rootMatch, verifyRoot, verifySess, ok };
+}
+
 /*! 构造 EnTrust 输入条目(80B = hid12|kid3|zero|X||Y64, 受托者用其 SM2ECDSA(签名)公钥;
  *! 参考 jsLibrary admin 签名的 SM2Decrypt(1, ...) —— 密文按受托者 SM2ECDSA pub 加密 */
 function BuildEnTrustEntry(trusteeIdx) {
@@ -1056,6 +1192,150 @@ async function RunScript(source, hid, admin) {
     outputs,
     stdout_tail: r.stdout.slice(line0.length).trim(),
   };
+}
+
+// ---------------------------------------------------------------- badmin(真机 Admin-1000 建置与 key4 licence 计数)
+/*! dongle_entry --listfile:<type>(宿主 Dongle_ListFile 封装, 见 src/app/main.cc & Interface/dongle.cc)
+ *! 私钥文件列表条目 16B: FILEID u16|Reserve u16|m_Type u16|m_Size u16|m_Count i32|priv u8|decOnRAM u8|reset u8
+ *! m_Count: -1(0xFFFFFFFF)=不限; 每次私钥调用递减, 到 0 禁用 —— 真实固件实现; 文件模拟器未实现递减。 */
+async function RealListKeyFiles(hid, type = 3) {
+  const r = await spawnExe([`--listfile:${type}`, hid, "-"], null);
+  if (r instanceof Error) throw r;
+  const buf = Buffer.from(r.stdout.split(/\r?\n/)[0], "base64");
+  const out = [];
+  for (let o = 0; o + 16 <= buf.length; o += 16) {
+    out.push({
+      file: buf.readUInt16LE(o),
+      type: buf.readUInt16LE(o + 4),
+      size: buf.readUInt16LE(o + 6),
+      count: buf.readInt32LE(o + 8),
+      priv: buf[o + 12],
+      decOnRAM: buf[o + 13],
+      reset: buf[o + 14],
+    });
+  }
+  return out;
+}
+async function RawDashboard(hid) {
+  const r = await spawnExe(["--dashboard", hid, "-"], null);
+  if (r instanceof Error) throw r;
+  const buf = Buffer.from(r.stdout.split(/\r?\n/)[0], "base64");
+  if (buf.length !== 8192 + 32 || Buffer.compare(sha256(buf.subarray(0, 8192)), buf.subarray(8192)) !== 0)
+    throw Error(`dashboard ${hid}: invalid payload`);
+  return buf.subarray(0, 8192);
+}
+/*! 在真机执行预构建 1024B 帧(管理员会话), 返回 {inout, tail} */
+async function RealExecRaw(hid, frame) {
+  const args = ["-", hid, "-"];
+  const r = await spawnExe(args, Buffer.from(frame).toString("base64"));
+  if (r instanceof Error) throw r;
+  const line0 = r.stdout.split(/\r?\n/)[0];
+  const buf = Buffer.from(line0, "base64");
+  if (buf.length !== 1024 + 32) throw Error(`realexecraw: invalid output ${buf.length}`);
+  return { inout: buf.subarray(0, 1024), tail: r.stdout.slice(line0.length).trim() };
+}
+/*! Admin-1000 探测: 读 key1/key2/key4 licence → 执行预构建 Bootstrap-* 帧(重置世界, 不 lock)
+ *! → 再读(期望 key4 count <= 1000 且 < 1000: 建置过程消耗若干) → 跑 N 次 SM2Sign(4) → 再读递减 */
+async function Admin1000Probe({ hid, burn = 3, bootstrap = "Bootstrap-Admin-1000.dongle.program" }) {
+  const bootPath = path.join(ROOT, "mkey/signed-script/Bootstrap", bootstrap);
+  if (!fs.existsSync(bootPath)) throw Error(`no ${bootPath}`);
+  const bootFrame = Buffer.from(JSON.parse(fs.readFileSync(bootPath, "utf8")).code, "base64");
+  const show = async (tag) => {
+    const list = await RealListKeyFiles(hid, 3);
+    const pick = (id) => list.find((x) => x.file === id);
+    const fmt = (id) => {
+      const v = pick(id);
+      return v ? `key${id}=${v.count}${v.count === -1 ? "(不限)" : ""}` : `key${id}=?`;
+    };
+    const f4 = pick(4);
+    console.log(
+      `badmin: ${tag} ${fmt(1)} ${fmt(2)} ${fmt(4)}` +
+        (f4 ? ` (key4 priv=${f4.priv}, flash减=${f4.decOnRAM === 0})` : ""),
+    );
+    return list;
+  };
+  const pre = await show("PRE");
+  console.log(`badmin: exec ${bootstrap} on ${hid} (world 重置, 不 lock) ...`);
+  const r0 = await RealExecRaw(hid, bootFrame);
+  console.log(`badmin: bootstrap exec out-head=${r0.inout.subarray(0, 8).toString("hex")} tail=${(r0.tail || "").slice(0, 120)}`);
+  const post = await show("POST-build");
+  const dash = await RawDashboard(hid);
+  const burnSrc = "public 96;\n@ 0 [64] : rLANG_SIGNATURE;\nMemset(256, 0, 64);\nSM2Sign(4, 256, 0);\n";
+  const program = await ParseDongle(burnSrc);
+  const frame = await FrameNormal(program, dash);
+  for (let i = 1; i <= burn; ++i) {
+    try {
+      const r = await RealExecRaw(hid, frame);
+      console.log(`badmin: burn[${i}] SM2Sign(4) OK tail=${(r.tail || "").slice(0, 60)}`);
+    } catch (err) {
+      console.log(`badmin: burn[${i}] SM2Sign(4) rejected: ${err.message}`);
+      break;
+    }
+  }
+  const postburn = await show("POST-burn");
+  return { pre, post, postburn };
+}
+
+/*! 耗尽阈值法: 重新建 Admin-1000 世界后, 逐次执行 SM2Sign(kFileSM2ECIES=4, …)
+ *! 直到首次失败; 成功次数即建置后 key4 剩余使用次数(期望 < 1000: 建置过程已消耗若干)。
+ *! 耗尽后 key4 被禁用 —— 不 lock; 后续可重跑 Admin-1000/INIT 建世界恢复。 */
+async function BurnToZero({ hid }) {
+  const bootPath = path.join(ROOT, "mkey/signed-script/Bootstrap", "Bootstrap-Admin-1000.dongle.program");
+  const bootFrame = Buffer.from(JSON.parse(fs.readFileSync(bootPath, "utf8")).code, "base64");
+  await RealExecRaw(hid, bootFrame);
+  console.log(`badminburn: Admin-1000 world rebuilt on ${hid}`);
+  const oneSrc =
+    "public 96;\n@ 0 [64] : rLANG_SIGNATURE;\nMemset(256, 0, 64);\nSM2Sign(4, 256, 0);\n";
+  const program = await ParseDongle(oneSrc);
+  const dash = await RawDashboard(hid);
+  const frame = await FrameNormal(program, dash);
+  let ok = 0;
+  for (let i = 1; i <= 2000; ++i) {
+    try {
+      await RealExecRaw(hid, frame);
+      ++ok;
+      if (ok % 100 === 0) console.log(`badminburn: ${ok} signs OK ...`);
+    } catch (err) {
+      const after = await RealListKeyFiles(hid, 3).catch(() => []);
+      const f4 = after.find((x) => x.file === 4);
+      console.log(
+        `badminburn: FAILED at sign#${i} (after ${ok} successes): ${String(err.message).slice(0, 120)}`,
+      );
+      console.log(
+        `badminburn: key4 remaining after Admin-1000 build = ${ok} (expect < 1000; 建置消耗 = 1000 - ${ok} if 目标恰为 1000); post list key4 count=${f4 ? f4.count : "?"}`,
+      );
+      return { ok, firstFailure: i };
+    }
+  }
+  throw Error(`badminburn: no failure within 2000 signs (unexpected)`);
+}
+
+/*! 进程内 JS 模拟器 licence 递减/耗尽验证: 用 bootstrap 脚本创建 ECIES key4 并设 licence 次数
+ *! CreateSM2File(kFileSM2ECIES=4, perm=2, limit, global=1), 再逐次 SM2Sign(4) 直到失败 ——
+ *! 期望成功数 == limit(建议小值如 10: 快且少写存储; 真实固件同路径每次私钥操作递减)。 */
+async function EmuAdminBurn({ idx = 0, cap = 3000 } = {}) {
+  const bootPath = path.join(ROOT, "mkey/signed-script/Bootstrap", "Bootstrap-Admin-1000.dongle.program");
+  const bootFrame = Buffer.from(JSON.parse(fs.readFileSync(bootPath, "utf8")).code, "base64");
+  const info = EmuJsInfo(idx);
+  console.log(`emuadmin: emu[${idx}] ${info.id} exec Bootstrap-Admin-1000 (world 重置) ...`);
+  await EmuJsExec(idx, bootFrame);
+  console.log(`emuadmin: bootstrap OK`);
+  const oneSrc =
+    "public 96;\n@ 0 [64] : rLANG_SIGNATURE;\nMemset(256, 0, 64);\nif(0 != SM2Sign(4, 256, 0)) Exit(7);\n";
+  const oneProgram = await ParseDongle(oneSrc);
+  let ok = 0;
+  for (let i = 1; i <= cap; ++i) {
+    try {
+      const frame = await FrameNormal(oneProgram, EmuJsDashboard(idx));
+      await EmuJsExec(idx, frame);
+      ++ok;
+    } catch (err) {
+      console.log(`emuadmin: FAILED at sign#${i} (after ${ok} successes): ${String(err.message).slice(0, 120)}`);
+      console.log(`emuadmin: emulator key4 remaining after Admin-1000 build = ${ok} (期望 ≈999)`);
+      return { ok, firstFailure: i };
+    }
+  }
+  throw Error(`emuadmin: no failure within ${cap} signs (计数未递减?)`);
 }
 
 // ---------------------------------------------------------------- randtest(真机随机数质量)
@@ -1795,6 +2075,14 @@ async function main() {
     }
     return 0;
   }
+  if (cmd === "skey") {
+    /* SESSION_KEY 会话链复现(全新模拟器, mkey/* 真机非测试): skey [issuerIdx] [clientIdx]
+     * 默认 emu0=签发者(root type42), emu1=客户端; 校验根/会话签名与字段格式 */
+    const issuer = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const client = argv[2] !== undefined ? parseInt(argv[2], 10) : 1;
+    const r = await EmuSkeyFlow({ issuer, client });
+    return r.ok ? 0 : 1;
+  }
   if (cmd === "mkey") {
     /* 复现 MASTER.SECRET 构建: 4 个保管者模拟器 K0..K3 跑 EXCHANGE, A0(emu[4]) 导入;
      * mkey [kStart] — 保管者从 emu[kStart..kStart+3] 起, A0 = kStart+4;
@@ -1816,6 +2104,33 @@ async function main() {
     console.log(`xchg: done, b_x25519=${r.bX25519.slice(0, 8)}`);
     return 0;
   }
+  if (cmd === "badmin") {
+    /* 真机 Admin-1000 建置 + key4(SM2ECIES) 使用计数观测(破坏性建世界, 不 lock):
+     * badmin [hid] [burn]; BADMIN_BOOT=INIT-0x10000 可改用其它 Bootstrap 程序 */
+    const list = await List();
+    const hid = argv[1] || (process.env.RKEY_HID || list[0]?.id);
+    if (!hid) throw Error("no dongle");
+    const burn = argv[2] !== undefined ? parseInt(argv[2], 10) : 3;
+    const boot = process.env.BADMIN_BOOT || "Bootstrap-Admin-1000.dongle.program";
+    const r = await Admin1000Probe({ hid, burn, bootstrap: boot });
+    void r;
+    return 0;
+  }
+  if (cmd === "badminburn") {
+    /* 耗尽阈值: badminburn [hid] — 重建 Admin-1000 世界后逐次 SM2Sign(4) 直到失败,
+     * 成功数 = key4 建置后剩余次数(期望 < 1000); 消耗后不 lock, 可重跑建置恢复 */
+    const list = await List();
+    const hid = argv[1] || (process.env.RKEY_HID || list[0]?.id);
+    if (!hid) throw Error("no dongle");
+    const r = await BurnToZero({ hid });
+    return r.ok > 0 ? 0 : 1;
+  }
+  if (cmd === "emuadmin") {
+    /* 进程内模拟器 Admin-1000 耗尽验证: emuadmin [idx] — 期望成功 ≈999(licence 递减) */
+    const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const r = await EmuAdminBurn({ idx });
+    return r.ok > 0 ? 0 : 1;
+  }
   if (cmd === "realadmin" || cmd === "reallimit") {
     /* 混合真机: 真机 EnTrust 给模拟器受托者后执行 ADMIN/LIMIT 帧
      * realadmin|reallimit <file.dongle> [hid] [trusteeIdx]; RKEY_TAMPER=1 负例 */
@@ -1834,7 +2149,7 @@ async function main() {
     return r.verify && !tamper ? 0 : 1;
   }
   console.log(
-    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|mkey [kStart]|realadmin|reallimit <file> [hid] [trusteeIdx]|collect <out> [count]|nistreport <bin> [html]`,
+    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|mkey [kStart]|skey [issuerIdx] [clientIdx]|badmin [hid] [burn]|badminburn [hid]|emuadmin [idx]|realadmin|reallimit <file> [hid] [trusteeIdx]|collect <out> [count]|nistreport <bin> [html]`,
   );
   return 2;
 }

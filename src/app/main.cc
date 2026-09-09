@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <base/base.h>
 #include <tuple>
@@ -451,6 +451,37 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, 
         rlLOGI(TAG, "notice SHA256 OK (%dB, mode %d)", len_notice, mode);
         result = dongle->WriteDataFile(dongle->kFactoryDataFileId, 0, notice, sizeof(notice));
         rlLOGI(TAG, "post notice => dashboard[0,4096), result %d", result);
+      }
+    }
+  } else if (0 == strncmp(type, "listfile", 8)) {
+    /**
+     *! 列文件(工具查看): dongle_entry --listfile[:<type>] <hid> [admin]
+     *! type: 1=DATA 2=PRIKEY_RSA 3=PRIKEY_ECCSM2(缺省) 4=KEY 5=EXE
+     *! 输出 = 单行 Base64(文件列表字节), 随后 "OK"。
+     */
+    int nFileType = 3;
+    if (type[8] == ':') {
+      nFileType = 0;
+      for (int i = 9; type[i] && type[i] >= '0' && type[i] <= '9'; ++i) {
+        nFileType = nFileType * 10 + (type[i] - '0');
+      }
+    }
+    if (nFileType < 1 || nFileType > 5) {
+      rlLOGE(TAG, "listfile: invalid type %d", nFileType);
+      result = -EINVAL;
+    } else {
+      constexpr int kCap = 16 * 1024;
+      uint8_t list_[kCap];
+      char line[kCap + kCap / 2 + 16] = "";
+      int dataLen = (int)sizeof(list_);
+      result = dongle->FileList(nFileType, list_, &dataLen);
+      if (0 == result && dataLen >= 0) {
+        int len = rl_BASE64_Write(line, &list_[0], dataLen);
+        len += sprintf(&line[len], "\nOK\n\n");
+        if (len != write(stdout_, line, len))
+          result = -EIO;
+      } else {
+        rlLOGE(TAG, "listfile type %d error %d (len %d)", nFileType, result, dataLen);
       }
     }
   } else if (0 == strcmp(type, "--reset")) {

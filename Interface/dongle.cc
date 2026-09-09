@@ -925,6 +925,14 @@ int RockeyARM::ExecuteExeFile(void* InOutBuf, size_t szBuf, int* ret) {
 int RockeyARM::LimitSeedCount(int count) {
   return DONGLE_CHECK(Dongle_LimitSeedCount(handle_, count));
 }
+/*! Dongle_ListFile 封装: 列文件状态(工具/查看用, 未上 RockeyARM 产品接口):
+ *! nFileType = FILE_DATA(1)/FILE_PRIKEY_RSA(2)/FILE_PRIKEY_ECCSM2(3)/FILE_KEY(4)/FILE_EXE(5);
+ *! pDataLen 入=缓冲区长度, 出=列表字节数(pFileList=NULL 时返回所需长度)。 */
+int RockeyARM::FileList(int nFileType, void* pFileList, int* pDataLen) {
+  if (!pDataLen || !pFileList)
+    return last_error_ = -EINVAL;
+  return DONGLE_CHECK(Dongle_ListFile(handle_, nFileType, pFileList, pDataLen));
+}
 #if 0
 int RockeyARM::SwitchProtocol(bool ccid) {
   int result = DONGLE_CHECK(Dongle_SwitchProtocol(handle_, ccid ? PROTOCOL_CCID : PROTOCOL_HID));

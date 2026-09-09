@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #ifndef __WTINC_DONGLE_PUBLIC__
 #define __WTINC_DONGLE_PUBLIC__
@@ -516,6 +516,7 @@ class RockeyARM : public Dongle {
   virtual int LimitSeedCount(int count);
   virtual int SetExpireTime(DWORD time);
   virtual int SetUserID(uint32_t id);
+  virtual int FileList(int nFileType, void* pFileList, int* pDataLen); /* Dongle_ListFile 封装: 列文件(工具用) */
 
   virtual int ChangePIN(PERMISSION perm, const char* old, const char* pin, int count);
   virtual int ResetUserPIN(const char* admin);
