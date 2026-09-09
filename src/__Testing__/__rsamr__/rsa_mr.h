@@ -99,37 +99,19 @@ static inline void subSmall(BN& a, uint32_t x) {
   }
   trim(a);
 }
-static inline void shlK(BN& r, const BN& a, int k) {
-  BN z;
+static inline void shlK(BN& r, const BN& a, int k) { /* k>=0 */
   if (k <= 0) {
     r = a;
     return;
   }
   const int words = k / 32, bits = k % 32;
-  z = a;
-  for (int i = z.n; i-- > 0;) {
-    uint32_t hi = 0;
-    if (bits) {
-      hi = z.v[i] >> (32 - bits);
-      z.v[i] <<= bits;
-    }
-    z.v[i + words] = z.v[i];
-    if (bits && hi) z.v[i + words + 1] |= hi;
+  BN z;
+  z.n = a.n + words + (bits ? 1 : 0);
+  for (int i = 0; i < a.n; ++i) {
+    uint64_t x = (uint64_t)a.v[i] << bits;
+    z.v[i + words] |= (uint32_t)x;
+    if (bits) z.v[i + words + 1] |= (uint32_t)(x >> 32);
   }
-  if (bits) {
-    for (int i = 0; i < words; ++i) z.v[i] = 0;
-    for (int i = z.n - 1; i >= 0; --i) {
-      uint32_t hi = z.v[i] >> (32 - bits);
-      z.v[i] <<= bits;
-      z.v[i + words] = z.v[i];
-      z.v[i] = 0;
-      if (hi) z.v[i + words + 1] |= hi;
-    }
-  } else {
-    for (int i = z.n - 1; i >= 0; --i) z.v[i + words] = z.v[i];
-    for (int i = 0; i < words; ++i) z.v[i] = 0;
-  }
-  z.n += words + (bits ? 1 : 0);
   trim(z);
   r = z;
 }
@@ -147,12 +129,23 @@ static inline bool isEven(const BN& a) {
 }
 static inline void pow2Set(BN& a, int bit) {
   const int limb = bit / 32, off = bit % 32;
-  if (limb + 1 > a.n) {
+  if (limb < 0 || limb >= 64) return;
+  if (limb >= a.n) {
+    for (int i = a.n; i <= limb; ++i) a.v[i] = 0;
     a.n = limb + 1;
-    for (int i = a.n - 1; i >= 0; --i)
-      if (a.v[i] == 0) a.n = i; /* 由调用方维护, 见下 */
   }
-  a.v[limb] |= (1u << off);
+  uint64_t carry = (uint64_t)a.v[limb] + (1u << off);
+  a.v[limb] = (uint32_t)carry;
+  int j = limb;
+  while (carry >>= 32) {
+    ++j;
+    if (j >= a.n) {
+      a.v[j] = 0;
+      ++a.n;
+    }
+    carry += a.v[j];
+    a.v[j] = (uint32_t)carry;
+  }
   trim(a);
 }
 static inline void mul(BN& r, const BN& a, const BN& b) {
@@ -229,8 +222,8 @@ static inline bool isSmall(const BN& n) {
 }
 static inline bool isPrimeMR(const BN& n, int rounds) {
   if (n.n == 1 && n.v[0] < 2) return false;
+  if (isSmall(n)) return true; /* 2/3/5/... 直接命中 */
   if (isEven(n)) return false;
-  if (isSmall(n)) return isSmall(n) && cmp(n, BN{2}) >= 0;
   if (rounds < 1) rounds = 1;
   if (rounds > 16) rounds = 16;
   const uint32_t bases[16] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53};
