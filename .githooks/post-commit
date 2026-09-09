@@ -1,0 +1,10 @@
+#!/bin/sh
+# post-commit: 提交信息为 "Squashed commit of the following:"(squash merge 常见形态)时补跑 CI
+# (若 post-merge 已跑同一 HEAD 则跳过, 见 ci-common.sh 的 rlang-ci-last)
+subject="$(git log -1 --pretty=%s 2>/dev/null)"
+case "$subject" in
+  "Squashed commit of the following:"*) ;;
+  *) exit 0 ;;
+esac
+# shellcheck disable=SC1091
+. "$(dirname "$0")/ci-common.sh"

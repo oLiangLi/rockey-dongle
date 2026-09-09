@@ -42,3 +42,11 @@ log
 
 ## 随机数质量分析数据采集
 /ai-doc/randdata/*.bin
+
+## CI/hooks(验证体系, 需入库): 取消对以下目录的忽略(根锚定)
+!/.githooks/
+!/.githooks/**
+!/Build/
+!/Build/tools/
+!/Build/tools/ci/
+!/Build/tools/ci/**

@@ -1,0 +1,4 @@
+#!/bin/sh
+# post-merge: 每次 merge(含 squash merge)后自动跑 CI 快速回归
+# shellcheck disable=SC1091
+. "$(dirname "$0")/ci-common.sh"

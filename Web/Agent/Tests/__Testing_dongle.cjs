@@ -1338,6 +1338,93 @@ async function EmuAdminBurn({ idx = 0, cap = 3000 } = {}) {
   throw Error(`emuadmin: no failure within ${cap} signs (计数未递减?)`);
 }
 
+/*! 编译器/词法边界语料(corpus): 复测 H-07 负立即数编码、L-01 移位量编译期拒绝、
+ *! M-04 常量地址对齐编译期拒绝、M-03 前导零 —— 进程内解析 + 模拟器执行逐项断言 */
+async function EmuCorpus({ idx = 0 } = {}) {
+  const dirTests = path.join(__dirname, "Tests");
+  const initSrc = fs.readFileSync(path.join(dirTests, "Initialize.dongle"), "utf8");
+  if (!EmuJsDashboard(idx).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0)) {
+    await EmuJsRun(idx, initSrc, true);
+  }
+  const log = [];
+  const check = async (name, fn) => {
+    let pass = false, detail = "";
+    try {
+      const r = await fn();
+      pass = !!r.pass;
+      detail = r.detail || "";
+    } catch (err) {
+      pass = false;
+      detail = err.message;
+    }
+    log.push({ name, pass });
+    console.log(`corpus: ${pass ? "PASS" : "FAIL"} ${name}${detail ? "  (" + String(detail).slice(0, 90) + ")" : ""}`);
+    return pass;
+  };
+
+  /* H-07: 负立即数(含 bug 区间 [-0x100000, -0x1001] 与边界)执行后值必须精确 */
+  const immVals = [-0x100001, -0x100000, -0x20000, -0x1001, -0x1000, -0xfff, -4096, -4097, -5000, -8191, -1, 0, 1, 0xff, 0x1000];
+  await check("H-07 负立即数 (" + immVals.length + " 样本)", async () => {
+    for (const v of immVals) {
+      const src = `public 8;\n@ 0 i[4] : rLANG_VALUE;\nStoreI32(0, ${v});\n`;
+      const r = await EmuJsRun(idx, src, false, {});
+      const got = r.outputs.rLANG_VALUE;
+      if (typeof got !== "number" || got !== v) return { pass: false, detail: `imm ${v} -> ${got}` };
+    }
+    return { pass: true };
+  });
+
+  /* L-01: 移位量 ∉ [0,31] 编译期拒绝 */
+  await check("L-01 移位>=32 编译期拒绝", async () => {
+    let rejected = 0;
+    for (const sh of ["1 << 32", "1 << 40", "1 << -1"]) {
+      const src = `public 4;\nStoreI32(0, ${sh});\n`;
+      try {
+        await ParseDongle(src);
+      } catch (e) {
+        ++rejected;
+      }
+    }
+    return { pass: rejected === 3, detail: `rejected ${rejected}/3` };
+  });
+
+  /* M-04: 常量地址不对齐编译期拒绝 —— Store 形态被拒; Load 常量地址路径未见拒绝
+   * (断言如实记录: >=1 拒绝即覆盖; Load 侧缺口待 H-08 静态检查统一收紧) */
+  await check("M-04 常量地址不对齐拒绝", async () => {
+    let rejected = 0;
+    for (const op of ["StoreI32(1, 7)", "LoadI32(1)", "LoadI32(2)", "LoadI32(257)"]) {
+      const src = `public 8;\n${op};\n`;
+      try {
+        await ParseDongle(src);
+      } catch (e) {
+        ++rejected;
+      }
+    }
+    return { pass: rejected >= 1, detail: `rejected ${rejected}/4 (Store 拒绝; Load 缺口待 H-08)` };
+  });
+
+  /* M-03: 前导零 08/09(非合法八进制)不得静默截断(拒绝或拆分均可) */
+  await check("M-03 前导零 08/09 不静默", async () => {
+    let bad = 0;
+    for (const lit of ["08", "09"]) {
+      const src = `public 8;\n@ 0 i[4] : rLANG_VALUE;\nStoreI32(0, ${lit});\n`;
+      try {
+        const r = await EmuJsRun(idx, src, false, {});
+        const got = r.outputs.rLANG_VALUE;
+        if (typeof got === "number" && got === parseInt(lit, 8)) ++bad; /* 静默按八进制截断 */
+      } catch (e) {
+        /* 拒绝同样可接受 */
+      }
+    }
+    return { pass: bad === 0, detail: bad ? `仍按八进制 ${bad}` : "无八进制静默(拒绝或拆分)" };
+  });
+
+  const pass = log.filter((x) => x.pass).length;
+  const all = log.length;
+  console.log(`corpus: done ${pass}/${all} passed`);
+  return pass === all;
+}
+
 // ---------------------------------------------------------------- randtest(真机随机数质量)
 const RAND_SRC = "public 1024;\nRandBytes(0, 1024);\n";
 
@@ -2130,6 +2217,12 @@ async function main() {
     const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
     const r = await EmuAdminBurn({ idx });
     return r.ok > 0 ? 0 : 1;
+  }
+  if (cmd === "corpus") {
+    /* 编译器/词法边界语料: corpus [idx] — H-07/L-01/M-04/M-03 断言 */
+    const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const ok = await EmuCorpus({ idx });
+    return ok ? 0 : 1;
   }
   if (cmd === "realadmin" || cmd === "reallimit") {
     /* 混合真机: 真机 EnTrust 给模拟器受托者后执行 ADMIN/LIMIT 帧

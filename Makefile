@@ -8,6 +8,7 @@ X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machin
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
 .PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check jsWrapper
+.PHONY : ci test install-hooks test-optmatrix
 
 ##
 ## default build Release version ...
@@ -141,6 +142,30 @@ typescript:
 typescript0: wasm
 	$(info typescript compile ... 0)
 	@tsc
+
+##
+## 统一 CI 入口(见 Build/tools/ci/run-ci.cjs): 进程内 JS 模拟器回归
+## 前置: make wasm && make jsWrapper(生成 Web/Agent/Tests/js 封装); CI_STRICT=1 严格
+##
+ci:
+	node Build/tools/ci/run-ci.cjs
+test: ci
+
+##
+## 安装 git hooks(core.hooksPath=.githooks): post-merge/post-commit 在 squash merge 后自动 make ci
+## 说明: CI_SKIP_RUN=1 跳过; CI_STRICT=1 时失败以非零退出; 本地 squash merge(git merge --squash)
+## 与提交信息形如 "Squashed commit of the following:" 的 commit 均触发; 远端(如 GitHub web)合并无法触发本地 hook。
+##
+install-hooks:
+	git config core.hooksPath .githooks
+	@echo "hooks 已安装(core.hooksPath=.githooks)"
+
+##
+## 优化级别矩阵向量门禁(-O0..-O3 密码学自测; 需 clean+全量重建, 较慢)
+## 精简子集: OPTMATRIX_OPTS="-O0 -O3"; 跳过: CI_SKIP_HEAVY=1
+##
+test-optmatrix:
+	node Build/tools/ci/optmatrix.cjs
 
 ##
 ##

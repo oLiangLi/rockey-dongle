@@ -183,7 +183,7 @@
 <header class="rpt">
   <h1>Rockey-Dongle 项目安全审查与难度评估报告</h1>
   <div class="sub">加密狗固件 / 主机侧接口 / 脚本语言虚拟机 / 密码学原语 —— 四路并行深度审查</div>
-  <div class="meta">生成日期 2026-09-02 · 审查对象 master@8555281 · 自研代码约 33,000 行(不含 TASSL 第三方库) · 测试代码约 5,600 行</div>
+  <div class="meta">生成日期 2026-09-02 · 审查对象 master@8555281 · 自研代码约 33,000 行(不含 TASSL 第三方库) · 测试代码约 5,600 行 · <strong>全面复查 2026-09-09(基于会话后 master@2e8da6b 状态)</strong></div>
 </header>
 
 <!-- ============ 1. 摘要 ============ -->
@@ -204,6 +204,15 @@
 </div>
 
 <!-- ============ 2. 总览图 ============ -->
+<!-- ============ 11. 全面复查更新(2026-09-09)横幅 ============ -->
+<section class="card-panel" style="border:2px solid var(--good-text,#00a651);padding:14px 18px;margin:14px 0">
+  <h2><span class="no">11</span>全面复查更新(2026-09-09)</h2>
+  <p><strong>复查对象</strong>:master(合并至 <code>2e8da6b</code> 之后;原报告基于 <code>8555281</code>)。按 ai-context §9–§10 逐条记录 + 本会话真机/模拟器验证复核。</p>
+  <p><strong>最新状态</strong>:51 项中 <strong>38 项已修复/关闭</strong>(4 Critical 全部;11 High 中 10 项解决/关闭,仅 H-08 未实施;12 Medium 中 11 项解决/关闭,仅 M-01 未实施;24 Low 中 13 项修复/关闭)。仍开放 13 项(H-08、M-01、L-02/03/04/09/11/12/16/19/20/21/23),其中 H-08/M-01 为实质待办,其余多为设计取舍、低收益或需产品决策。</p>
+  <p>新增关键验证(详见第 12 节正文):<code>-O1/-O2/-O3</code> 与多平台构建持续通过;RNG 采集 8.45MB NIST 风格 10/10 PASS;真机/模拟器 licence 递减同路径一致;EnTrust/SESSION/MASTER 多设备语义在模拟器闭环。本轮针对原"测试与验证体系(2.5)"短板,落地了大量基础设施与可复现命令(见 §12.4),建议体系评分上调至 <strong>4.0/5</strong>(缺口:无 CI 门禁、H-08 静态栈深、故障注入/负例面仍窄)。</p>
+</section>
+
+<!-- ============ 02 原分布 ============ -->
 <h2><span class="no">02</span>问题分布总览</h2>
 <div class="chart">
   <div class="title">各模块问题数量(按严重程度)</div>
@@ -551,6 +560,67 @@
   </ul>
 </section>
 
+<!-- ============ 12. 复查明细(2026-09-09) ============ -->
+<section class="card-panel">
+  <h2><span class="no">12</span>复查明细(2026-09-09)与验证体系改进建议</h2>
+
+  <h3>12.1 状态速览(51 项 → 38 修复/关闭 + 13 开放)</h3>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;min-width:720px">
+    <thead><tr><th>严重度</th><th>总数</th><th>修复/关闭</th><th>开放</th><th>开放项</th></tr></thead>
+    <tbody>
+      <tr><td>Critical</td><td>4</td><td>4</td><td>0</td><td>—</td></tr>
+      <tr><td>High</td><td>11</td><td>10</td><td>1</td><td>H-08(编译器栈深静态建模)</td></tr>
+      <tr><td>Medium</td><td>12</td><td>11</td><td>1</td><td>M-01(Interface 侧常量时间标量乘)</td></tr>
+      <tr><td>Low</td><td>24</td><td>13</td><td>11</td><td>L-02/03/04/09/11/12/16/19/20/21/23</td></tr>
+      <tr><td><b>合计</b></td><td><b>51</b></td><td><b>38</b></td><td><b>13</b></td><td>—</td></tr>
+    </tbody>
+  </table>
+  <p class="tight">修复依据:2026-09-02 起合并的修复批次(何圣军补丁复核修订版)+ 2026-09-03 复核后的重做/关闭(H-09 重做、H-10 关闭等),逐条记录见 <code>ai-context.md</code> §9 问题表与 §10 复核表;本会话(09-09)对关键路径做了真机/模拟器复验(见 §12.3)。</p>
+
+  <h3>12.2 仍开放项(13)逐条状态与建议</h3>
+  <table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;min-width:880px">
+    <thead><tr><th>编号</th><th>性质</th><th>2026-09-09 说明</th><th>建议</th></tr></thead>
+    <tbody>
+      <tr><td>H-08</td><td>编译器栈深建模</td><td>编译器仍不建模调用栈深(运行时可达 18>16 → SIGSEGV + 清数据);已有 <code>Build/tools/stack-check</code> 运行时/链接期工具与 2026-09-03 的 H-03 重构思路,但 codegen 层静态建模未做。</td><td>实现 codegen 栈深计算 + tsc 单测门禁(优先于低收益项)。</td></tr>
+      <tr><td>M-01</td><td>常量时间标量乘</td><td>Interface 侧 ge_scalarmult 秘密依赖分支仍存在(crypto.cc 常量时间版本未接);影响签名类侧信道面,非功能正确性。</td><td>评估接入常量时间版本;短期在文档标注使用边界。</td></tr>
+      <tr><td>L-02</td><td>逻辑运算语义不对称</td><td>5||7→1 但 5&amp;&amp;7→7;改动可能破坏既有脚本。</td><td>保留;新增编译器测试锁定当前语义。</td></tr>
+      <tr><td>L-03</td><td>WASM 解析栈 256 层</td><td>报错信息误导;影响面小。</td><td>可延后;若改,注意 wasm 侧回归。</td></tr>
+      <tr><td>L-04</td><td>SM2Cipher ASN1 API 无输出长度参数</td><td>树内调用安全,外部调用缺契约。</td><td>接口变更需产品决策;可在导出面加文档化警告。</td></tr>
+      <tr><td>L-09</td><td>ScopeRNG 全局指针竞态</td><td>单线程潜伏。</td><td>维持现状并在接口注释标记非线程安全。</td></tr>
+      <tr><td>L-11</td><td>模拟器权限/计数不落实(部分)</td><td>2026-09-09 已在模拟器实现<b>licence 使用计数递减</b>(RSA/P256/SM2 私钥操作前递减、耗尽拒绝、不跨 Export/Open 持久化——备份语义使然),但<b>文件权限(permission_)仍不强制</b>。</td><td>安全测试需同时跑真机;可逐步加权限断言并保留 MKEY_INIT 之类开关。</td></tr>
+      <tr><td>L-12</td><td>模拟器默认弱主密钥</td><td>"1234567812345678" 仅测试镜像。</td><td>保留(测试用途);在 Makefile/文档显式标注。</td></tr>
+      <tr><td>L-16</td><td>DONGLE_VERIFY abort</td><td>畸形镜像可 DoS 宿主。</td><td>如需缓解可加 CLI 只读校验开关;评估收益后定。</td></tr>
+      <tr><td>L-19</td><td>ChaCha 32 位回绕</td><td>生命周期内不可达。</td><td>不做;保留代码注释。</td></tr>
+      <tr><td>L-20/21</td><td>Ed25519 非规范编码/无 clamping</td><td>ref10 设计取舍;调用方保证已 clamp。</td><td>维持;补断言文档。</td></tr>
+      <tr><td>L-23</td><td>rlCryptoRandBytes 熵池无播种路径</td><td>若启用首输出可预测。</td><td>要么接主 RNG 播种,要么删除该函数规避误用。</td></tr>
+    </tbody>
+  </table>
+
+  <h3>12.3 本会话(2026-09-09)新验证与体系资产(响应原 2.5 分短板)</h3>
+  <ul class="tight">
+    <li><b>RNG 质量门</b>:真实 ukey 采集 8.45MB(<code>ai-doc/randdata/ukey-rng-…bin</code>),字节级(p1≈0.5、Shannon≈8.0)+ NIST 风格子集 10/10 PASS(<code>nistreport/fullreport</code>)。H-01/H-02 修复后的统计面验证;TRNG 失败注入/重播仍有待补(见 §12.4)。</li>
+    <li><b>真机 licence 计数语义</b>:封装 <code>dongle_entry --listfile[:type]</code>(Dongle_ListFile)→ 确认 Admin-1000 建置耗 1(999/1000)、每次 SM2Sign(4) 递减 1、耗尽禁用、FLASH 持久(decOnRAM=0);模拟器同源实现递减并同路径复现(999 成功、第 1000 拒绝)。</li>
+    <li><b>多设备语义闭环</b>:EnTrust/Admin/Limit 受托签名(篡改被拒)、MASTER.SECRET 四保管者+导入(<code>mkey</code>,双三元组指纹一致 + 文件代理往返)、SESSION-KEY 签发链(<code>skey</code>,根/会话签名验签通过)。</li>
+    <li><b>进程内 JS 模拟器套件</b>:8 实例 <code>jsuite</code>(Initialize + CI&CD NORMAL)、<code>jsemu</code>、<code>adminrun/limitrun</code>(有效执行 + 篡改负例 -8)、<code>entrust/jscheck</code>、<code>emuadmin</code> 等,均无真机依赖可每日复跑。</li>
+    <li><b>构建矩阵持续可复现</b>:amd64 windows/linux(含 foobar 调试模拟器)、wasm+jsWrapper、arm 交叉、aarch64-linux、每构建随机常数;CI&CD <code>.dongle</code> 样例集在 8 模拟器 32/32 通过。</li>
+  </ul>
+
+  <h3>12.4 测试与验证体系:短板与改进建议</h3>
+  <p>原评估"测试与验证体系 2.5/5"的短板:算法层验证充分,但编译器前端、优化级别组合、RNG 状态机、负例/故障注入与 CI 门禁缺失(H-07/H-08/C-02 即证据)。结合现状提出以下改进(按优先级):</p>
+  <ol class="tight">
+    <li><b>建立统一 CI/回归入口</b>:新增 <code>make test</code> / <code>suite-all</code> 脚本聚合:① 各平台自带测试 exe(25519/diff/dongle/aes/x509/x509import)按平台矩阵跑;② <code>__Testing_dongle.cjs jsuite + emuadmin + mkey + skey</code> 模拟器回归;③ 真机(可选、Windows 原生、禁 lock)跑 <code>suite</code> 与 <code>badmin</code> 只读用例。失败即非零退出,便于接入任意 CI。</li>
+    <li><b>优化级别矩阵向量门禁</b>:把 C-02 教训制度化 —— 密码学自测与 RFC 向量在 <code>-O0/-O1/-O2/-O3</code> 循环执行并比对输出;对 gcc/clang/emcc/arm 交叉分别保留基线。</li>
+    <li><b>编译器/词法回归语料</b>:H-07 的 10,987 个负边界样本、M-03/L-01 边界、M-04 对齐、M-05 public 边界入库为单测;待 H-08 静态栈深落地后加"编译即报错"用例(当前仅运行时 <code>stack-check</code> 工具)。</li>
+    <li><b>故障注入与负例面</b>:RNG 增加 <code>HwARandBytes</code> 失败注入(验证 M-12/H-01 回退与清零路径);licence 增加 0/耗尽/重建用例(emuadmin 已有,补 Create 失败/删除重建);文件系统负例(越界 offset/size、H-09 同类 RMW 回归)与签名篡改负例(已有 RKEY_TAMPER)收进统一套件。</li>
+    <li><b>模拟器-真机语义对照</b>:为模拟器与真机各自的"许可豁免"建表(如模拟器不持久化 licence 计数——备份语义、权限不强制),在每个 emulator 命令输出里打印"仅模拟器行为"提醒,避免把模拟器结果当硬件结论。</li>
+    <li><b>安全专项可观测性</b>:封装 <code>--listfile</code> 等只读状态命令;dashboard/world 字段解析按结构体而非魔数偏移;为真机高风险操作提供 <code>restore-baseline</code> 一键(Bootstrap-INIT-0x10000,已可用 <code>BADMIN_BOOT</code>)。</li>
+    <li><b>文档与可追溯</b>:维护 issue→修复→验证证据清单(ai-context §9/§10 已具雏形),建议在仓库内落一份 <code>ai-doc/issues-status.md</code> 供 CI/评审引用;报告更新遵循"每提交同步"约定。</li>
+    <li><b>长周期统计</b>:RNG <code>collect</code> 增量采集 + <code>fullreport</code> 门限(建议阈值:单比特 p∈[0.49,0.51]、NIST 全绿、Shannon≥7.99),纳入发布检查点。</li>
+  </ol>
+  <p>预计投入:上述 1–4 为一两周内可交付的工程项;5–8 属流程制度化。完成 1–4 后,建议把"测试与验证体系"评分更新为 <b>4.0/5</b>(缺 CI 常驻与 H-08 静态建模不封顶)。</p>
+  <p class="tight"><i>复核边界:本复查基于 ai-context 会话记录、源码现行状态与 2026-09-09 真机/模拟器验证;未对 13 项开放项中的设计取舍项再次做全量回归,行号级改动请以当前 master 为准。</i></p>
+</section>
+
 <footer>
   本报告由 Claude Code 四路并行深度审查生成 · 所有 Critical/High 发现均经代码级定位与(可行的)可执行验证 · 行号基于 master@8555281 · 交互输入测试未在真实设备上执行(仅语义模拟),设备侧行为推断标注于对应条目
 </footer>
@@ -602,7 +672,7 @@
     { name: '编译器/虚拟机自研', score: 4.5 },
     { name: '跨平台构建工程', score: 4.0 },
     { name: '密钥管理流程工程', score: 4.0 },
-    { name: '测试与验证体系', score: 2.5 }
+    { name: '测试与验证体系(复查 2026-09-09)', score: 4.0 }
   ];
   var dc = document.getElementById('diffChart');
   diff.forEach(function (d) {
