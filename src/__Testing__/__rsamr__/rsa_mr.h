@@ -212,21 +212,35 @@ static inline void powmod(BN& r, const BN& base, const BN& e, const BN& m) {
   }
   r = acc;
 }
-/* 小候选表: n<=smallMax 直接查(表为 32 位栈数组, 体积小、运行期构建, 不入 .rodata) */
-static inline bool isSmall(const BN& n) {
-  const uint32_t sm[16] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53};
-  if (cmp(n, BN{sm[15] + 2}) > 0) return false;
-  for (int i = 0; i < 16; ++i)
-    if (cmp(n, BN{sm[i]}) == 0) return true;
-  return false;
+/* 单 limb 小整数试除素性(u32; 仅用于小值/快速路径, 无 .rodata 表) */
+static inline bool smallPrimeU32(uint32_t v) {
+  if (v < 2) return false;
+  for (uint32_t d = 2; d <= v / d; ++d)
+    if (v % d == 0) return false;
+  return true;
+}
+/* 在栈上运行时生成前 rounds 个小素数(无 const 表 → 不进 .rodata) */
+static inline int smallBases(uint32_t b[], int rounds) {
+  if (rounds < 1) rounds = 1;
+  if (rounds > 16) rounds = 16;
+  int n = 0;
+  uint32_t x = 2;
+  while (n < rounds && x < 4096) {
+    bool prime = true;
+    for (int j = 0; j < n; ++j)
+      if (x % b[j] == 0) {
+        prime = false;
+        break;
+      }
+    if (prime) b[n++] = x;
+    ++x;
+  }
+  return n;
 }
 static inline bool isPrimeMR(const BN& n, int rounds) {
   if (n.n == 1 && n.v[0] < 2) return false;
-  if (isSmall(n)) return true; /* 2/3/5/... 直接命中 */
+  if (n.n == 1 && n.v[0] <= 0xffffff) return smallPrimeU32(n.v[0]);
   if (isEven(n)) return false;
-  if (rounds < 1) rounds = 1;
-  if (rounds > 16) rounds = 16;
-  const uint32_t bases[16] = {2, 3, 5, 7, 11, 13, 17, 19, 23, 29, 31, 37, 41, 43, 47, 53};
   BN nm1 = n;
   subSmall(nm1, 1);
   BN d = nm1;
@@ -235,8 +249,9 @@ static inline bool isPrimeMR(const BN& n, int rounds) {
     shr1(d);
     ++s;
   }
-  for (int r = 0; r < rounds; ++r) {
-    BN a = n;
+  uint32_t bases[16];
+  const int cnt = smallBases(bases, rounds);
+  for (int r = 0; r < cnt; ++r) {
     BN aa(bases[r]);
     if (cmp(aa, nm1) >= 0) continue;
     BN x;
@@ -254,7 +269,6 @@ static inline bool isPrimeMR(const BN& n, int rounds) {
       if (cmp(x, BN{1}) == 0) break;
     }
     if (!witness) return false;
-    (void)a;
   }
   return true;
 }
