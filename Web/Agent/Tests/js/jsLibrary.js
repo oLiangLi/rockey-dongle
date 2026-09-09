@@ -775,8 +775,128 @@ qiDXs9aO/KUn
     console.log("done");
   }
 
+  /*! X509ExtBuilder 测试(网页端 CI 用; 浏览器 console.assert 不抛错 → 用 if+throw) */
+  async function X509ExtTests() {
+    const e = jsEmulator;
+    if (typeof e.X509ExtBuilder !== "function")
+      throw Error("jsEmulator.X509ExtBuilder() missing");
+
+    const x = e.X509ExtBuilder();
+    if (typeof x.build !== "function" || x.length !== 0)
+      throw Error("X509ExtBuilder ctor/length");
+    x.basicConstraints({ ca: true, pathLen: 0 })
+      .keyUsage({ keyCertSign: true, cRLSign: true }, true)
+      .extendedKeyUsage(["1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"])
+      .subjectKeyIdentifier(Buffer.alloc(20, 0xa5))
+      .authorityKeyIdentifier(Buffer.alloc(20, 0xb6))
+      .subjectAltName({
+        dns: ["example.com"],
+        ip: ["10.0.0.1"],
+        uri: ["https://example.com/x"],
+      })
+      .authorityInfoAccess({
+        ocsp: ["http://ocsp.example.com"],
+        caIssuers: ["http://ca.example.com/ca.crt"],
+      })
+      .crlDistributionPoints(["http://crl.example.com/ca.crl"]);
+    if (x.length !== 8) throw Error(`X509ExtBuilder count ${x.length} != 8`);
+
+    const der = x.build();
+    const [top, topSize] = e.ASN1Decode(der);
+    if (topSize !== der.length || !top || typeof top !== "object" || top.type !== 0x30)
+      throw Error("X509 ext top decode");
+    const list = top.value;
+    if (!Array.isArray(list) || list.length !== 8)
+      throw Error(`X509 ext children ${list ? list.length : "?"}`);
+
+    const ext = (i) => {
+      const v = list[i];
+      if (!v || v.type !== 0x30 || !Array.isArray(v.value) || v.value.length < 2)
+        throw Error(`ext#${i} shape`);
+      return v.value;
+    };
+    for (const i of [0, 1]) {
+      const items = ext(i);
+      if (items.length !== 3 || items[1] !== true)
+        throw Error(`critical ext#${i} (len ${items.length})`);
+    }
+    for (let i = 2; i < 8; ++i) {
+      const items = ext(i);
+      if (items.length !== 2) throw Error(`ext#${i} len ${items.length}`);
+    }
+    for (let i = 0; i < 8; ++i) {
+      const oid = ext(i)[0];
+      if (!oid || typeof oid !== "object" || oid.type !== 0x06)
+        throw Error(`ext#${i} first OID`);
+    }
+
+    const sanOct = ext(5)[1] && ext(5)[1].value;
+    if (!Buffer.isBuffer(sanOct)) throw Error("SAN octet");
+    const [sanSeq] = e.ASN1Decode(sanOct);
+    if (!sanSeq || typeof sanSeq !== "object" || !Array.isArray(sanSeq.value) || sanSeq.value.length !== 3)
+      throw Error("SAN seq children");
+    const ip = sanSeq.value.find((c) => c && c.type === 0x87);
+    if (!ip || !Buffer.isBuffer(ip.value) || ip.value.length !== 4)
+      throw Error("SAN iPAddress");
+
+    const y = e.X509ExtBuilder();
+    const emptyDer = y.build();
+    const [ev] = e.ASN1Decode(emptyDer);
+    if (!ev || typeof ev !== "object" || ev.type !== 0x30 || !Array.isArray(ev.value) || ev.value.length !== 0)
+      throw Error("empty ext decode");
+
+    console.log(`X509ExtBuilder Tests OK (${x.length} 扩展, DER ${der.length}B)`);
+  }
+
+  /*! jsCrypto 网页端正确性冒烟(API 齐全 + SM3 已知向量 + ASN1 原语往返) */
+  async function JsCryptoSmokeTests() {
+    const e = jsEmulator;
+    const api = [
+      "Create", "Open", "Export", "Execv", "GetDongleInfo",
+      "ASN1Decode", "ASN1Encode", "X509ExtBuilder", "SM3",
+      "SM2Sign", "SM2Verify", "SM2Encrypt", "SM2Decrypt",
+      "GenerateSM2", "EmuDecompressPointSM2", "RockeySign", "RockeyDecrypt",
+    ];
+    for (const k of api)
+      if (typeof e[k] !== "function") throw Error(`jsEmulator.${k} missing`);
+
+    const sm3 = e.SM3(Buffer.from("abc", "utf8"));
+    const exp = Buffer.from(
+      "66c7f0f462eeedd9d1f2d46bdc10e4e24167c4875cf2f7a2297da02b8f4ba8e0",
+      "hex",
+    );
+    if (!Buffer.compare(sm3, exp) === 0)
+      throw Error(`SM3('abc')=${sm3.toString("hex")}`);
+
+    const round = (v) => {
+      const d = e.ASN1Encode(v);
+      const [dv, sz] = e.ASN1Decode(d);
+      if (sz !== d.length) throw Error("ASN1 size mismatch");
+      return dv;
+    };
+    if (round(true) !== true || round(false) !== false) throw Error("ASN1 boolean");
+    const big = 1n << 40n;
+    if (String(round(big)) !== String(big)) throw Error("ASN1 integer big");
+    const date = new Date(Date.UTC(2030, 5, 1, 12, 30, 45));
+    if (String(round(date)) !== String(date)) throw Error("ASN1 date");
+    const oct = Buffer.from("2a01ff", "hex");
+    const octv = round({ type: 0x04, value: oct });
+    if (!octv || typeof octv !== "object" || octv.type !== 0x04 || !Buffer.isBuffer(octv.value) || !Buffer.compare(octv.value, oct) === 0)
+      throw Error("ASN1 octet");
+    const seqv = round({
+      type: 0x30,
+      value: [42, true, null, { type: 0x04, value: Buffer.from("hi") }],
+    });
+    if (!seqv || typeof seqv !== "object" || seqv.type !== 0x30 || !Array.isArray(seqv.value) || seqv.value.length !== 4)
+      throw Error("ASN1 sequence");
+
+    console.log("JsCryptoSmokeTests OK (API/SM3/ASN1 roundtrip)");
+  }
+
   async function EmuTests() {
     await ASN1Tests();
+    await X509ExtTests();
+    await JsCryptoSmokeTests();
 
     ///
     /// TODO: LiangLI, More Tests, 当前只用于保护 RockeyARM::(kKeyIdGlobalSM2ECIES[加密密钥/管理员签名密钥] == 4), 暂时只测试 SM2 相关操作 ...

@@ -1480,6 +1480,51 @@ async function EmuPkeySelf({ idx = 0 } = {}) {
   return pass === log.length;
 }
 
+/*! X509ExtBuilder 冒烟(x509ext): 常用 v3 扩展组装 → DER → ASN1Decode 结构回读断言 */
+async function EmuX509Ext({ idx = 0 } = {}) {
+  const e = EmuJsGet(idx);
+  const x = e.X509ExtBuilder();
+  const n0 = x.length;
+  x.basicConstraints({ ca: true, pathLen: 0 })
+    .keyUsage({ keyCertSign: true, cRLSign: true }, true)
+    .extendedKeyUsage(["1.3.6.1.5.5.7.3.1", "1.3.6.1.5.5.7.3.2"])
+    .subjectKeyIdentifier(Buffer.alloc(20, 0xa5))
+    .authorityKeyIdentifier(Buffer.alloc(20, 0xb6))
+    .subjectAltName({ dns: ["example.com"], ip: ["10.0.0.1"], uri: ["https://example.com/x"] })
+    .authorityInfoAccess({ ocsp: ["http://ocsp.example.com"], caIssuers: ["http://ca.example.com/ca.crt"] })
+    .crlDistributionPoints(["http://crl.example.com/ca.crl"]);
+  const der = x.build();
+  const [v, sz] = e.ASN1Decode(der);
+  const dbg = (w) => (w === null ? "null" : typeof w === "object" ? `{type=${w.type}, v=${Array.isArray(w.value) ? "list[" + w.value.length + "]" : typeof w.value + ":" + (Buffer.isBuffer(w.value) ? w.value.length : w.value)}}` : String(w));
+  if (process.env.RKEY_TRACE === "1") {
+    const top = v && typeof v === "object" && Array.isArray(v.value) ? v.value : [];
+    console.log(`x509ext: top=${dbg(v)} children=${top.length} first3=${top.slice(0, 3).map(dbg).join(" | ")}`);
+  }
+  const okTop = v !== null && typeof v === "object" && !(v instanceof Date) && v.type === 0x30;
+  const list = okTop ? v.value : null;
+  const ok =
+    okTop &&
+    Array.isArray(list) &&
+    list.length === 8 &&
+    sz === der.length &&
+    list.every(
+      (ext) =>
+        ext !== null &&
+        typeof ext === "object" &&
+        ext.type === 0x30 &&
+        Array.isArray(ext.value) &&
+        ext.value.length >= 2 &&
+        ext.value[0] !== null &&
+        typeof ext.value[0] === "object" &&
+        ext.value[0].type === 0x06,
+    );
+  console.log(
+    `x509ext: ${ok ? "PASS" : "FAIL"} builder len=${x.length} der=${der.length}B decode sz=${sz} seqChildren=${list && list.length}`,
+  );
+  void n0;
+  return ok;
+}
+
 // ---------------------------------------------------------------- randtest(真机随机数质量)
 const RAND_SRC = "public 1024;\nRandBytes(0, 1024);\n";
 
@@ -2283,6 +2328,12 @@ async function main() {
     /* RockeySign/Decrypt 接线冒烟: pkeyself [idx] */
     const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
     const ok = await EmuPkeySelf({ idx });
+    return ok ? 0 : 1;
+  }
+  if (cmd === "x509ext") {
+    /* X509ExtBuilder 冒烟: x509ext [idx] */
+    const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const ok = await EmuX509Ext({ idx });
     return ok ? 0 : 1;
   }
   if (cmd === "realadmin" || cmd === "reallimit") {

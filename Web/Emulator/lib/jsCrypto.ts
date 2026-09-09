@@ -102,6 +102,39 @@ export const enum V_ASN1 {
   BMPSTRING = 30,
 }
 
+export interface X509ExtBuilder {
+  readonly length: integer;
+  clear(): X509ExtBuilder;
+  /** 通用追加(oid 点分; value=扩展值内容 DER 的 ASN1Value, 自动 OCTET STRING 包裹) */
+  add(oid: string, value: ASN1Value, critical?: boolean): X509ExtBuilder;
+  keyUsage(bits: Record<string, boolean>, critical?: boolean): X509ExtBuilder;
+  extendedKeyUsage(oids: string[], critical?: boolean): X509ExtBuilder;
+  basicConstraints(
+    opts: { ca?: boolean; pathLen?: integer },
+    critical?: boolean,
+  ): X509ExtBuilder;
+  subjectAltName(
+    names: {
+      dns?: string[];
+      ip?: string[];
+      uri?: string[];
+      email?: string[];
+      rid?: string[];
+      dirName?: ASN1Value;
+    },
+    critical?: boolean,
+  ): X509ExtBuilder;
+  subjectKeyIdentifier(keyid: Buffer | string, critical?: boolean): X509ExtBuilder;
+  authorityKeyIdentifier(keyid: Buffer | string, critical?: boolean): X509ExtBuilder;
+  authorityInfoAccess(
+    opts: { ocsp?: string[]; caIssuers?: string[] },
+    critical?: boolean,
+  ): X509ExtBuilder;
+  crlDistributionPoints(urls: string[], critical?: boolean): X509ExtBuilder;
+  extensionsValue(): ASN1Value;
+  build(): Buffer;
+}
+
 export interface RockeyPKEY {
   Sign(dgst: Buffer, result: Buffer): integer;
   Decrypt(cipher: Buffer, result: Buffer): integer;
@@ -201,6 +234,9 @@ export interface RockeyEmulator {
 
   ASN1Decode(input: Buffer): [value: ASN1Value, size: integer];
   ASN1Encode(value: ASN1Value): Buffer;
+
+  /** X509 v3 扩展构建器(每次返回新实例; 见 X509ExtBuilder 接口) */
+  X509ExtBuilder(): X509ExtBuilder;
 }
 
 interface Native0_ {
@@ -800,6 +836,202 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
     enc(value);
 
     return Buffer.concat(result);
+  }
+
+  // ================================================================ X509 v3 扩展构建器
+  /*! X509 v3 常用扩展的 Web 端 DER 构建(供签发 CA/证书时嵌入原生
+   *! RockeyPKEY_SignRootCA / RockeyPKEY_X509ReqFrom / RockeyPKEY_SignX509 的 extensions 参数)。
+   *! 用法:
+   *!   const ext = emulator.X509ExtBuilder();
+   *!   ext.basicConstraints({ ca: true, pathLen: 0 })
+   *!      .keyUsage({ keyCertSign: true, cRLSign: true })
+   *!      .subjectAltName({ dns: ["example.com"], ip: ["10.0.0.1"] })
+   *!      .subjectKeyIdentifier("9F43...")  // 或 .authorityKeyIdentifier(...)
+   *!      .extendedKeyUsage(["1.3.6.1.5.5.7.3.1"])
+   *!      .authorityInfoAccess({ ocsp: ["http://ocsp.example.com"] })
+   *!      .crlDistributionPoints(["http://crl.example.com/ca.crl"])
+   *!   const der = ext.build();   // SEQUENCE OF Extension(DER), 可直接嵌入
+   *!   ext.clear();               // 复用实例
+   *! 通用方法 .add(oid, value, critical=false) 可加任意扩展(value = 扩展值内容 DER 的 ASN1Value)。
+   */
+  function encodeOid(oid: string): Buffer {
+    if (!/^[0-2](\.\d+)+$/.test(oid)) throw jsCipher.Annihilus_(`Invalid OID ${oid}`);
+    const parts = oid.split(".").map((x) => parseInt(x, 10));
+    if (parts[1] > 39 && parts[0] <= 1)
+      throw jsCipher.Annihilus_(`Invalid OID ${oid} (second arc >39)`);
+    const out: number[] = [];
+    const push128 = (n: number) => {
+      const tmp = [n & 0x7f];
+      n >>>= 7;
+      while (n > 0) {
+        tmp.unshift((n & 0x7f) | 0x80);
+        n >>>= 7;
+      }
+      out.push(...tmp);
+    };
+    push128(parts[0] * 40 + parts[1]);
+    for (let i = 2; i < parts.length; ++i) push128(parts[i]);
+    return Buffer.from(out);
+  }
+  const OID = (oid: string): ASN1Value => ({ type: V_ASN1.OBJECT, value: encodeOid(oid) });
+  const OID_TEXT = {
+    keyUsage: "2.5.29.15",
+    extKeyUsage: "2.5.29.37",
+    basicConstraints: "2.5.29.19",
+    subjectAltName: "2.5.29.17",
+    subjectKeyId: "2.5.29.14",
+    authorityKeyId: "2.5.29.35",
+    crlDistributionPoints: "2.5.29.31",
+    aia: "1.3.6.1.5.5.7.1.1",
+    aiaOcsp: "1.3.6.1.5.5.7.48.1",
+    aiaCaIssuers: "1.3.6.1.5.5.7.48.2",
+  };
+
+  class X509ExtBuilderImpl {
+    private readonly items: { oid: string; critical: boolean; value: ASN1Value }[] = [];
+
+    get length(): integer {
+      return this.items.length;
+    }
+    clear(): X509ExtBuilderImpl {
+      this.items.length = 0;
+      return this;
+    }
+
+    /** 通用: 追加任意扩展(oid = 点分 OID; value = 扩展值内容, 会自动 OCTET STRING 包裹) */
+    add(oid: string, value: ASN1Value, critical: boolean = false): X509ExtBuilderImpl {
+      encodeOid(oid); // 校验
+      this.items.push({ oid, critical, value });
+      return this;
+    }
+
+    /** KeyUsage(critical 惯例为 true); bits 键: digitalSignature/nonRepudiation/keyEncipherment/
+     * dataEncipherment/keyAgreement/keyCertSign/cRLSign/encipherOnly/decipherOnly */
+    keyUsage(bits: Record<string, boolean>, critical: boolean = true): X509ExtBuilderImpl {
+      const order = ["digitalSignature", "nonRepudiation", "keyEncipherment", "dataEncipherment",
+        "keyAgreement", "keyCertSign", "cRLSign", "encipherOnly", "decipherOnly"];
+      let maxBit = -1;
+      const set: boolean[] = new Array(order.length).fill(false);
+      for (let i = 0; i < order.length; ++i)
+        if ((bits as Record<string, boolean>)[order[i]]) {
+          set[i] = true;
+          maxBit = Math.max(maxBit, i);
+        }
+      if (maxBit < 0) throw jsCipher.Annihilus_(`keyUsage: no bits set`);
+      const nbytes = (maxBit >> 3) + 1;
+      const content = Buffer.alloc(1 + nbytes);
+      for (let i = 0; i <= maxBit; ++i)
+        if (set[i]) content[1 + (i >> 3)] |= 0x80 >> (i & 7);
+      content[0] = nbytes * 8 - (maxBit + 1); // 未用位
+      return this.add(OID_TEXT.keyUsage, { type: V_ASN1.BIT_STRING, value: content }, critical);
+    }
+
+    /** ExtendedKeyUsage: SEQUENCE OF OID */
+    extendedKeyUsage(oids: string[], critical: boolean = false): X509ExtBuilderImpl {
+      if (!oids.length) throw jsCipher.Annihilus_(`extendedKeyUsage: empty`);
+      return this.add(OID_TEXT.extKeyUsage, { type: 0x30, value: oids.map(OID) }, critical);
+    }
+
+    /** BasicConstraints: SEQUENCE { cA BOOLEAN DEFAULT FALSE, pathLen INTEGER OPTIONAL } */
+    basicConstraints(opts: { ca?: boolean; pathLen?: integer }, critical: boolean = true): X509ExtBuilderImpl {
+      const seq: ASN1Value[] = [];
+      if (opts.ca) seq.push(true);
+      if (opts.pathLen !== undefined) {
+        if (opts.pathLen < 0) throw jsCipher.Annihilus_(`basicConstraints: pathLen<0`);
+        seq.push(opts.pathLen);
+      }
+      return this.add(OID_TEXT.basicConstraints, { type: 0x30, value: seq }, critical);
+    }
+
+    /** SubjectAltName: GeneralNames(SEQUENCE OF GeneralName) */
+    subjectAltName(
+      names: {
+        dns?: string[];
+        ip?: string[];
+        uri?: string[];
+        email?: string[];
+        rid?: string[]; // registeredID
+        dirName?: ASN1Value; // [4] EXPLICIT Name
+      },
+      critical: boolean = false,
+    ): X509ExtBuilderImpl {
+      const gn: ASN1Value[] = [];
+      for (const s of names.dns || [])
+        gn.push({ type: 0x82, value: Buffer.from(s, "utf8") }); // dNSName IA5String
+      for (const s of names.uri || [])
+        gn.push({ type: 0x86, value: Buffer.from(s, "utf8") }); // uniformResourceIdentifier
+      for (const s of names.email || [])
+        gn.push({ type: 0x81, value: Buffer.from(s, "utf8") }); // rfc822Name
+      for (const s of names.ip || []) {
+        const ip = Buffer.from(s.split(".").map(Number));
+        if (ip.length !== 4) throw jsCipher.Annihilus_(`subjectAltName: ip ${s} not IPv4`);
+        gn.push({ type: 0x87, value: ip });
+      }
+      for (const r of names.rid || []) gn.push({ type: 0x88, value: encodeOid(r) });
+      if (names.dirName !== undefined)
+        gn.push({ type: 0xa4, value: [names.dirName] }); // [4] EXPLICIT Name
+      if (!gn.length) throw jsCipher.Annihilus_(`subjectAltName: empty`);
+      return this.add(OID_TEXT.subjectAltName, { type: 0x30, value: gn }, critical);
+    }
+
+    /** SubjectKeyIdentifier: extnValue = OCTET STRING(keyid); keyid 建议 20B(SHA-1 由签发方/外部计算) */
+    subjectKeyIdentifier(keyid: Buffer | string, critical: boolean = false): X509ExtBuilderImpl {
+      const id = typeof keyid === "string" ? Buffer.from(keyid, "hex") : keyid;
+      if (id.length === 0 || id.length > 64) throw jsCipher.Annihilus_(`subjectKeyIdentifier: bad length ${id.length}`);
+      return this.add(OID_TEXT.subjectKeyId, { type: V_ASN1.OCTET_STRING, value: id }, critical);
+    }
+
+    /** AuthorityKeyIdentifier: SEQUENCE { keyIdentifier [0] IMPLICIT OCTET STRING } */
+    authorityKeyIdentifier(keyid: Buffer | string, critical: boolean = false): X509ExtBuilderImpl {
+      const id = typeof keyid === "string" ? Buffer.from(keyid, "hex") : keyid;
+      if (id.length === 0 || id.length > 64) throw jsCipher.Annihilus_(`authorityKeyIdentifier: bad length ${id.length}`);
+      return this.add(OID_TEXT.authorityKeyId,
+        { type: 0x30, value: [{ type: 0x80, value: id }] }, critical);
+    }
+
+    /** AuthorityInfoAccess(AIA): 目前支持 accessMethod=OCSP/CAIssuers + URI location */
+    authorityInfoAccess(
+      opts: { ocsp?: string[]; caIssuers?: string[] },
+      critical: boolean = false,
+    ): X509ExtBuilderImpl {
+      const seq: ASN1Value[] = [];
+      const pushDesc = (oid: string, urls: string[]) => {
+        for (const url of urls)
+          seq.push({ type: 0x30, value: [OID(oid), { type: 0x86, value: Buffer.from(url, "utf8") }] });
+      };
+      pushDesc(OID_TEXT.aiaOcsp, opts.ocsp || []);
+      pushDesc(OID_TEXT.aiaCaIssuers, opts.caIssuers || []);
+      if (!seq.length) throw jsCipher.Annihilus_(`authorityInfoAccess: empty`);
+      return this.add(OID_TEXT.aia, { type: 0x30, value: seq }, critical);
+    }
+
+    /** CRLDistributionPoints: DistributionPoint[fullName [0]] 逐 URL */
+    crlDistributionPoints(urls: string[], critical: boolean = false): X509ExtBuilderImpl {
+      if (!urls.length) throw jsCipher.Annihilus_(`crlDistributionPoints: empty`);
+      const points: ASN1Value[] = urls.map((url) => ({
+        type: V_ASN1.SEQUENCE,
+        value: [{
+          type: 0xa0, // distributionPoint [0] EXPLICIT DistributionPointName
+          value: [{ type: 0x30, value: [{ type: 0x86, value: Buffer.from(url, "utf8") }] }],
+        }],
+      }));
+      return this.add(OID_TEXT.crlDistributionPoints, { type: 0x30, value: points }, critical);
+    }
+
+    /** 全部扩展: SEQUENCE OF Extension(即 X.509 Extensions 的 DER 值) */
+    extensionsValue(): ASN1Value {
+      return { type: 0x30, value: this.items.map((it) => this.wrap(it)) };
+    }
+    private wrap(it: { oid: string; critical: boolean; value: ASN1Value }): ASN1Value {
+      const seq: ASN1Value[] = [OID(it.oid)];
+      if (it.critical) seq.push(true);
+      seq.push({ type: V_ASN1.OCTET_STRING, value: ASN1Encode(it.value) });
+      return { type: 0x30, value: seq };
+    }
+    /** 输出 DER(直接供原生 SignRootCA/X509ReqFrom/SignX509 的 extensions 参数) */
+    build(): Buffer {
+      return ASN1Encode(this.extensionsValue());
+    }
   }
 
   async function CreateEmulator(
@@ -2482,6 +2714,9 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       }
       ASN1Encode(value: ASN1Value): Buffer {
         return ASN1Encode(value);
+      }
+      X509ExtBuilder(): X509ExtBuilder {
+        return new X509ExtBuilderImpl();
       }
     }
 

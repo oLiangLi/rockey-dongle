@@ -8,7 +8,7 @@ X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machin
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
 .PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check jsWrapper
-.PHONY : ci test install-hooks test-optmatrix
+.PHONY : ci test install-hooks test-optmatrix test-web
 
 ##
 ## default build Release version ...
@@ -166,6 +166,14 @@ install-hooks:
 ##
 test-optmatrix:
 	node Build/tools/ci/optmatrix.cjs
+
+##
+## 网页端 CI(需本机 Chrome): 加载 Web/Agent/Tests 页面, 点击 EmuCreate→EmuTests
+## 并断言 X509ExtBuilder/JsCryptoSmoke OK。user-data-dir = .bin/ai-web-user-data(绝不碰默认配置)。
+## 缺省 headless(无界面); WEB_HEADED=1 以有界面窗口运行; CHROME 可指定浏览器路径。
+##
+test-web:
+	node Build/tools/ci/web-emutests.cjs
 
 ##
 ##
