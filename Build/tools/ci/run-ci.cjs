@@ -59,6 +59,9 @@ run("emuadmin(licence)", [harness, "emuadmin", "0"]);
 // 5) corpus: 编译器/词法边界语料(H-07 负立即数等)
 run("corpus", [harness, "corpus"]);
 
+// 5b) pkeyself: RockeySign/RockeyDecrypt 接线冒烟(X509 CA 所需原语)
+run("pkeyself", [harness, "pkeyself", "0"]);
+
 // 6) TRNG 失败注入自测(需平台构建;缺失则提示)
 const trngfail = path.join(root, ".bin", platformDirOf(), "__Testing__trngfail__.exe");
 if (fs.existsSync(trngfail)) {

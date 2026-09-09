@@ -1,4 +1,4 @@
-﻿import { integer, Addr, CipherSuiteV0 } from "../../World.js";
+import { integer, Addr, CipherSuiteV0 } from "../../World.js";
 import * as jsCryptoText from "../../Assembly/Emulator_wasm.js";
 import * as jsScript from "../../Script/index.js";
 
@@ -478,6 +478,21 @@ interface Native0_ {
 
   RockeyPKEY_CreateP256(pkey: integer, X: Addr, Y: Addr): integer;
   RockeyPKEY_CreateSM2(pkey: integer, X: Addr, Y: Addr): integer;
+
+  RockeyPKEY_SignEx(
+    pkey: integer,
+    dgst: Addr,
+    dlen: integer,
+    sig: Addr,
+    siglen: integer,
+  ): integer;
+  RockeyPKEY_DecryptEx(
+    pkey: integer,
+    out: Addr,
+    outlen: integer,
+    cipher: Addr,
+    cipherlen: integer,
+  ): integer;
 }
 
 export type CreateEmulatorOption = {
@@ -1103,6 +1118,8 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       RockeyPKEY_CreateRSA,
       RockeyPKEY_CreateP256,
       RockeyPKEY_CreateSM2,
+      RockeyPKEY_SignEx,
+      RockeyPKEY_DecryptEx,
       Initialize,
       RANDSeedBytes,
       MemoryManager,
@@ -2411,11 +2428,53 @@ export async function CryptoLoader(jsCipher: CipherSuiteV0) {
       }
 
       RockeySign(pkey: integer, hash: Buffer): Buffer {
-        throw jsCipher.Annihilus_(`Not implemented: RockeySign`);
+        if (pkey != (pkey | 0) || pkey < 0 || pkey > 0xffff)
+          throw jsCipher.Annihilus_(`Invalid pkey: ${pkey}`);
+
+        if (hash.length < 1 || hash.length > 1024)
+          throw jsCipher.Annihilus_(`Invalid hash size ${hash.length}`);
+
+        const stack = emscripten_stack_get_current();
+        const buffer = _emscripten_stack_alloc(8192);
+        hash.copy(HEAP, buffer);
+        const result = RockeyPKEY_SignEx(
+          pkey,
+          buffer,
+          hash.length,
+          buffer,
+          8192,
+        );
+        _emscripten_stack_restore(stack);
+
+        if (result < 0)
+          throw jsCipher.Annihilus_(`RockeySign ${hash.length} error ${result}`);
+        return MoveBuffer(buffer, result);
       }
 
       RockeyDecrypt(pkey: integer, cipher: Buffer): Buffer {
-        throw jsCipher.Annihilus_(`Not implemented: RockeyDecrypt`);
+        if (pkey != (pkey | 0) || pkey < 0 || pkey > 0xffff)
+          throw jsCipher.Annihilus_(`Invalid pkey: ${pkey}`);
+
+        if (cipher.length < 1 || cipher.length > 1024)
+          throw jsCipher.Annihilus_(`Invalid cipher size: ${cipher.length}`);
+
+        const stack = emscripten_stack_get_current();
+        const buffer = _emscripten_stack_alloc(8192);
+        cipher.copy(HEAP, buffer);
+        const result = RockeyPKEY_DecryptEx(
+          pkey,
+          buffer,
+          8192,
+          buffer,
+          cipher.length,
+        );
+        _emscripten_stack_restore(stack);
+
+        if (result < 0)
+          throw jsCipher.Annihilus_(
+            `RockeyDecrypt ${cipher.length} error ${result}`,
+          );
+        return MoveBuffer(buffer, result);
       }
 
       ASN1Decode(input: Buffer): [value: ASN1Value, size: integer] {

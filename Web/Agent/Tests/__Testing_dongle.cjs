@@ -1425,6 +1425,61 @@ async function EmuCorpus({ idx = 0 } = {}) {
   return pass === all;
 }
 
+/*! RockeySign/RockeyDecrypt 接线冒烟(pkeyself): 参数校验 + 不再抛 "Not implemented"
+ *! (原生已接线; 真实设备侧私钥往返需上游/设备导入核对, 不在此断言) */
+async function EmuPkeySelf({ idx = 0 } = {}) {
+  const e = EmuJsGet(idx);
+  const log = [];
+  const check = async (name, fn) => {
+    let pass = false, detail = "";
+    try {
+      const r = await fn();
+      pass = !!r;
+    } catch (err) {
+      detail = String((err && err.message) || err).slice(0, 90);
+    }
+    log.push({ name, pass });
+    console.log(`pkeyself: ${pass ? "PASS" : "FAIL"} ${name}${detail ? "  (" + detail + ")" : ""}`);
+  };
+
+  await check("RockeySign 参数校验(负句柄拒绝)", () => {
+    try {
+      e.RockeySign(-1, Buffer.alloc(16));
+      return false;
+    } catch (x) {
+      return /Invalid pkey/.test(String(x.message));
+    }
+  });
+  await check("RockeyDecrypt 参数校验(空密文拒绝)", () => {
+    try {
+      e.RockeyDecrypt(1, Buffer.alloc(0));
+      return false;
+    } catch (x) {
+      return /Invalid cipher size/.test(String(x.message));
+    }
+  });
+  await check("RockeySign 已接线(未注册句柄→原生错误, 非 Not implemented)", () => {
+    try {
+      e.RockeySign(0x4321, crypto.randomBytes(32));
+      return false;
+    } catch (x) {
+      return !/Not implemented/.test(String(x.message)) && /error/.test(String(x.message));
+    }
+  });
+  await check("RockeyDecrypt 已接线(未注册句柄→原生错误, 非 Not implemented)", () => {
+    try {
+      e.RockeyDecrypt(0x4321, crypto.randomBytes(128));
+      return false;
+    } catch (x) {
+      return !/Not implemented/.test(String(x.message)) && /error/.test(String(x.message));
+    }
+  });
+
+  const pass = log.filter((x) => x.pass).length;
+  console.log(`pkeyself: done ${pass}/${log.length} passed`);
+  return pass === log.length;
+}
+
 // ---------------------------------------------------------------- randtest(真机随机数质量)
 const RAND_SRC = "public 1024;\nRandBytes(0, 1024);\n";
 
@@ -2222,6 +2277,12 @@ async function main() {
     /* 编译器/词法边界语料: corpus [idx] — H-07/L-01/M-04/M-03 断言 */
     const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
     const ok = await EmuCorpus({ idx });
+    return ok ? 0 : 1;
+  }
+  if (cmd === "pkeyself") {
+    /* RockeySign/Decrypt 接线冒烟: pkeyself [idx] */
+    const idx = argv[1] !== undefined ? parseInt(argv[1], 10) : 0;
+    const ok = await EmuPkeySelf({ idx });
     return ok ? 0 : 1;
   }
   if (cmd === "realadmin" || cmd === "reallimit") {
