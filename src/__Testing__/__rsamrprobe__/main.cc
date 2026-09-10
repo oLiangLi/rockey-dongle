@@ -42,21 +42,38 @@ static double NowMs() {
 
 int RsaprProbeMain(int argc, char* argv[]) {
   (void)TAG;
+  std::setvbuf(stdout, nullptr, _IONBF, 0); /* 关缓冲: 卡死时也能看到最后阶段 */
   bool admin = false;
   bool cos_mode = false;
+  bool delay_mode = false;
+  uint32_t delay_iters = 0; /* -delay N: 设备端负载迭代数 */
+  int cos_cand = 0; /* -cos <cand> <iters>: 只测指定候选(0=全部 1..5) */
   int rounds = 8;
   int maxProbes = 2000;
+  int limbs = 32; /* 候选 limb 数(标定用: 4/8/16/24/32) */
   int ai = 1;
   if (ai < argc && 0 == strcmp("-2", argv[ai])) {
     admin = true;
     ++ai;
   }
-  if (ai < argc && 0 == strcmp("-cos", argv[ai])) {
-    cos_mode = true; /* COS 心跳候选微基准: -2 -cos [iters] */
+  if (ai < argc && 0 == strcmp("-delay", argv[ai])) {
+    delay_mode = true; /* 运行窗口标定: -2 -delay <iters> */
     ++ai;
+    if (ai < argc) delay_iters = static_cast<uint32_t>(strtoul(argv[ai++], nullptr, 0));
   }
-  if (ai < argc) rounds = atoi(argv[ai++]);
-  if (ai < argc) maxProbes = atoi(argv[ai++]);
+  if (ai < argc && 0 == strcmp("-cos", argv[ai])) {
+    cos_mode = true; /* COS 心跳候选微基准: -2 -cos [cand] [iters] */
+    ++ai;
+    if (ai < argc && 0 == strcmp(argv[ai], "-2")) ++ai; /* 容忍 -2 位置靠后 */
+    if (ai < argc) cos_cand = atoi(argv[ai++]);
+    if (ai < argc) maxProbes = atoi(argv[ai++]);
+  } else {
+    if (ai < argc) rounds = atoi(argv[ai++]);
+    if (ai < argc) maxProbes = atoi(argv[ai++]);
+    if (ai < argc) limbs = atoi(argv[ai++]); /* 可选: 候选 limb 数(默认 32) */
+  }
+  if (limbs < 1) limbs = 1;
+  if (limbs > 32) limbs = 32;
   if (rounds < 1) rounds = 1;
   if (rounds > 16) rounds = 16;
   if (maxProbes < 1) maxProbes = 1;
@@ -70,6 +87,26 @@ int RsaprProbeMain(int argc, char* argv[]) {
   int r = rockey.Enum(dongle_info);
   std::printf("[rsamrprobe] rockey.Enum return %d/%08x\n", r, rockey.GetLastError());
   if (r <= 0) return 1;
+  for (int i = 0; i < r && i < 8; ++i) {
+    const uint8_t* h = dongle_info[i].hid_;
+    std::printf("[rsamrprobe] dev[%d] hid=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n", i, h[0],
+                h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11]);
+  }
+  if (dev_index < 0 || dev_index >= r) {
+    std::printf("[rsamrprobe] WT_RKEY_DEVICE=%d 超出枚举范围(0..%d)\n", dev_index, r - 1);
+    return 1;
+  }
+  /* 安全闸: 本程序只允许操作测试 ukey(HID 00000000efea115bfc084642), 避免误写生产设备;
+   * 例外需显式 WT_RKEY_ALLOW_ANY=1 */
+  {
+    static const uint8_t kTestHid[12] = {0x00, 0x00, 0x00, 0x00, 0xEF, 0xEA,
+                                         0x11, 0x5B, 0xFC, 0x08, 0x46, 0x42};
+    if (!getenv("WT_RKEY_ALLOW_ANY") &&
+        0 != std::memcmp(dongle_info[dev_index].hid_, kTestHid, sizeof(kTestHid))) {
+      std::printf("[rsamrprobe] 目标设备 HID 非测试 ukey, 拒绝执行(需 WT_RKEY_ALLOW_ANY=1 才可越过)\n");
+      return 1;
+    }
+  }
   r = rockey.Open(dev_index);
   std::printf("[rsamrprobe] rockey.Open(%d) return %d/%08x\n", dev_index, r, rockey.GetLastError());
   if (r < 0) return 1;
@@ -102,6 +139,24 @@ int RsaprProbeMain(int argc, char* argv[]) {
     return 1;
   }
 
+  /* ---- 运行窗口标定: 设备端跑 N 次固定计算, host 量墙钟; 失败=超出窗口 ---- */
+  if (delay_mode) {
+    rsaprobe::ProbeIO dio;
+    std::memset(&dio, 0, sizeof(dio));
+    dio.argv_[0] = static_cast<uint32_t>(rsaprobe::kIndexRsaPrimeMR);
+    dio.error_[0] = rsaprobe::kMagic;
+    dio.error_[1] = rsaprobe::kModeDelay;
+    dio.error_[2] = delay_iters;
+    int mret = 0;
+    const double t0 = NowMs();
+    const int rc = rockey.ExecuteExeFile(&dio, sizeof(dio), &mret);
+    const double t1 = NowMs();
+    std::printf("[delay] iters=%u rc=%d total=%.1f ms done=%u per_iter_ns=%.2f\n", delay_iters, rc,
+                t1 - t0, static_cast<unsigned>(dio.error_[7]),
+                delay_iters ? (t1 - t0) * 1e6 / delay_iters : 0.0);
+    return rc < 0 ? 1 : 0;
+  }
+
   /* ---- COS 心跳候选微基准: 每个候选跑 maxProbes 次, 测单次代价并核对副作用 ---- */
   if (cos_mode) {
     PERMISSION pin_before = PERMISSION::kAnonymous;
@@ -112,7 +167,9 @@ int RsaprProbeMain(int argc, char* argv[]) {
     rsaprobe::ProbeIO io;
     static const char* kNames[6] = {"-", "get_pinstate", "get_tickcount", "led_control(blink)",
                                     "get_sharememory", "get_keyinfo"};
-    for (int cand = 1; cand <= 5; ++cand) {
+    const int cand_first = (cos_cand >= 1 && cos_cand <= 5) ? cos_cand : 1;
+    const int cand_last = (cos_cand >= 1 && cos_cand <= 5) ? cos_cand : 5;
+    for (int cand = cand_first; cand <= cand_last; ++cand) {
       std::memset(&io, 0, sizeof(io));
       io.argv_[0] = static_cast<uint32_t>(rsaprobe::kIndexRsaPrimeMR);
       io.error_[0] = rsaprobe::kMagic;
@@ -147,8 +204,6 @@ int RsaprProbeMain(int argc, char* argv[]) {
 
   /* ---- 分块探测循环: 每次 ExecuteExeFile 测一个候选 ---- */
   rsaprobe::ProbeIO io;
-  std::memset(&io, 0, sizeof(io));
-  io.argv_[0] = static_cast<uint32_t>(rsaprobe::kIndexRsaPrimeMR); /* 0x14, 设备 Start 读 index */
 
   int found = 0;
   unsigned calls = 0;
@@ -156,7 +211,17 @@ int RsaprProbeMain(int argc, char* argv[]) {
   const double t_start = NowMs();
   for (int i = 0; i < maxProbes; ++i) {
     if (i > 0) rsa_mr::addSmall(cand, 2);
-    rsaprobe::packCandidate(io, cand.v, rounds);
+    std::memset(&io, 0, sizeof(io));
+    io.argv_[0] = static_cast<uint32_t>(rsaprobe::kIndexRsaPrimeMR);
+    std::memcpy(&io.hash_[0], cand.v, static_cast<size_t>(limbs) * 4);
+    io.hash_[limbs * 4 - 1] |= 0x80; /* 顶 limb 最高位置 1: 固定位长≈limbs*32 */
+    io.hash_[0] |= 1;                /* 候选保持奇数 */
+    io.error_[0] = rsaprobe::kMagic;
+    io.error_[1] = rsaprobe::kModeOne;
+    io.error_[2] = static_cast<uint32_t>(rounds);
+    io.error_[6] = static_cast<uint32_t>(limbs); /* 设备侧按该 limb 数构造 n */
+    if (i < 3 || (i % 100) == 0)
+      std::printf("[rsamrprobe] -> call #%d rounds=%d limbs=%d\n", i, rounds, limbs);
     const double t0 = NowMs();
     int mret = 0;
     const int rc = rockey.ExecuteExeFile(&io, sizeof(io), &mret);

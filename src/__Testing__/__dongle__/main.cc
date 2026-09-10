@@ -723,8 +723,8 @@ int Testing_RsaPrimeGenPerf(Dongle& rockey, Context_t* Context, void* /*ExtendBu
 static void RsaMR_HeartbeatCb(long long probes, void* ctx) {
   Dongle* d = static_cast<Dongle*>(ctx);
   if (!d || (probes & 0x3F) != 0) return; /* 每 64 探测一次 */
-  PERMISSION st = PERMISSION::kAnonymous;
-  std::ignore = d->GetPINState(&st);
+  DWORD tick = 0;
+  std::ignore = d->GetTickCount(&tick); /* 首选 COS 心跳: 只读/无副作用/负载最小 */
 }
 #endif /* __RockeyARM__ */
 
@@ -928,9 +928,9 @@ static int Testing_RsaPrimeOne(Context_t* Context, void* ExtendBuf) {
   int result = rsa_mr::isPrimeMRW(
                    n, rounds, *w,
                    [](bool v, void* ctx) {
-                     PERMISSION perm = PERMISSION::kAnonymous;
                      static_cast<Dongle*>(ctx)->SetLEDState(v ? LED_STATE::kOn : LED_STATE::kOff);
-                     std::ignore = static_cast<Dongle*>(ctx)->GetPINState(&perm);
+                     DWORD tick = 0;
+                     std::ignore = static_cast<Dongle*>(ctx)->GetTickCount(&tick); /* COS 心跳 */
                    },
                    &rockey)
                    ? 1u
@@ -948,6 +948,96 @@ static int Testing_RsaPrimeOne(Context_t* Context, void* ExtendBuf) {
 
   return result;
 }
+
+#if defined(__RockeyARM__)
+/*! 设备侧心跳: 反转 LED(kOn/kOff) + 触发一次 COS 调用(GetTickCount)。
+ *! 幂模内层每 16 次平方回调一次 → 长计算期间 LED 持续可见翻转, 同时服务看门狗。 */
+struct RsaMRBeat {
+  Dongle* d;
+  unsigned n;
+};
+static void RsaMR_Beat(void* ctx) {
+  RsaMRBeat* b = static_cast<RsaMRBeat*>(ctx);
+  if (!b || !b->d) return;
+  b->d->SetLEDState((++b->n & 1u) ? LED_STATE::kOn : LED_STATE::kOff);
+  DWORD t = 0;
+  std::ignore = b->d->GetTickCount(&t); /* COS 心跳 */
+}
+
+/*! 单候选探测(host __Testing__rsamrprobe__ 正常模式 kModeOne): 读取载荷中的 128B 候选
+ *! 与 rounds, 一次 isPrimeMRW 后立即返回(与最小实验 Testing_RsaPrimeOne 区分: 后者自造
+ *! 16/17-limb 随机数)。LED 反转 + GetTickCount COS 心跳贯穿幂模内层。 */
+static int Testing_RsaPrimeProbeOne(Context_t* Context, void* ExtendBuf) {
+  Dongle rockey;
+  rockey.SetLEDState(LED_STATE::kBlink);
+  {
+    DWORD tick = 0;
+    std::ignore = rockey.GetTickCount(&tick); /* 入口 COS 心跳 */
+  }
+
+  rsa_mr::MRWork* w = reinterpret_cast<rsa_mr::MRWork*>(ExtendBuf);
+  int rounds = (int)(Context->error_[2] & 0xff);
+  if (rounds < 1) rounds = 8;
+  if (rounds > 16) rounds = 16;
+
+  rsa_mr::BN n;
+  const uint8_t* cb = reinterpret_cast<const uint8_t*>(&Context->hash_[0]);
+  int limbs = (int)(Context->error_[6] & 0xff); /* 载荷可选: 候选 limb 数(默认 32) */
+  if (limbs < 1 || limbs > 32) limbs = 32;
+  n.clear();
+  for (int i = 0; i < limbs * 4; ++i) n.v[i / 4] |= (uint32_t)cb[i] << ((i % 4) * 8);
+  n.n = limbs;
+  rsa_mr::trim(n);
+
+  RsaMRBeat beat{&rockey, 0};
+  const bool prime = rsa_mr::isPrimeMRW(
+      n, rounds, *w,
+      [](bool v, void* ctx) { /* 每个 witness 迭代反转 LED(可见) */
+        RsaMRBeat* b = static_cast<RsaMRBeat*>(ctx);
+        if (b && b->d) b->d->SetLEDState(v ? LED_STATE::kOn : LED_STATE::kOff);
+      },
+      &beat,
+      RsaMR_Beat, &beat);
+  Context->error_[4] = prime ? 1u : 0u;
+  Context->error_[5] = 0;
+  Context->error_[7] = rsaprobe::kCosDone; /* 完成标记 */
+  return 0;
+}
+#endif /* __RockeyARM__ */
+
+#if defined(__RockeyARM__)
+/*! 可调负载探针(host __Testing__rsamrprobe__ -delay N): 设备端跑 N 次固定计算,
+ *! 每 1024 次一次 COS 心跳(GetTickCount) 并反转 LED, 用于逐步逼近真实运行窗口:
+ *! 成功返回说明 N 在窗口内(host 记录墙钟), FFFFFFFF/挂死说明超出窗口(需 UDP 复位)。
+ *! 迭代成本与 N 线性, 便于 ×1.5~2 递进标定。 */
+static int Testing_DelayProbe(Context_t* Context, void* /*ExtendBuf*/) {
+  Dongle rockey;
+  rockey.SetLEDState(LED_STATE::kBlink);
+  {
+    DWORD t = 0;
+    std::ignore = rockey.GetTickCount(&t);
+  }
+
+  const uint32_t n = Context->error_[2];
+  volatile uint32_t sink = 0;
+  for (uint32_t i = 0; i < n; ++i) {
+    uint32_t x = i * 2654435761u;
+    x ^= x >> 13;
+    x *= 0x85ebca6bu;
+    x ^= x >> 16;
+    sink ^= x;
+    if ((i & 0x3FFu) == 0) { /* 每 1024 次: COS 心跳 + LED 反转(可见) */
+      DWORD t = 0;
+      std::ignore = rockey.GetTickCount(&t);
+      rockey.SetLEDState((i & 0x400u) ? LED_STATE::kOn : LED_STATE::kOff);
+    }
+  }
+  Context->error_[4] = sink; /* 防优化, 亦可校验 */
+  Context->error_[5] = 0;
+  Context->error_[7] = rsaprobe::kCosDone;
+  return 0;
+}
+#endif /* __RockeyARM__ */
 
 #if defined(__RockeyARM__)
 /*! COS 心跳候选微基准(设备侧; 经 Start 顶部 mode=kModeCos 快速路径进入):
@@ -2192,6 +2282,12 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     /* COS 心跳微基准(host __Testing__rsamrprobe__ -cos): 设备侧只跑候选调用循环 */
     if (ctx->error_[0] == rsaprobe::kMagic && ctx->error_[1] == rsaprobe::kModeCos)
       return 10086 - Testing_CosProbe(ctx, ExtendBuf);
+    /* 可调负载探针(host -delay N): 逐步逼近真实运行窗口 */
+    if (ctx->error_[0] == rsaprobe::kMagic && ctx->error_[1] == rsaprobe::kModeDelay)
+      return 10086 - Testing_DelayProbe(ctx, ExtendBuf);
+    /* 单候选探测(host __Testing__rsamrprobe__ 正常模式): 读载荷候选并一次判定 */
+    if (ctx->error_[0] == rsaprobe::kMagic && ctx->error_[1] == rsaprobe::kModeOne)
+      return 10086 - Testing_RsaPrimeProbeOne(ctx, ExtendBuf);
 #endif
     return 10086 - Testing_RsaPrimeOne(ctx, ExtendBuf);
   }

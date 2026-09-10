@@ -107,3 +107,69 @@ LED **先闪烁若干秒(说明已进入 MR 搜索且自检通过、在逐探测
   ExecuteExeFile 流程、LED 协议
 - `.bin/arm-RockeyARM-native-release/rockey_dongle.bin` — 带测试项的固件(已刷新到测试 ukey)
 - Host 自测驱动(临时):`.bin/host_mr_selftest.{cc,exe}`
+
+---
+
+## 7. 2026-09-13 深挖与结论(本任务就此暂停)
+
+### 7.1 设备侧 LED / 看门狗语义(实测确认)
+
+- `SetLEDState(kBlink)` **不会自动闪**:闪烁由**COS 调用派发**——必须在写完状态后发生一次
+  COS 调用(如 `GetTickCount`/`GetPINState`);纯 busy loop / 自旋/延时**无效**,只会看到 LED
+  停在最后一次写入的电平(表现为"常亮")。
+- `GetTickCount` 在 item 执行期**不自走**(时间冻结),故 ukey 内不能用它计时/延时;但作为
+  "触发一次 COS" 的心跳非常合适。
+- 结论:ukey 内长计算必须**周期性发 COS 心跳**,否则 LED 不闪且设备可能被挂起;心跳点已放在
+  幂模内层(每 16 次平方一次,见 `powmodMRW` 的 Tick 回调)与测试项入口。
+
+### 7.2 COS 心跳候选实测(FTRX.h 只读清单筛选)
+
+| 候选 | 结论 |
+|---|---|
+| `get_tickcount`(**已选定**) | 5 次 53.1 ms / 2000 次 79.1 ms ⇒ 固定 ~53 ms(ExecuteExeFile 往返)+ **边际 ~13 µs/次**;`pin/share0/lasterr` 跑前跑后一致,无副作用;设备正常返回 |
+| `get_pinstate` | 可服务 LED(用户实验验证);host 侧路径为 NOTIMPL,仅设备侧可用 |
+| `led_control(kBlink)` | 幂等重发,仅 LED 状态变化,可作备选 |
+| `get_sharememory` / `get_keyinfo` | 只读但负载更大(32B/~40B),不优 |
+| `get_realtime` / `get_expiretime` | 本机 NOTIMPL(F0000016),污染错误态,排除 |
+
+### 7.3 单次执行运行窗口标定(关键反转)
+
+新增线性可调负载 `-delay N`(设备端固定混合运算,**1.2564 µs/iter**,每 1024 次一次 COS 心跳
+并反转 LED),host 量墙钟:
+
+| N | 结果 | 墙钟 |
+|---|---|---|
+| 1e8 | rc=0, done='COS1' | 125.674 s |
+| 2e8 | rc=0, done='COS1' | 251.278 s |
+| 3e8 | rc=0, done='COS1' | 376.913 s |
+| **4e8** | **rc=0, done='COS1'** | **502.563 s(8.4 分钟)** |
+
+⇒ **设备单次 `ExecuteExeFile` 至少可连续运行 >502 s,并不存在 ~8 分钟的窗口限制**(上限尚未探到,
+可继续 6e8/8e8 递进)。此前 MR 在 ~466 s / ~490 s 失败**不是超时**。
+
+### 7.4 朴素 MR 在 ukey 上的结论
+
+- 单次 1024 位探测(rounds=1 与 rounds=8)均约 466–490 s 后以
+  `DONGLE.EXEC 'Dongle_RunExeFile(...)' Error FFFFFFFF` 失败,随后设备挂死(LED 常亮,需软复位);
+- 结合 7.3:这不是窗口问题,而是 **MR 路径自身挂死/耗时远超 502 s**——朴素"逐位二进制取模"
+  在 1024 位规模下代价过高(单次 base-2 幂模即无法在已有窗口内完成),或存在特定输入下的死循环;
+- **结论:朴素实现不可行**。要在 ukey 内完成 1024 位素数搜索,必须先做 `mulmod` 提速
+  (字级长除或 Montgomery,预计 30–100×),再重新评估"每数字一次探测/整轮搜索"的可行性。
+
+### 7.5 本任务暂停决定
+
+- 暂定**暂停**"ukey 内软件找回 RSA p/q"这条探索,后续按"已有良好 ROOT CA 私钥托管方案"推进其它工作;
+- 若恢复该任务,第一步是:实现 Montgomery(或 word-wise) `mulmod` + 现有 Tick 心跳,再用
+  `-delay`/单探测模式重新标定单次探测耗时,然后判断 ~355 候选/素数的整轮可行性。
+
+### 7.6 本轮新增工具与用法
+
+- `__Testing__rsamrprobe__`(独立 host 程序,仅允许测试 ukey,HID 校验):
+  - 单数字分块探测:`-2 <rounds> <maxProbes> [limbs]`(limbs 默认 32;小 limbs 用于标定)
+  - COS 微基准:`-2 -cos <cand> <iters>`(cand 1..5;单独测某个候选)
+  - 运行窗口标定:`-2 -delay <iters>`
+- UDP 软复位(管理员 shell 运行,收到 `127.0.0.1:12345` 任意报文即
+  `pnputil /restart-device`,仅限 `VID_096E&PID_0209`):
+  `.bin/ukey-reset-dgram.cjs`
+- 设备侧快速路径:`__Testing__dongle__` Start 顶部按 `rsaprobe::kMagic` + mode 分发到
+  `Testing_RsaPrimeProbeOne`(单候选)/`Testing_CosProbe`(COS 候选)/`Testing_DelayProbe`(负载)/`Testing_RsaPrimeOne`(最小实验)。

@@ -17,6 +17,7 @@ namespace rsaprobe {
 constexpr uint32_t kMagic = 0x52535031u; /* 'RSP1' */
 constexpr uint32_t kModeOne = 1u;
 constexpr uint32_t kModeCos = 2u;          /* COS 心跳微基准模式(见 Testing_CosProbe) */
+constexpr uint32_t kModeDelay = 3u;        /* 可调负载模式: error_[2]=迭代数(测运行窗口) */
 constexpr uint32_t kCosDone = 0x434F5331u; /* 'COS1' 完成标记(回写 error_[7]) */
 constexpr int kIndexRsaPrimeMR = 20; /* 与 dongle kTestingIndex::RsaPrimeMR 一致 */
 constexpr int kCandidateBytes = 128; /* 1024 位候选 = BN.v[0..31] 小端 */

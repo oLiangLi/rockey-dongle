@@ -1,4 +1,4 @@
-﻿/*! rsa_mr.h — MCU/设备约束版 1024 位 Miller–Rabin 素数搜索(定长数组, 无堆/无 .rodata 表)
+/*! rsa_mr.h — MCU/设备约束版 1024 位 Miller–Rabin 素数搜索(定长数组, 无堆/无 .rodata 表)
  *! 配合 __Testing__dongle__ 的 RsaPrimeMR 测试项在 ukey 内执行, 以测得"找 1024 位素数"时间。
  *! 约束: 无动态分配; 常量(小素数基)以立即数/局部常量形式内联, 不建 .rodata 表;
  *!       数字=uint32[64] 小端, n=有效 limb 数(≤32 参与运算, 乘/取模临时 ≤64)。
@@ -225,15 +225,19 @@ static RSA_MR_NOINLINE void mulmodW(BN& r, const BN& a, const BN& b, const BN& m
   r = rem;
 }
 
-/* r = base^e mod m (MR 用, base 为小 u32 基; r 与 e/m 不同对象). bs 用工作区槽 */
+/* r = base^e mod m (MR 用, base 为小 u32 基; r 与 e/m 不同对象). bs 用工作区槽.
+ *! Tick: 每 16 次平方回调一次(tick_ctx) —— 供 ukey 侧做 COS 心跳(服务 LED/看门狗);
+ *! 1024 位幂模约 1024 次平方 → 约 64 次回调, 代价可忽略。 */
 static RSA_MR_NOINLINE void powmodMRW(BN& r, uint32_t base, const BN& e, const BN& m, BN& bs,
-                                      BN& prod, BN& rem) {
+                                      BN& prod, BN& rem, void (*Tick)(void*) = nullptr,
+                                      void* tick_ctx = nullptr) {
   bs.v[0] = base; /* base < m(MR 路径已保证), 单 limb, 其余槽位不读 */
   bs.n = 1;
   r.clear();
   r.v[0] = 1;
   for (int i = bitlen(e) - 1; i >= 0; --i) {
     mulmodW(r, r, r, m, prod, rem);
+    if (Tick && (i & 15) == 0) Tick(tick_ctx);
     if ((e.v[i >> 5] >> (i & 31)) & 1u) mulmodW(r, r, bs, m, prod, rem);
   }
 }
@@ -272,7 +276,9 @@ static RSA_MR_NOINLINE bool isPrimeMRW(const BN& n,
                                        int rounds,
                                        MRWork& w,
                                        void (*Callback)(bool v, void* ctx) = nullptr,
-                                       void* ctx = nullptr) {
+                                       void* ctx = nullptr,
+                                       void (*Tick)(void*) = nullptr,
+                                       void* tick_ctx = nullptr) {
   if (n.n == 1) {
     const uint32_t v = n.v[0];
     if (v < 2)
@@ -296,12 +302,13 @@ static RSA_MR_NOINLINE bool isPrimeMRW(const BN& n,
   for (int r = 0; r < cnt; ++r) {
     const uint32_t base = bases[r];
     if (nm1.n == 1 && base >= nm1.v[0]) continue; /* nm1≥2^32 时基必 < nm1 */
-    powmodMRW(x, base, d, n, w.bs, w.prod, w.rem);
+    powmodMRW(x, base, d, n, w.bs, w.prod, w.rem, Tick, tick_ctx);
     if (isOne(x) || cmp(x, nm1) == 0) continue;
     bool witness = false;
     for (int j = 1; j < s; ++j) {
       if (Callback)
         Callback(j % 2, ctx);
+      if (Tick && (j & 15) == 0) Tick(tick_ctx);
 
       mulmodW(x, x, x, n, w.prod, w.rem);
       if (cmp(x, nm1) == 0) {
