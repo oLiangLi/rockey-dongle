@@ -1,7 +1,9 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <Interface/x509.h>
 #include <base/base.h>
 #include "../__rsamr__/rsa_mr.h"
+#include "../__rsamr__/probe_io.h"
+#include <cstddef>
 
 #if !defined(__RockeyARM__) && !defined(__EMULATOR__)
 #include <signal.h>
@@ -98,6 +100,11 @@ struct Context_t {
  *! 编译期断言);blob 布局 [u16 leaf_len][u16 ca_len][leaf DER][ca DER] */
 constexpr uint32_t kX509CertOffset = 360;
 rLANG_ABIREQUIRE(sizeof(Context_t) == kX509CertOffset);
+/* 单数字探测载荷前部必须与 Context_t 对齐(host __Testing__rsamrprobe__ 用同一布局) */
+static_assert(offsetof(Context_t, hash_) == offsetof(rsaprobe::ProbeIO, hash_), "probe hash_ offset");
+static_assert(offsetof(Context_t, ts_) == offsetof(rsaprobe::ProbeIO, ts_), "probe ts_ offset");
+static_assert(offsetof(Context_t, seed_) == offsetof(rsaprobe::ProbeIO, seed_), "probe seed_ offset");
+static_assert(offsetof(Context_t, error_) == offsetof(rsaprobe::ProbeIO, error_), "probe error_ offset");
 
 #if !defined(__RockeyARM__)
 /*! X509Tests 内置证书(TASSL/BabaSSL 生成, X509_verify 交叉验证; 固件 rodata 必须为空,
@@ -222,7 +229,7 @@ static_assert(sizeof(kX509CertsSM2) <= 1024 - kX509CertOffset, "kX509CertsSM2 bl
 static_assert(sizeof(kX509CertsRSA) <= 1024 - kX509CertOffset, "kX509CertsRSA blob too large");
 
 /*! 子模式(argv_[1]):0/其他 = P256 链(缺省), 1 = SM2 链, 2 = RSA2048 自签 CA */
-static void WriteX509Certs(Dongle& rockey, const Context_t* Context) {
+[[maybe_unused]] static void WriteX509Certs(Dongle& rockey, const Context_t* Context) {
   const uint8_t* blob = kX509CertsP256;
   size_t size = sizeof(kX509CertsP256);
   if (Context->argv_[1] == 1) {
@@ -691,10 +698,13 @@ int Testing_RsaPrimeGenPerf(Dongle& rockey, Context_t* Context, void* /*ExtendBu
 
   rlLOGI(TAG, "RsaPrimeGenPerf: total %u ms, avg %u ms/2048-bit-key (x%d)",
          static_cast<unsigned>(tick_all), static_cast<unsigned>(tick_all / loops), loops);
+#if !defined(__RockeyARM__)
+  /* ≤1h 判定仅 host 日志有意义(arm 固件 rlLOGI 为空实现, 避免 unused 警告) */
   const double hour_ms = 3600.0 * 1000.0;
   const double per = static_cast<double>(tick_all) / loops;
   rlLOGI(TAG, "RsaPrimeGenPerf: <= 1h? %s (单次 %.1f ms; 单 1024 位素数约 %.1f ms 数量级)",
          per < hour_ms ? "YES" : "NO", per, per / 2.0);
+#endif
   std::ignore = modules;
   return 0;
 }
@@ -704,49 +714,47 @@ int Testing_RsaPrimeGenPerf(Dongle& rockey, Context_t* Context, void* /*ExtendBu
  *! 无堆/无 .rodata 表)以 +2 递增找回 p/q —— 直接测出 ukey 上"找素数"耗时。
  *! argv_[1]=MR 轮数(默认 8)。host/wasm 计时不具参考性, 以 ukey 内执行为准。
  *!
- *! 设备侧无日志通道, 用 SetLEDState(kOff/kOn) 反馈状态(诊断协议):
- *!   A) 进入测试项: 亮~120ms 灭(一次短闪)         —— 未闪=挂在分发前;
- *!   B) 自检失败(M127 合/M67 素): LED 常亮死循环   —— MR 大数路径异常;
- *!   C) p/q 搜索中: 每 64 probes 翻转一次 LED      —— 持续翻转=在推进;
- *!                                                冻结 >~20-30s=卡在单次探测;
- *!   D) p 找到: 长亮 ~400ms; q 找到: 长亮 ~400ms 后熄灭返回。 */
+ *! 设备侧无日志且 GetTickCount 在 item 内不自走 → 不在 ukey 内做任何延时/计时:
+ *! LED 仅入口常亮(=已进入); 结果经 Context->ts_ 阶段码回传, host 在 ExecuteExeFile
+ *! 返回后读 CopyContext.ts_ 打印(stage/ok/probes/rounds); 设备耗时由 host 墙钟计时。 */
 #if defined(__RockeyARM__)
-static void RsaMR_Led(Dongle& rockey, bool on) {
-  rockey.SetLEDState(on ? LED_STATE::kOn : LED_STATE::kOff);
-}
-static void RsaMR_LedWait(Dongle& rockey, DWORD ms) {
-  DWORD t0 = 0, t = 0;
-  rockey.GetTickCount(&t0);
-  do {
-    rockey.GetTickCount(&t);
-  } while ((DWORD)(t - t0) < ms);
-}
-static void RsaMR_ProbeLed(long long probes, void* ctx) {
+/* COS 心跳: kBlink/看门狗由 COS 调用派发服务(纯 busy loop 无效) —— 周期性
+ * 触发一次 COS 调用(GetPINState), 让 LED 在长搜索期间保持闪烁并喂狗。 */
+static void RsaMR_HeartbeatCb(long long probes, void* ctx) {
   Dongle* d = static_cast<Dongle*>(ctx);
-  if (!d) return;
-  RsaMR_Led(*d, ((probes >> 6) & 1) != 0); /* 每 64 probes 翻转 */
+  if (!d || (probes & 0x3F) != 0) return; /* 每 64 探测一次 */
+  PERMISSION st = PERMISSION::kAnonymous;
+  std::ignore = d->GetPINState(&st);
 }
 #endif /* __RockeyARM__ */
 
 int Testing_RsaPrimeMR(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
+#if 0
   int rounds = (int)(Context->argv_[1] & 0xff);
   if (rounds < 1) rounds = 8;
   if (rounds > 16) rounds = 16;
+#else
+  int rounds = 1;
+#endif
 
   /* MR 大数临时(prod/rem/bs)放进 ExtendBuf(≥1KB 辅助区, 非栈) ——
    * 栈上只剩 findPrime/isPrimeMR 的 nm1/d/x 等, 全链 ≤2KB, 无需搬 SP。 */
   rsa_mr::MRWork* w = reinterpret_cast<rsa_mr::MRWork*>(ExtendBuf);
 #if defined(__RockeyARM__)
-  RsaMR_Led(rockey, true);
-  RsaMR_LedWait(rockey, 120);
-  RsaMR_Led(rockey, false);
-  RsaMR_LedWait(rockey, 120);
+  /* 设备侧: 不做任何 GetTickCount 等待(设备内 item 执行期 tick 可能不自走,
+   * 曾造成"入口常亮卡死"假象)。阶段码写 Context->ts_, host 在 ExecuteExeFile
+   * 返回后读 CopyContext.ts_ 打印。LED: 入口即常亮(=已进入), 完成与否看 host 输出。 */
+  Context->ts_[5] = 0x52535031u; /* 'RSP1' 回传标记 */
+  Context->ts_[0] = 0;           /* stage: 0=运行中 1=自检失败 2=完成 */
+  /* kBlink 需要 COS 调用才会被派发; 这里先触发一次心跳(兼作喂狗) */
+  rockey.SetLEDState(LED_STATE::kBlink);
+  RsaMR_HeartbeatCb(0, &rockey);
 #else
   rlLOGI(TAG, "RsaPrimeMR: enter rounds=%d w=%p sizeof(MRWork)=%zu", rounds,
          static_cast<void*>(w), sizeof(rsa_mr::MRWork));
 #endif
 
-  /* 快速自检: 2^127-1 素、2^67-1 合 —— 验证设备上大数路径 MR 本身工作 */
+  /* 快速自检: 2^127-1 素、2^67-1 合 —— 验证设备上大数路径 MR 本身工作(纯计算) */
   {
     rsa_mr::BN m127, m67;
     m127.clear();
@@ -758,10 +766,9 @@ int Testing_RsaPrimeMR(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
     const bool ok_m127 = rsa_mr::isPrimeMRW(m127, 2, *w);
     const bool ok_m67 = !rsa_mr::isPrimeMRW(m67, 2, *w);
 #if defined(__RockeyARM__)
-    if (!ok_m127 || !ok_m67) { /* 自检失败 → LED 常亮, 便于区分 */
-      RsaMR_Led(rockey, true);
-      for (;;) {
-      }
+    if (!ok_m127 || !ok_m67) {
+      Context->ts_[0] = 1; /* 自检失败(MR 大数路径在设备上有问题) */
+      return -2;
     }
 #else
     rlLOGI(TAG, "RsaPrimeMR: sanity M127=%d M67=%d", ok_m127 ? 1 : 0, ok_m67 ? 1 : 0);
@@ -769,65 +776,237 @@ int Testing_RsaPrimeMR(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 #endif
   }
 
+#if 0
+  rockey.SetLEDState(LED_STATE::kBlink);
+#endif
+
   uint8_t seed[128];
   rsa_mr::BN buf; /* p、q 顺序复用同一缓冲(各自找到后立刻取 top 记录) */
   long long probe_p = 0, probe_q = 0;
+#if !defined(__RockeyARM__)
   DWORD tp0 = 0, tp1 = 0, tq0 = 0, tq1 = 0;
   uint32_t p_hi[2] = {0, 0}, q_hi[2] = {0, 0};
-
-  rockey.GetTickCount(&tp0);
-  const bool ok_p =
-      rockey.RandBytes(seed, sizeof(seed)) < 0
-          ? false
-          : rsa_mr::findPrimeW(
-                buf, seed, rounds, probe_p, *w,
-#if defined(__RockeyARM__)
-                RsaMR_ProbeLed, &rockey
-#else
-                nullptr, nullptr
 #endif
-            );
+  bool ok_p = false, ok_q = false;
+
+  /* p 搜索: 设备侧纯计算(无进度 LED/无 tick 调用, 排除"循环内设备调用"干扰) */
+#if defined(__RockeyARM__)
+  std::ignore = seed;
+#if 0
+  if (rockey.RandBytes(seed, sizeof(seed)) >= 0)
+    ok_p = rsa_mr::findPrimeW(buf, seed, rounds, probe_p, *w, RsaMR_HeartbeatCb, &rockey);
+  /* q 搜索 */
+  if (rockey.RandBytes(seed, sizeof(seed)) >= 0)
+    ok_q = rsa_mr::findPrimeW(buf, seed, rounds, probe_q, *w, RsaMR_HeartbeatCb, &rockey);
+#endif
+#else
+  rockey.GetTickCount(&tp0);
+  ok_p = rockey.RandBytes(seed, sizeof(seed)) < 0
+             ? false
+             : rsa_mr::findPrimeW(buf, seed, rounds, probe_p, *w, nullptr, nullptr);
   rockey.GetTickCount(&tp1);
   p_hi[1] = buf.v[buf.n - 1];
   p_hi[0] = buf.v[buf.n > 1 ? buf.n - 2 : 0];
-#if defined(__RockeyARM__)
-  RsaMR_Led(rockey, true);
-  RsaMR_LedWait(rockey, 400);
-  RsaMR_Led(rockey, false);
-  RsaMR_LedWait(rockey, 150);
-#endif
 
   rockey.GetTickCount(&tq0);
-  const bool ok_q =
-      rockey.RandBytes(seed, sizeof(seed)) < 0
-          ? false
-          : rsa_mr::findPrimeW(
-                buf, seed, rounds, probe_q, *w,
-#if defined(__RockeyARM__)
-                RsaMR_ProbeLed, &rockey
-#else
-                nullptr, nullptr
-#endif
-            );
+  ok_q = rockey.RandBytes(seed, sizeof(seed)) < 0
+             ? false
+             : rsa_mr::findPrimeW(buf, seed, rounds, probe_q, *w, nullptr, nullptr);
   rockey.GetTickCount(&tq1);
   q_hi[1] = buf.v[buf.n - 1];
   q_hi[0] = buf.v[buf.n > 1 ? buf.n - 2 : 0];
-#if defined(__RockeyARM__)
-  RsaMR_Led(rockey, true);
-  RsaMR_LedWait(rockey, 400);
-  RsaMR_Led(rockey, false);
-  RsaMR_LedWait(rockey, 150);
 #endif
 
+#if defined(__RockeyARM__)
+  /* 阶段回传: 1=p.probes 2=q.probes 3=ok 位(bit0=p,bit1=q) 4=rounds */
+  Context->ts_[1] = static_cast<uint32_t>(probe_p & 0xFFFFFFFFull);
+  Context->ts_[2] = static_cast<uint32_t>(probe_q & 0xFFFFFFFFull);
+  Context->ts_[3] = static_cast<uint32_t>((ok_p ? 1 : 0) | ((ok_q ? 1 : 0) << 1));
+  Context->ts_[4] = static_cast<uint32_t>(rounds);
+  Context->ts_[0] = 2; /* 完成 */
+#else
   rlLOGI(TAG, "RsaPrimeMR: p ok=%d probes=%lld ms=%u top=%08x%08x", ok_p ? 1 : 0,
          static_cast<long long>(probe_p), static_cast<unsigned>(tp1 - tp0),
          static_cast<unsigned>(p_hi[0]), static_cast<unsigned>(p_hi[1]));
   rlLOGI(TAG, "RsaPrimeMR: q ok=%d probes=%lld ms=%u top=%08x%08x", ok_q ? 1 : 0,
          static_cast<long long>(probe_q), static_cast<unsigned>(tq1 - tq0),
          static_cast<unsigned>(q_hi[0]), static_cast<unsigned>(q_hi[1]));
+#endif
 
   return (ok_p && ok_q) ? 0 : -1;
 }
+
+/*! 单数字探测(分块模式): host 每次 ExecuteExeFile 只测一个候选并立即返回, 规避
+ *! 设备长任务限制; ukey 内零延时/零计时/零日志。
+ *! 契约(经 Start 顶部快速路径进入, 跳过全部管理副作用):
+ *!   候选 128B 小端(BN.v[0..31])位于 Context->hash_[0..63]+ts_[0..31]+seed_[0..31](连续);
+ *!   error_[0]=0x52535031 'RSP1' magic; error_[1]=1; error_[2]=rounds(入);
+ *!   回写: error_[4]=0/1(合/素); error_[5]=0(OK)。 */
+static int Testing_RsaPrimeOne(Context_t* Context, void* ExtendBuf) {
+#if defined(__RockeyARM__)
+  Dongle rockey;
+  /* kBlink 由设备 OS 主循环服务: item 内不要自旋/延时, 写状态后尽快返回才会真的闪。
+   * 注意: Dongle 构造每次调用都会做 TRNG 初始化, 单探测计时会含这部分开销。 */
+  rockey.SetLEDState(LED_STATE::kOn);
+  PERMISSION perm = PERMISSION::kAnonymous;
+
+  std::ignore = rockey.GetPINState(&perm);
+
+#if 0  /// 执行这段分支, 修改为 #if 1, 程序很快退出, 退出后 LED 闪烁 ... 
+  if(perm == PERMISSION::kAdministrator)
+    return -1; /* 我们确定是以管理员权限执行的脚本, 因此程序一定会在这退出, 直接 return -1 会导致后面的代码不编译进 ROM */
+#endif
+
+  auto delay = [&] {
+    for(int i = 0; i < 10000; ++i)
+      std::ignore = rockey.GetPINState(&perm); /// 确认, 产生一次 COS 调用, 可以使得 LED 闪烁, 而单独的 busy loop 延时无效 ...
+  };
+
+  constexpr int kLoopCount = 100;
+  for (int i = 1; i <= kLoopCount; ++i) {
+    rockey.SetLEDState(i == kLoopCount ? LED_STATE::kBlink : i % 2 ? LED_STATE::kOff : LED_STATE::kOn);
+    delay();
+  }
+
+  delay();
+  delay();
+  
+  std::ignore = delay;
+
+  if (perm != PERMISSION::kAdministrator)
+    return -1; /* 我们确定是以管理员权限执行的脚本, 这里一定不会退出, 确保之后的代码编译入 ROM */
+#else
+  RockeyARM rockey;
+  DONGLE_VERIFY(0 == rockey.Open(0));
+  DONGLE_VERIFY(0 == rockey.VerifyPIN(PERMISSION::kAdministrator, nullptr, nullptr));
+
+  const char* app_dongle = getenv("WT_APP_DONGLE");
+  if (app_dongle) {
+    uint8_t app_[64 * 1024];
+    FILE* fp = fopen(app_dongle, "rb");
+    DONGLE_VERIFY(nullptr != fp);
+    
+    size_t size = fread(app_, 1, sizeof(app_), fp);
+    fclose(fp);
+
+    DONGLE_VERIFY(size == 0x10000 - 16);
+
+    int result = rockey.UpdateExeFile(app_, size);
+    rlLOGI(TAG, "rockey.UpdateExeFile %s %d/%08X", app_dongle, result, rockey.GetLastError());
+    DONGLE_VERIFY(0 == result);
+  }
+#endif /* __RockeyARM__ */
+
+  rsa_mr::MRWork* w = reinterpret_cast<rsa_mr::MRWork*>(ExtendBuf);
+
+#if 0
+  int rounds = (int)(Context->error_[2] & 0xff);
+  if (rounds < 1) rounds = 8;
+  if (rounds > 16) rounds = 16;
+#else
+  int rounds = 1; // 只做最小执行时间测试 ...
+#endif
+
+#if 0
+  const size_t kSizeTest = 16;
+
+  rsa_mr::BN n;
+  std::ignore = rockey.RandBytes((uint8_t*)&n.v[0], kSizeTest * 4);
+  n.v[0] |= 1; /// odd
+  n.n = kSizeTest;
+  while (0 == (0xf0000000 & n.v[kSizeTest - 1])) {  /// 最高的4个 bits 不能为 0 ...
+    std::ignore = rockey.RandBytes((uint8_t*)&n.v[31], 4);
+  }
+#else /// 2^521 - 1 是一个素数 ...
+  rsa_mr::BN n;
+  for(int i = 0; i < 16; ++i)
+    n.v[i] = (uint32_t)-1;
+  n.v[16] = (1 << 9) - 1;
+  n.n = (521 + 31) / 32;
+#endif
+
+  int result = rsa_mr::isPrimeMRW(
+                   n, rounds, *w,
+                   [](bool v, void* ctx) {
+                     PERMISSION perm = PERMISSION::kAnonymous;
+                     static_cast<Dongle*>(ctx)->SetLEDState(v ? LED_STATE::kOn : LED_STATE::kOff);
+                     std::ignore = static_cast<Dongle*>(ctx)->GetPINState(&perm);
+                   },
+                   &rockey)
+                   ? 1u
+                   : 0u;
+
+#if !defined(__RockeyARM__)
+  /// 运行前使用工具更新 ukey 程序固件 ...
+   rlLOGW(TAG, "HOST result %d", result);
+
+   int exec_result = 0, main_result = 0;
+   exec_result = rockey.ExecuteExeFile(Context, 1024, &main_result);
+
+   rlLOGW(TAG, "WoWoWo Rockey return %d/%d", exec_result, main_result);
+#endif /* __RockeyARM__ */
+
+  return result;
+}
+
+#if defined(__RockeyARM__)
+/*! COS 心跳候选微基准(设备侧; 经 Start 顶部 mode=kModeCos 快速路径进入):
+ *!   error_[0]=kMagic, error_[1]=kModeCos, error_[2]=候选, error_[3]=循环次数;
+ *!   候选: 1=get_pinstate 2=get_tickcount 3=led_control(kBlink) 4=get_sharememory
+ *!         5=get_keyinfo;
+ *!   先 led_control(kBlink) 一次(此后每次 COS 调用应服务闪烁), 再循环候选调用;
+ *!   回写 error_[4]=PIN 状态, [5]=共享内存首字节, [6]=LastError, [7]='COS1' 完成标记。
+ *!   host 侧比对跑前/跑后这些字段即可判定候选有无副作用。 */
+static int Testing_CosProbe(Context_t* Context, void* /*ExtendBuf*/) {
+  Dongle rockey;
+  const int cand = (int)(Context->error_[2] & 0xff);
+  int count = (int)(Context->error_[3] & 0xffff);
+  if (count < 1) count = 1;
+  if (count > 1000000) count = 1000000;
+
+  rockey.SetLEDState(LED_STATE::kBlink); /* 闪烁期望: 由后续每次 COS 调用服务 */
+  rockey.ClearLastError();
+
+  uint8_t share[32] = {0};
+  for (int i = 0; i < count; ++i) {
+    switch (cand) {
+      case 1: {
+        PERMISSION s = PERMISSION::kAnonymous;
+        std::ignore = rockey.GetPINState(&s);
+        break;
+      }
+      case 2: {
+        DWORD t = 0;
+        std::ignore = rockey.GetTickCount(&t);
+        break;
+      }
+      case 3:
+        std::ignore = rockey.SetLEDState(LED_STATE::kBlink);
+        break;
+      case 4:
+        std::ignore = rockey.ReadShareMemory(share);
+        break;
+      case 5: {
+        DONGLE_INFO di;
+        std::ignore = rockey.GetDongleInfo(&di);
+        break;
+      }
+      default:
+        break;
+    }
+  }
+
+  PERMISSION pin_after = PERMISSION::kAnonymous;
+  uint8_t share_after[32] = {0};
+  std::ignore = rockey.GetPINState(&pin_after);
+  std::ignore = rockey.ReadShareMemory(share_after);
+  Context->error_[4] = static_cast<uint32_t>(pin_after);
+  Context->error_[5] = share_after[0];
+  Context->error_[6] = static_cast<uint32_t>(rockey.GetLastError(false));
+  Context->error_[7] = rsaprobe::kCosDone;
+  return 0;
+}
+#endif /* __RockeyARM__ */
 
 int Testing_SM2Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
@@ -2006,12 +2185,33 @@ int Testing_X509Tests(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
 }
 
 int Start(void* InOutBuf, void* ExtendBuf) {
+#if 1
+  {
+    Context_t* ctx = (Context_t*)InOutBuf;
+#if defined(__RockeyARM__)
+    /* COS 心跳微基准(host __Testing__rsamrprobe__ -cos): 设备侧只跑候选调用循环 */
+    if (ctx->error_[0] == rsaprobe::kMagic && ctx->error_[1] == rsaprobe::kModeCos)
+      return 10086 - Testing_CosProbe(ctx, ExtendBuf);
+#endif
+    return 10086 - Testing_RsaPrimeOne(ctx, ExtendBuf);
+  }
+#else
   const int kSizeGuardBytes = 16;
   Context_t* Context = (Context_t*)InOutBuf;
   uint8_t* GuardBytes = static_cast<uint8_t*>(InOutBuf) + 1024;
   memset(GuardBytes, 0xCC, kSizeGuardBytes);
 
   int result = 0, result2 = 0, index = (Context->argv_[0] & 0xFF);
+
+#if defined(__RockeyARM__)
+  /* 单数字探测快速路径(host __Testing__rsamrprobe__ 分块循环调用):
+   * 在一切管理/设置副作用之前拦截并立即返回(避免每次做 ChangePIN 等闪存操作)。 */
+  const bool rsapr_one_shot =
+      Context->error_[0] == rsaprobe::kMagic && Context->error_[1] == rsaprobe::kModeOne;
+  if (rsapr_one_shot) return 10086 - Testing_RsaPrimeOne(Context, ExtendBuf);
+  if (Context->error_[0] == rsaprobe::kMagic && Context->error_[1] == rsaprobe::kModeCos)
+    return 10086 - Testing_CosProbe(Context, ExtendBuf);
+#endif
 
 #if defined(__EMULATOR__)
   const char* const kTestingDongleFile = ".foobar-dongle.bin";
@@ -2152,7 +2352,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
    * 失败(F0000006),失败值经 result 流入最终退出码(10086-(-1) mod 256 = 103),干扰
    * 测试结果判定;且 Context->seed_ 无任何消费方,纯记录无意义。 */
 
-  rockey.SetLEDState(LED_STATE::kBlink);
+  rockey.SetLEDState(LED_STATE::kOff);
 
   rockey.GetRealTime(&Context->realTime_);
   rockey.GetExpireTime(&Context->expireTime_);
@@ -2171,6 +2371,21 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   rlLOGXI(TAG, Context, sizeof(Context_t), "rockey Test.0 return %d/%08x", result, rockey.GetLastError());
   rockey.ClearLastError();
+
+#if 0
+  rockey.SetLEDState(LED_STATE::kBlink);
+  for(int i = 0; i < 1000; ++i) {
+    /// 产生一段时间的延时 ...
+    std::ignore = rockey.RandBytes(reinterpret_cast<uint8_t*>(&Context->seed_[0]), sizeof(Context->seed_));
+  }
+  rockey.SetLEDState(LED_STATE::kOn);
+  for (int i = 0; i < 1000; ++i) {
+    /// 产生一段时间的延时 ...
+    std::ignore = rockey.RandBytes(reinterpret_cast<uint8_t*>(&Context->seed_[0]), sizeof(Context->seed_));
+  }
+  rockey.SetLEDState(LED_STATE::kOff);
+#endif
+
 #define DONGLE_RUN_TESTING(Name)                                 \
   do {                                                           \
     if (index == static_cast<int>(kTestingIndex::Name)) {        \
@@ -2211,6 +2426,14 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   auto end = rLANG_GetTickCount();
   rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X, in %lld ms",
           result3, main_result, rockey.GetLastError(), static_cast<long long>(end - start));
+  if (CopyContext.ts_[5] == rsaprobe::kMagic && index == static_cast<int>(kTestingIndex::RsaPrimeMR)) {
+    /* 设备端 RsaPrimeMR 阶段回传(ukey 内 GetTickCount 不自走, ms 无意义): */
+    const char* stage = CopyContext.ts_[0] == 0 ? "running" : CopyContext.ts_[0] == 1 ? "sanity-fail" : "done";
+    rlLOGI(TAG, "RsaPrimeMR[device]: stage=%s ok=%u p.probes=%u q.probes=%u rounds=%u (墙钟 %lld ms)",
+           stage, static_cast<unsigned>(CopyContext.ts_[3]),
+           static_cast<unsigned>(CopyContext.ts_[1]), static_cast<unsigned>(CopyContext.ts_[2]),
+           static_cast<unsigned>(CopyContext.ts_[4]), static_cast<long long>(end - start));
+  }
   if (result3 < 0)
     ++result;
 #endif /* __RockeyARM__ */
@@ -2228,6 +2451,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   std::ignore = TAG;
   return 10086 - result;
+#endif /* */
 }
 
 }  // namespace dongle

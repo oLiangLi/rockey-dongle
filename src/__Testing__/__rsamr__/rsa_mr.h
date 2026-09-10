@@ -1,4 +1,4 @@
-/*! rsa_mr.h — MCU/设备约束版 1024 位 Miller–Rabin 素数搜索(定长数组, 无堆/无 .rodata 表)
+﻿/*! rsa_mr.h — MCU/设备约束版 1024 位 Miller–Rabin 素数搜索(定长数组, 无堆/无 .rodata 表)
  *! 配合 __Testing__dongle__ 的 RsaPrimeMR 测试项在 ukey 内执行, 以测得"找 1024 位素数"时间。
  *! 约束: 无动态分配; 常量(小素数基)以立即数/局部常量形式内联, 不建 .rodata 表;
  *!       数字=uint32[64] 小端, n=有效 limb 数(≤32 参与运算, 乘/取模临时 ≤64)。
@@ -23,7 +23,8 @@
 #include <cstring>
 
 #if defined(__GNUC__) || defined(__clang__)
-#define RSA_MR_NOINLINE __attribute__((noinline))
+/* noinline: 栈深按调用链相加避免内联合并; unused: 头文件 static 函数在只部分使用的 TU 不告警 */
+#define RSA_MR_NOINLINE __attribute__((noinline, unused))
 #else
 #define RSA_MR_NOINLINE
 #endif
@@ -263,12 +264,21 @@ static inline int smallBases(uint32_t b[], int rounds) {
   return n;
 }
 
-/* Miller–Rabin(n 只读; 栈上 nm1/d/x 三个 BN≈0.8KB, 其余临时用 MRWork 槽) */
-static RSA_MR_NOINLINE bool isPrimeMRW(const BN& n, int rounds, MRWork& w) {
+/* Miller–Rabin(n 只读; 栈上 nm1/d/x 三个 BN≈0.8KB, 其余临时用 MRWork 槽)
+ *! 注意: 头文件保持设备无关(不引用 Interface/Dongle); LED 实验请放测试项,
+ *! 且 ukey 内不得自旋/延时 —— kBlink 由设备 OS 主循环服务, item 内长循环只会
+ *! 看到 LED 停在最后写入的电平(常亮), 与 GetTickCount 冻结同源。 */
+static RSA_MR_NOINLINE bool isPrimeMRW(const BN& n,
+                                       int rounds,
+                                       MRWork& w,
+                                       void (*Callback)(bool v, void* ctx) = nullptr,
+                                       void* ctx = nullptr) {
   if (n.n == 1) {
     const uint32_t v = n.v[0];
-    if (v < 2) return false;
-    if (v <= 0xffffffu) return smallPrimeU32(v);
+    if (v < 2)
+      return false;
+    if (v <= 0xffffffu)
+      return smallPrimeU32(v);
   }
   if (isEven(n)) return false;
 
@@ -290,6 +300,9 @@ static RSA_MR_NOINLINE bool isPrimeMRW(const BN& n, int rounds, MRWork& w) {
     if (isOne(x) || cmp(x, nm1) == 0) continue;
     bool witness = false;
     for (int j = 1; j < s; ++j) {
+      if (Callback)
+        Callback(j % 2, ctx);
+
       mulmodW(x, x, x, n, w.prod, w.rem);
       if (cmp(x, nm1) == 0) {
         witness = true;
