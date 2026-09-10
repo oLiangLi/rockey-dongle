@@ -173,3 +173,41 @@ LED **先闪烁若干秒(说明已进入 MR 搜索且自检通过、在逐探测
   `.bin/ukey-reset-dgram.cjs`
 - 设备侧快速路径:`__Testing__dongle__` Start 顶部按 `rsaprobe::kMagic` + mode 分发到
   `Testing_RsaPrimeProbeOne`(单候选)/`Testing_CosProbe`(COS 候选)/`Testing_DelayProbe`(负载)/`Testing_RsaPrimeOne`(最小实验)。
+
+---
+
+## 8. 暂停后的剩余工作(前提:ROOT CA 私钥托管已有良好方案)
+
+> 说明:本节把"ROOT CA 私钥托管/恢复"视为已解决,列出本仓库内仍待推进的事项;其中多数
+> 需要产品/固件或用户侧输入,已标注"需决策"。
+
+### 8.1 本探索的收尾(已完成)
+
+- 代码/工具/文档归档:分支 `feat/AGINX/rsa-prime-bench`(commits `b557b92` 归档实验态、
+  `2ac4fc4` 深挖结论与暂停);工具见 §7.6。**未合并到 master**,由用户决定是否 squash。
+- 可选后续(如恢复该任务):`mulmod` 换字级长除/Montgomery(30–100×),再用 `-delay` 与单探测
+  模式重标定;`-delay` 已验证设备可连续运行 >502 s,时间不是主要障碍。
+
+### 8.2 ROOT CA / CA 签发主线(需真机与决策)
+
+1. **X509 CA 真实私钥往返**:`x509-ca-sign` 分支的 `RockeySign`/`RockeyDecrypt` 接线已并入
+   master;待核对"真实 CA 私钥导入/签名往返"的设备侧语义(需测试 ukey + 管理员权限,按
+   `WT_RKEY_DEVICE`/`-2` 流程;禁止 mkey/* 生产设备)。
+2. **EnTrust 真实托管密钥输入**:`EnTrust.dongle` 目前用随机占位被设备拒绝(-22),需要真实
+   托管私钥(EnTrustKey)才能跑通;多设备 `EXCHANGE_PREV_MASTER_SECRET` /
+   `IMPORT_MASTER_SECRET` 需要双 ukey 编排规范(用户提供或产品定义)。
+3. **MASTER.SECRET 与 SESSION_KEY 流程对齐**:`ai-doc/master-secret-build-2026-09-09.md`、
+   `ai-doc/session-key-flow-2026-09-09.md` 中的 K0..K3/A0 托管矩阵可视为"已解决前提";
+   建议在其中补一句"ROOT CA 恢复由托管方案覆盖",并把原先依赖 RSA 素数恢复的段落标注为
+   已替代(避免后续误读)。
+4. **问题清单同步(需人工确认)**:`ai-doc/issues-status.md` / `bug-analysis-report-2026-09-01.html`
+   中与"CA 根私钥恢复"相关的开放项(H-08、M-01 等)在托管方案下可评估关闭或降级,需逐条确认
+   依据后再改状态。
+
+### 8.3 工程与回归
+
+- `make ci`(进程内 JS 模拟器回归:jsuite/mkey/skey/emuadmin/corpus/trngfail)与
+  `make test-web`(Chrome headless,user-data-dir 固定 `.bin/ai-web-user-data`)为当前门禁;
+  本次改动不影响其运行,可择机整体复跑确认。
+- 未提交/未推送状态:截至本文档更新,分支 `feat/AGINX/rsa-prime-bench` 新提交已落盘,按用户
+  squash-merge 习惯待其合并。
