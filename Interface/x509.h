@@ -5,7 +5,8 @@
 
 #include "dongle.h"
 
-namespace machine {
+AGINX_DECLARE_MACHINE
+
 namespace dongle {
 
 /*!
@@ -136,6 +137,7 @@ bool X509OID_ExtKeyUsage(const uint8_t* oid, size_t len);
 
 rLANG_ABIREQUIRE(sizeof(X509View) == 48);
 }  // namespace dongle
-}  // namespace machine
+
+AGINX_DECLARE_END
 
 #endif /* __WTINC_DONGLE_X509_H__ */
