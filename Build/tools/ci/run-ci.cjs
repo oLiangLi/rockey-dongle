@@ -66,7 +66,9 @@ run("pkeyself", [harness, "pkeyself", "0"]);
 run("x509ext", [harness, "x509ext", "0"]);
 
 // 6) TRNG 失败注入自测(需平台构建;缺失则提示)
-const trngfail = path.join(root, ".bin", platformDirOf(), "__Testing__trngfail__.exe");
+const platDir = platformDirOf();
+const trngfailName = isWindowsDir(platDir) ? "__Testing__trngfail__.exe" : "__Testing__trngfail__";
+const trngfail = path.join(root, ".bin", platDir, trngfailName);
 if (fs.existsSync(trngfail)) {
   const r = spawnSync(trngfail, [], { cwd: root, encoding: "utf8", timeout: 120000 });
   const ok = r.status === 0 && !r.error;
@@ -77,7 +79,8 @@ if (fs.existsSync(trngfail)) {
     if (tail) console.log(`[ci]   ...${tail}`);
   }
 } else {
-  const m = "[ci] 跳过 trngfail: 未构建(__Testing__trngfail__.exe), 先 make windows";
+  const buildCmd = isWindowsDir(platDir) ? "make windows" : "make linux";
+  const m = `[ci] 跳过 trngfail: 未构建(${path.relative(root, trngfail)}), 先 ${buildCmd}`;
   if (strict) {
     console.error(m);
     failed = failed + 1;
@@ -86,14 +89,25 @@ if (fs.existsSync(trngfail)) {
   }
 }
 
+function isWindowsDir(dir) {
+  return /windows/.test(dir || "");
+}
+
 function platformDirOf() {
   const dirs = fs.existsSync(path.join(root, ".bin"))
     ? fs.readdirSync(path.join(root, ".bin")).filter((d) => /amd64-(windows|linux|foobar)/.test(d))
     : [];
   const want = process.env.CI_PLATFORM;
   if (want && dirs.includes(want)) return want;
-  const rel = dirs.find((d) => /windows-release$/.test(d)) || dirs.find((d) => /linux-release$/.test(d)) || dirs[0];
-  return rel || "amd64-windows-release";
+  // 优先与宿主平台一致(Windows 侧 .exe / Linux 侧无扩展名), 再退回任一可用平台
+  const host = process.platform === "win32" ? "windows" : "linux";
+  return (
+    dirs.find((d) => new RegExp(`-${host}-release$`).test(d)) ||
+    dirs.find((d) => /windows-release$/.test(d)) ||
+    dirs.find((d) => /linux-release$/.test(d)) ||
+    dirs[0] ||
+    ""
+  );
 }
 
 fs.mkdirSync(logDir, { recursive: true });

@@ -6,6 +6,9 @@
     "gen:opcode": "node Build/tools/LIMIT/script/opcode.cjs"
   },
   "devDependencies": {
-    "@types/node": "^25.3.3"
+    "@types/node": "^25.3.3",
+    "typescript": "^5.5.4",
+    "webpack": "^5.104.1",
+    "webpack-cli": "^6.0.1"
   }
 }

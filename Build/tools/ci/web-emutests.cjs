@@ -20,15 +20,23 @@ const cdpPort = 9333 + Math.floor(Math.random() * 400);
 fs.mkdirSync(profile, { recursive: true });
 
 function chromePath() {
-  const env = process.env.CHROME;
+  const env = process.env.CHROME || process.env.CHROME_PATH;
   if (env && fs.existsSync(env)) return env;
   const cand = [
-    process.env.ProgramFiles + "\\Google\\Chrome\\Application\\chrome.exe",
-    process.env["ProgramFiles(x86)"] + "\\Google\\Chrome\\Application\\chrome.exe",
-    process.env.LOCALAPPDATA + "\\Google\\Chrome\\Application\\chrome.exe",
+    // Windows
+    process.env.ProgramFiles && process.env.ProgramFiles + "\\Google\\Chrome\\Application\\chrome.exe",
+    process.env["ProgramFiles(x86)"] && process.env["ProgramFiles(x86)"] + "\\Google\\Chrome\\Application\\chrome.exe",
+    process.env.LOCALAPPDATA && process.env.LOCALAPPDATA + "\\Google\\Chrome\\Application\\chrome.exe",
+    // Linux
     "/usr/bin/google-chrome",
+    "/usr/bin/google-chrome-stable",
     "/usr/bin/chromium",
+    "/usr/bin/chromium-browser",
+    "/snap/bin/chromium",
+    "/opt/google/chrome/chrome",
+    // macOS
     "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+    "/Applications/Chromium.app/Contents/MacOS/Chromium",
   ].filter(Boolean);
   return cand.find((c) => c && fs.existsSync(c));
 }
@@ -56,7 +64,16 @@ function delay(ms) {
 
 async function main() {
   const chrome = chromePath();
-  if (!chrome) throw Error("chrome 未找到(CHROME 环境变量或常见路径)");
+  if (!chrome) {
+    const msg = "[webci] 跳过: 未找到 Chrome(设 CHROME / CHROME_PATH, 或安装 google-chrome / chromium)";
+    if (process.env.CI_STRICT === "1") {
+      console.error(msg);
+      process.exit(1);
+    }
+    console.log(msg + " —— CI_STRICT=1 时失败");
+    process.exit(0);
+  }
+  console.log("[webci] chrome = " + chrome);
   await new Promise((r) => server.listen(httpPort, host, r));
   const url = `http://${host}:${httpPort}/index.html`;
 

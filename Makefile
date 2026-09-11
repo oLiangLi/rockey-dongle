@@ -3,7 +3,12 @@ wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 ##
 ##
 ##
-X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machine/System/bin/node-rlang ; else echo /Machine/System/bin/node ; fi )
+## node 程序: 优先本机 rlang 专用 node, 其次 /Machine/System/bin/node, 最后退回 PATH 上的 node
+## (平台无关: 未安装 /Machine/System 的环境也能构建)
+X4C_NODE ?= $(shell if [ -x /Machine/System/bin/node-rlang ] ; then echo /Machine/System/bin/node-rlang ; elif [ -x /Machine/System/bin/node ] ; then echo /Machine/System/bin/node ; else echo node ; fi )
+
+## tsc: 优先仓库内 devDependencies 的本地 tsc(npm install 后), 避免被 PATH 上其它版本遮蔽
+TSC ?= $(if $(wildcard $(wORLD_ROOT)/node_modules/.bin/tsc),$(wORLD_ROOT)/node_modules/.bin/tsc,tsc)
 
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
@@ -73,7 +78,7 @@ rockey-stack-check: dongle
 ##
 ##
 sec-bin:
-	@ cd $(wORLD_ROOT) && node -e "fs.writeFileSync('.bin/arm-RockeyARM-native-release/sec.bin', crypto.getRandomValues(Buffer.alloc(64)))" && sha256sum ./.bin/arm-RockeyARM-native-release/sec.bin
+	@ cd $(wORLD_ROOT) && $(X4C_NODE) -e "fs.writeFileSync('.bin/arm-RockeyARM-native-release/sec.bin', crypto.getRandomValues(Buffer.alloc(64)))" && sha256sum ./.bin/arm-RockeyARM-native-release/sec.bin
 
 ##
 ##
@@ -146,18 +151,18 @@ clean-windows:
 
 typescript:
 	$(info typescript compile ... 1)
-	@tsc
+	@$(TSC)
 
 typescript0: wasm
 	$(info typescript compile ... 0)
-	@tsc
+	@$(TSC)
 
 ##
 ## 统一 CI 入口(见 Build/tools/ci/run-ci.cjs): 进程内 JS 模拟器回归
 ## 前置: make wasm && make jsWrapper(生成 Web/Agent/Tests/js 封装); CI_STRICT=1 严格
 ##
 ci:
-	node Build/tools/ci/run-ci.cjs
+	$(X4C_NODE) Build/tools/ci/run-ci.cjs
 test: ci
 
 ##
@@ -171,10 +176,14 @@ install-hooks:
 
 ##
 ## 优化级别矩阵向量门禁(-O0..-O3 密码学自测; 需 clean+全量重建, 较慢)
-## 精简子集: OPTMATRIX_OPTS="-O0 -O3"; 跳过: CI_SKIP_HEAVY=1
+## 平台无关: 按宿主平台构建/取产物(Windows 带 .exe, Linux 无扩展名);
+##           项目"0 错"退出码 10086 在 POSIX 上被截断为 102, 两种都认。
+## 板级: Windows 缺省真机/SDK 模拟器; 其它宿主缺省 foobar(模拟器世界, 无需 ukey),
+##       要测真机用 OPMATRIX_BOARD=none(需接设备)。
+## 精简子集: OPTMATRIX_OPTS="-O0 -O3"; 跳过: CI_SKIP_HEAVY=1; 并行度: JOBS=N
 ##
 test-optmatrix:
-	node Build/tools/ci/optmatrix.cjs
+	$(X4C_NODE) Build/tools/ci/optmatrix.cjs
 
 ##
 ## 网页端 CI(需本机 Chrome): 加载 Web/Agent/Tests 页面, 点击 EmuCreate→EmuTests
@@ -182,7 +191,7 @@ test-optmatrix:
 ## 缺省 headless(无界面); WEB_HEADED=1 以有界面窗口运行; CHROME 可指定浏览器路径。
 ##
 test-web:
-	node Build/tools/ci/web-emutests.cjs
+	$(X4C_NODE) Build/tools/ci/web-emutests.cjs
 
 ##
 ##
