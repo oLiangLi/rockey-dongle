@@ -1,4 +1,4 @@
-
+﻿
 $(call assert-defined, LOCAL_MODULE )
 $(call x4c_add_module, $(LOCAL_MODULE) )
 
@@ -6,6 +6,11 @@ LOCAL_MODULE_TARGET		  := $(X4C_BINARY)/$(LOCAL_MODULE)$(EXEEXT)
 LOCAL_MODULE_TARGET_TEMP  := $(X4C_OUTPUT)/$(LOCAL_MODULE)/$(LOCAL_MODULE)$(EXEEXT)
 LOCAL_MODULE_TARGETS	  := $(LOCAL_MODULE_TARGET) $(LOCAL_MODULE_TARGET_TEMP)
 LOCAL_LDFLAGS			  += $(X4C_TOOLCHAIN_LDEXEFLAGS)
+
+## 并入自上游 cd0b4afc: 允许为目标文件定义额外的依赖项
+ifneq ("$(LOCAL_DEPENDS)","")
+$(eval $(LOCAL_MODULE_TARGET_TEMP):$(LOCAL_DEPENDS))
+endif
 
 include $(my-dir)/build-binary.mk
 

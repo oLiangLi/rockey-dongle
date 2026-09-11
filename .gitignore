@@ -37,7 +37,7 @@ log
 /out
 
 
-## ? Interface/script.h ??(? Build/tools/script/opcode.cjs / make jsWrapper)
+## ? Interface/script.h ??(? Build/tools/LIMIT/script/opcode.cjs / make jsWrapper)
 /Web/Script/lib/opcode.ts
 
 ## 随机数质量分析数据采集

@@ -3,7 +3,7 @@
  * ukey-reset-dgram.cjs — 用 UDP 报文触发 ukey 软复位/恢复(等效拔插)。
  *
  * 用法(必须在【管理员】shell 里运行, 因为 pnputil 需要提权):
- *   node Build/tools/sbin/ukey-reset-dgram.cjs [InstanceId]
+ *   node Build/tools/LIMIT/sbin/ukey-reset-dgram.cjs [InstanceId]
  *
  * 默认只允许测试 ukey 的父 USB 实例:
  *   USB\VID_096E&PID_0209\5&2B27CBDF&0&6

@@ -103,10 +103,10 @@
 
 ### 运行约定(用户 2026-09-11): 先复制改名再运行
 直接用 `.bin/amd64-windows-release/__Testing__dongle__.exe` 会把构建产物占住, 使 `make windows`
-无法链接(此前只能靠杀掉 host 腾出)。新增工具 **`Build/tools/sbin/run-dongle-exe.cjs`**:
+无法链接(此前只能靠杀掉 host 腾出)。新增工具 **`Build/tools/LIMIT/sbin/run-dongle-exe.cjs`**:
 
 ```sh
-node Build/tools/sbin/run-dongle-exe.cjs [--bin <exe>] [--tag <名>] <参数...>
+node Build/tools/LIMIT/sbin/run-dongle-exe.cjs [--bin <exe>] [--tag <名>] <参数...>
 # 复制到 .bin/run/<basename>-<tag|时间戳>.exe 后 spawn(stdio 继承, 退出码透传)
 ```
 

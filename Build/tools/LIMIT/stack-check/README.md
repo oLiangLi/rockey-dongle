@@ -10,7 +10,7 @@ Cortex-M0 固件的栈预算守门工具。栈区仅 `[0x68000400, 0x68000BF0) =
 
 ```sh
 make dongle          # 先构建固件(生成 .o/.su/.map)
-make stack-check     # 检查(等价: node Build/tools/stack-check/stack-check.cjs)
+make stack-check     # 检查(等价: node Build/tools/LIMIT/stack-check/stack-check.cjs)
 ```
 
 退出码: `0` = 无违规, `10` = 存在超预算路径(可接入 CI/钩子)。
@@ -18,7 +18,7 @@ make stack-check     # 检查(等价: node Build/tools/stack-check/stack-check.c
 常用选项:
 
 ```sh
-node Build/tools/stack-check/stack-check.cjs [选项] [map文件]
+node Build/tools/LIMIT/stack-check/stack-check.cjs [选项] [map文件]
   --budget=N     栈预算(默认 2032)
   --exempt=P,P   豁免终点的函数名模式(默认 OpExecute,OpManager; 空串禁用)
   --top=N        最多显示 N 条违规路径(默认 10)

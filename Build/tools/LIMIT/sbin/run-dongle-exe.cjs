@@ -5,7 +5,7 @@
  * `.bin/amd64-windows-release/__Testing__dongle__.exe` 始终可被增量构建替换。
  *
  * 用法:
- *   node Build/tools/sbin/run-dongle-exe.cjs [--bin <exe>] [--tag <名>] <参数...>
+ *   node Build/tools/LIMIT/sbin/run-dongle-exe.cjs [--bin <exe>] [--tag <名>] <参数...>
  *
  *   --bin <exe>  源程序(缺省 .bin/amd64-windows-release/__Testing__dongle__.exe)
  *   --tag <名>   副本名后缀(缺省时间戳), 便于回看"当时用的是哪个二进制"
@@ -17,7 +17,7 @@ const fs = require("fs");
 const path = require("path");
 const { spawnSync } = require("child_process");
 
-const root = path.resolve(__dirname, "../../..");
+const root = path.resolve(__dirname, "../../../..");
 const argv = process.argv.slice(2);
 let bin = path.join(root, ".bin/amd64-windows-release/__Testing__dongle__.exe");
 let tag = null;

@@ -1,0 +1,97 @@
+From 96462dbc92ccb4888f0d1f5cfaf1aca820bb7c27 Mon Sep 17 00:00:00 2001
+From: LiangLI <admin@rlang.xyz>
+Date: Fri, 11 Sep 2026 22:08:08 +0800
+Subject: [PATCH 2/2] =?UTF-8?q?CRC8/16/32:=20=E6=94=AF=E6=8C=81=E5=8F=97?=
+ =?UTF-8?q?=E9=99=90=E4=B8=96=E7=95=8C(LIMIT=5FWORLD)=E7=9A=84=E6=97=A0?=
+ =?UTF-8?q?=E8=A1=A8=E5=AE=9E=E7=8E=B0?=
+MIME-Version: 1.0
+Content-Type: text/plain; charset=UTF-8
+Content-Transfer-Encoding: 8bit
+
+新增约定宏 rLANG_CONFIG_ENABLE_LIMIT_WORLD: 表示"本产物是在 ukey 内运行的程序"
+(受限世界 —— 不允许 .rodata, 例如设备固件要求 .rodata 为空且 flash 紧张)。
+
+- 默认(未定义该宏)保持原有查表实现不变(CRC8 256B / CRC16 512B / CRC32 16 项半字节表)。
+- 定义该宏时改用无表逐位实现, 与查表路径逐位等价:
+  CRC8  LSB-first poly 0x8C(=0x31 反射), 表项 = 8 步递推;
+  CRC16 MSB-first poly 0x1021, 表项 = 8 步递推(索引需先移到高字节);
+  CRC32 反射 poly 0xEDB88320(半字节字典的逐位等价形式)。
+- 使用方只需给"ukey 内运行的程序"那一份构建配置加 -DrLANG_CONFIG_ENABLE_LIMIT_WORLD
+  (base 作为库随该配置一起编译), 无需改动调用方代码。
+
+等价性验证(在引入方仓库完成): 两种模式分别与"由多项式推导的参考表"逐项比对,
+CRC8 全 65536 组、CRC16/CRC32 抽样, 0 处不一致; 标准向量 CRC-16/CCITT-FALSE
+("123456789")=0x29B1、CRC-32=0xCBF43926 均吻合; 无表模式下目标文件无 CRC 表符号。
+---
+ src/data.cc | 46 +++++++++++++++++++++++++++++++++++++++++++++-
+ 1 file changed, 45 insertions(+), 1 deletion(-)
+
+diff --git a/src/data.cc b/src/data.cc
+index 7ab8ffd..0c4c2a3 100644
+--- a/src/data.cc
++++ b/src/data.cc
+@@ -1,4 +1,4 @@
+-#include "../base.h"
++﻿#include "../base.h"
+ 
+ rLANG_DECLARE_MACHINE
+ 
+@@ -211,6 +211,19 @@ rLANGEXPORT int rLANGAPI rl_BASE64Url_Write(char* zOUT, const uint8_t* zIN, int
+   return (int)(p - zOUT);
+ }
+ 
++/**
++ *! CRC8/16/32 单字节步进(并入自上游 ccae27ad 等)。调用方自行串接:
++ *!   crc = rlCrc16(0, byte0) ... / 首次传初值(如 0 或 0xFFFF, 取决于目标规范)。
++ *!
++ *! 默认查表(快); 定义 **rLANG_CONFIG_ENABLE_LIMIT_WORLD** 时改用无表逐位实现 ——
++ *! 该宏表示"本产物是在 ukey 内运行的程序", 受限世界不允许 .rodata(设备固件要求
++ *! .rodata 必须为空, 且 flash 预算紧张), 故不能携带 256B/512B 的 CRC 表。
++ *! 两条路径逐位等价(多项式: CRC8 LSB-first 0x8C(=0x31 反射), CRC16 MSB-first 0x1021,
++ *! CRC32 反射 0xEDB88320)。
++ */
++
++#if !defined(rLANG_CONFIG_ENABLE_LIMIT_WORLD)
++
+ rLANGEXPORT uint8_t rLANGAPI rlCrc8(uint8_t crc, uint8_t cc) {
+   static const uint8_t rl_CRC8_Table[256] = {
+       0x00, 0x5e, 0xbc, 0xe2, 0x61, 0x3f, 0xdd, 0x83, 0xc2, 0x9c, 0x7e, 0x20, 0xa3, 0xfd, 0x1f, 0x41, 0x9d, 0xc3, 0x21,
+@@ -267,4 +280,35 @@ rLANGEXPORT uint32_t rLANGAPI rlCrc32(uint32_t crc, uint8_t cc) {
+   return ~crc;
+ }
+ 
++#else /* !rLANG_CONFIG_ENABLE_LIMIT_WORLD */
++
++rLANGEXPORT uint8_t rLANGAPI rlCrc8(uint8_t crc, uint8_t cc) {
++  uint8_t c = (uint8_t)(crc ^ cc);
++
++  for (int i = 0; i < 8; ++i)
++    c = (c & 1u) ? (uint8_t)((c >> 1) ^ 0x8Cu) : (uint8_t)(c >> 1);
++  return c;
++}
++
++rLANGEXPORT uint16_t rLANGAPI rlCrc16(uint16_t crc, uint8_t cc) {
++  /* 表项 = MSB-first 8 步(i << 8), 因此这里必须先把索引放到高字节 */
++  uint16_t c = (uint16_t)((uint16_t)((crc >> 8) ^ cc) << 8);
++
++  for (int i = 0; i < 8; ++i)
++    c = (c & 0x8000u) ? (uint16_t)((c << 1) ^ 0x1021u) : (uint16_t)(c << 1);
++  return (uint16_t)((uint16_t)(crc << 8) ^ c);
++}
++
++rLANGEXPORT uint32_t rLANGAPI rlCrc32(uint32_t crc, uint8_t cc) {
++  crc = ~crc;
++  for (int half = 0; half < 2; ++half) {
++    crc ^= (uint32_t)((half ? (cc >> 4) : cc) & 0x0Fu);
++    for (int i = 0; i < 4; ++i)
++      crc = (crc >> 1) ^ (0xEDB88320u & (0u - (crc & 1u)));
++  }
++  return ~crc;
++}
++
++#endif /* !rLANG_CONFIG_ENABLE_LIMIT_WORLD */
++
+ rLANG_DECLARE_END
+-- 
+2.34.1
+

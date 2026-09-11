@@ -12,7 +12,7 @@
  *      分离签名会自动去找同名数据文件(去掉 .asc/.sig/.gpg/.pgp 后缀)。
  *
  * 用法:
- *   node Build/tools/sbin/check-gpg-sigs.cjs [目录=mkey] [选项]
+ *   node Build/tools/LIMIT/sbin/check-gpg-sigs.cjs [目录=mkey] [选项]
  *     --no-verify        只做结构与分类检查, 不调用 gpg
  *     --gpg <path>       指定 gpg 可执行文件(缺省自动探测)
  *     --keyring <file>   额外导入的公钥块(可重复; 缺省自动收集目录下所有 PUBLIC KEY BLOCK)

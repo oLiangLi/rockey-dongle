@@ -14,6 +14,23 @@
 #pragma warning(disable : 4996 4127 4201)
 #endif /* _MSC_VER */
 
+/**
+ *! 并入自上游(3f0d79c5/ccae27ad 等): 端序标注宏。只支持 1234/4321, PDP(3412) 不支持!!
+ *! 两个都定义 → 编译期报错; 都不定义 → 按编译器字节序推断, 推断不出则按小端。
+ */
+#if defined(IS_LITTLE_ENDIAN) && defined(IS_BIG_ENDIAN)
+#error "Error IS_LITTLE_ENDIAN + IS_BIG_ENDIAN"
+#endif /* IS_LITTLE_ENDIAN && IS_BIG_ENDIAN */
+
+#if !defined(IS_LITTLE_ENDIAN) && !defined(IS_BIG_ENDIAN) && defined(__BYTE_ORDER__) && \
+    defined(__ORDER_BIG_ENDIAN__) && __BYTE_ORDER__ == __ORDER_BIG_ENDIAN__
+#define IS_BIG_ENDIAN /* 4321 */
+#endif                /* IS_LITTLE_ENDIAN || IS_BIG_ENDIAN */
+
+#if !defined(IS_LITTLE_ENDIAN) && !defined(IS_BIG_ENDIAN)
+#define IS_LITTLE_ENDIAN /* default: 1234 */
+#endif                   /* IS_LITTLE_ENDIAN || IS_BIG_ENDIAN */
+
 #if !defined(rLANG_ABIREQUIRE) && !defined(__cplusplus)
 #define rLANG_ABIREQUIRE(expr, ...) extern void rLANG_ABIREQUIRE__(int argv[(expr) ? 1 : -1])
 #elif !defined(rLANG_ABIREQUIRE)
@@ -253,6 +270,30 @@ rLANG_DECLARE_MACHINE
   } NAME
 #endif /* rLANG_DECLARE_PRIVATE_CONTEXT */
 
+/**
+ *! 并入自上游 86f99737: container_of —— 由成员指针反推宿主结构指针。
+ *! C++ 用成员指针模板(不需要写出成员名), C(GNU/clang 或任意编译器)用 offsetof 宏。
+ */
+#if !defined(rLANG_CONTAINER_OF) && defined(__cplusplus)
+/* 注意: 本头文件已由 rLANG_DECLARE_MACHINE 打开 namespace machine,
+ *      这里不能再嵌套一层(否则宏展开成 machine::machine::...)。 */
+template <typename T, typename Member>
+inline T* rlang_foobar_container_of(Member* ptr, Member T::* member_ptr) {
+  /* 用非空假指针求成员偏移, 避免对 nullptr 取成员地址(未定义行为) */
+  const uintptr_t offset = reinterpret_cast<uintptr_t>(&(reinterpret_cast<T*>(16)->*member_ptr)) - 16;
+  return reinterpret_cast<T*>(reinterpret_cast<uintptr_t>(ptr) - offset);
+}
+#define rLANG_CONTAINER_OF(ptr, type, member) ::machine::rlang_foobar_container_of((ptr), &type::member)
+#elif !defined(rLANG_CONTAINER_OF) && (defined(__GNUC__) || defined(__clang__))
+#define rLANG_CONTAINER_OF(ptr, type, member)         \
+  ({                                                  \
+    const typeof(((type*)0)->member)* __mptr = (ptr); \
+    (type*)((char*)__mptr - offsetof(type, member));  \
+  })
+#elif !defined(rLANG_CONTAINER_OF)
+#define rLANG_CONTAINER_OF(ptr, type, member) ((type*)((uint8_t*)(ptr) - offsetof(type, member)))
+#endif /* rLANG_CONTAINER_OF */
+
 /* rlCipherSuiteV0: [SHA1 [*N/A*]]/SHA256/SHA384/SHA512/X25519/ED25519/CHACHA20/POLY1305 */
 rLANG_DECLARE_PRIVATE_CONTEXT(rlCryptoShaCtx, 240);
 rLANG_DECLARE_PRIVATE_CONTEXT(rlCryptoChaCha20Ctx, 144);
@@ -326,6 +367,15 @@ rLANGEXPORT int rLANGAPI rl_HEX_Write(char* zOUT, const uint8_t* zIN, int zLEN);
 rLANGEXPORT int rLANGAPI rl_BASE64_Read(uint8_t* zOUT, const char* zIN, int zLEN);
 rLANGEXPORT int rLANGAPI rl_BASE64_Write(char* zOUT, const uint8_t* zIN, int zLEN);
 rLANGEXPORT int rLANGAPI rl_BASE64Url_Read(uint8_t* zOUT, const char* zIN, int zLEN);
+
+/**
+ *! CRC 单字节步进(调用方自行串接)。默认查表实现; 定义 rLANG_CONFIG_ENABLE_LIMIT_WORLD
+ *! (即在 ukey 内运行的程序)时改为无表逐位实现 —— 受限世界不允许占用 .rodata 的表。
+ *! 参数: crc = 上一字节的返回值(首次传初值), cc = 当前字节; 返回值 = 新的 crc。
+ */
+rLANGEXPORT uint8_t rLANGAPI rlCrc8(uint8_t crc, uint8_t cc);
+rLANGEXPORT uint16_t rLANGAPI rlCrc16(uint16_t crc, uint8_t cc);
+rLANGEXPORT uint32_t rLANGAPI rlCrc32(uint32_t crc, uint8_t cc);
 rLANGEXPORT int rLANGAPI rl_BASE64Url_Write(char* zOUT, const uint8_t* zIN, int zLEN);
 
 #ifndef rLANG_DECLARE_MAGIC_X
@@ -1056,6 +1106,46 @@ rLANGEXPORT void rLANGAPI rLANG_RBTREE_ERASE_NODE_X(void* node, void** root, con
 #define XDPDA_RESUME_YYACCEPT (-5)
 #define XDPDA_RESUME_YYERROR (-6)
 #define XDPDA_RESUME_YYABORT (-7)
+
+/* ---------------------------------------------------------------------------
+ *! 并入自上游(ccae27ad / 9a5ca8d5 等): 断言/校验(VERIFY)家族与失败钩子。
+ *! 默认只记录(不中断, 见 base/src/log.cc); rLANG_SetVerifyAbort(1) 之后才 abort。
+ * ------------------------------------------------------------------------- */
+rLANGEXPORT void rLANGAPI rLANG_SetVerifyAbort(int flag);
+rLANGEXPORT void rLANGAPI rLANG_OnVerifyFailed(const char* expr, const char* file, int line);
+
+#ifndef rLANG_VerifyExpr
+#define rLANG_VerifyExpr(v, expr, file, line)       \
+  do {                                              \
+    if rLANG_UNLIKELY (!(v))                        \
+      rLANG_OnVerifyFailed((expr), (file), (line)); \
+  } while (0)
+#endif /* rLANG_VerifyExpr */
+
+#define rLANG_VERIFY_TRUE(expr) rLANG_VerifyExpr(!!(expr), "true == " #expr, __FILE__, __LINE__)
+#define rLANG_VERIFY_FALSE(expr) rLANG_VerifyExpr(!(expr), "false == " #expr, __FILE__, __LINE__)
+#define rLANG_VERIFY_EQ(a, b) rLANG_VerifyExpr((a) == (b), #a " == " #b, __FILE__, __LINE__)
+#define rLANG_VERIFY_NE(a, b) rLANG_VerifyExpr((a) != (b), #a " != " #b, __FILE__, __LINE__)
+#define rLANG_VERIFY_GT(a, b) rLANG_VerifyExpr((a) > (b), #a " > " #b, __FILE__, __LINE__)
+#define rLANG_VERIFY_LT(a, b) rLANG_VerifyExpr((a) < (b), #a " < " #b, __FILE__, __LINE__)
+#define rLANG_VERIFY_GE(a, b) rLANG_VerifyExpr((a) >= (b), #a " >= " #b, __FILE__, __LINE__)
+#define rLANG_VERIFY_LE(a, b) rLANG_VerifyExpr((a) <= (b), #a " <= " #b, __FILE__, __LINE__)
+
+/**
+ *! ASSERT 缺省走 C 的 assert(与上游一致); 定义 rLANG_CONFIG_ASSERT=1 时改走 VERIFY(可记录/可控)
+ */
+#if !defined(ASSERT) && defined(rLANG_CONFIG_ASSERT) && rLANG_CONFIG_ASSERT
+#define ASSERT(x) rLANG_VERIFY_TRUE((x))
+#elif !defined(ASSERT)
+#define ASSERT(x) assert((x))
+#endif /* ASSERT */
+
+/**
+ *!
+ */
+#ifndef VERIFY
+#define VERIFY(x) rLANG_VERIFY_TRUE((x))
+#endif /* VERIFY */
 
 rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC == rLANG_DECLARE_MAGIC_X('r', 'L', 'A', 'N', 'G') && sizeof(int) == 4 &&
                  sizeof(double) == 8 && (sizeof(void*) == 4 || sizeof(void*) == 8) &&

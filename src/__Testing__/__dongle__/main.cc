@@ -2157,7 +2157,7 @@ static void ReadMRProgress(Dongle& rockey, const char* tag) {
           rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenSeedQOffset, sqbuf, nbytes);
       rlLOGI(TAG, "%s read p/q/seeds rc=%d/%d/%d/%d", tag, r1, r2, r3, r4);
       if (0 == r3 && 0 == r4) {
-        /* 小端 hex 直出: 可直接喂 Build/tools/sbin/rsa-prime-repro.cjs 独立复现同一对素数 */
+        /* 小端 hex 直出: 可直接喂 Build/tools/LIMIT/sbin/rsa-prime-repro.cjs 独立复现同一对素数 */
         LogLeHex(tag, "seed_p", spbuf, nbytes);
         LogLeHex(tag, "seed_q", sqbuf, nbytes);
       }

@@ -1,4 +1,4 @@
-##
+﻿##
 ##
 ##
 X4C_BUILD_SYSTEM_VERSION := 0.8.3
@@ -114,6 +114,13 @@ X4C_ASM   ?= $(X4C_BUILD_CROSS)as
 ##
 ##
 include $(X4C_BUILD_SYSTEM)/core/definitions.mk
+
+##
+## 并入自上游 f2a90320: X4C_BOARD 会被用作目录名被自动包含, 不能是 Linux 隐藏文件
+## (以 . 开头)且不能包含空格
+##
+$(if $(findstring $(space),$(X4C_BOARD)),$(error Invalid X4C_BOARD Configure: "$(X4C_BOARD)"),)
+$(if $(filter .%,$(X4C_BOARD)),$(error Invalid X4C_BOARD Configure: "$(X4C_BOARD)"),)
 
 ##
 ##

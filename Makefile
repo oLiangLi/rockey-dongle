@@ -58,7 +58,7 @@ wORLD_DONGLE ?= $(wORLD_DEFAULT_DONGLE)
 ##
 ## 调用栈深度静态检查(退出码 0=无违规 10=超预算) ...
 stack-check: dongle
-	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/stack-check/stack-check.cjs
+	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/stack-check/stack-check.cjs
 
 ##
 ## rockey_dongle(设备 App, 含 Testing_* 项)的调用栈深度静态检查 —— 与 stack-check 同一工具,
@@ -67,7 +67,7 @@ stack-check: dongle
 ## 需先 make dongle(本目标自动依赖)。
 ##
 rockey-stack-check: dongle
-	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/stack-check/stack-check.cjs --budget=$(if $(BUDGET),$(BUDGET),2032) $(wORLD_ROOT)/.bin/.obj/arm-RockeyARM-native-release/rockey-dongle.map
+	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/stack-check/stack-check.cjs --budget=$(if $(BUDGET),$(BUDGET),2032) $(wORLD_ROOT)/.bin/.obj/arm-RockeyARM-native-release/rockey-dongle.map
 
 ##
 ##
@@ -110,7 +110,7 @@ wasm:
 ##   R=1 → npm run release; 否则 → npm run build
 ##
 jsWrapper:
-	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/script/opcode.cjs
+	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/script/opcode.cjs
 ifeq ("$(R)","1")
 	cd $(wORLD_ROOT) && npm run release
 else

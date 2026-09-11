@@ -96,3 +96,36 @@
 > 暂停原因(环境):同一工作区存在另一会话(`feat/AGINX/chachapoly-aad`),共享工作树下 `git checkout`
 > 会互相搬动树枝;且长跑/设备访问被其占用(`RockeyARM::Open` 内部先 `Dongle_Enum`,长跑在飞时阻塞)。
 > 恢复实施前的检查:**确认另一会话已结束、工作区无冲突改动、SDK 空闲**。
+
+## 9. 实施记录(2026-09-11, WSL 检出)
+
+### 9.1 A1-A4 已合并并通过验证
+
+| 项 | 上游提交 | 落地位置 | 说明 |
+| --- | --- | --- | --- |
+| A1 `LOCAL_DEPENDS` | `cd0b4afc` | `Build/core/build-executable.mk`、`build-shared-library.mk`、`common.mk`(注册) | 模块可为目标文件声明额外依赖 |
+| A2 `add_general_source_files_non_recursive` + 6 级通配 | `096c4954`/`30bd4cd6` | `Build/core/common.mk` | 已核对本仓无 5 级以上源文件 ⇒ 不改变现有编译集合 |
+| A3 `X4C_BOARD` 合法性检查 | `f2a90320` | `Build/Main.mk` | 不得含空格 / 不得以 `.` 开头 |
+| A4 `LOCAL_STRICT` / `LOCAL_BACKTRACE` | `b360abf8` | `Build/core/common.mk`、`build-binary.mk` | 两个 variant 注册 + 变量空缺省 |
+
+### 9.2 与上游的**有意偏差**
+
+1. `X4C_UNWIND_TABLE_CFLAGS` 本仓保持**空缺省**(上游默认 `-DX4C_CONFIG_UNWIND_TABLE -funwind-tables`):
+   带该 flags 时 ARM 目标产生 `.ARM.exidx`, 链接缺 `__aeabi_unwind_cpp_pr0`(实测 `make dongle` 失败),
+   违反 elf2bin 段契约与 ".rodata 必须为空" 约束。宿主模块需要回溯时显式打开。
+2. `rLANG_COMMON_STRICT_CFLAGS/CXXFLAGS` 给空缺省(上游由使用方项目定义)⇒ 打开 `LOCAL_STRICT`
+   也不改变现有编译参数; 需要时在 `project.local.mk` 覆盖。
+
+### 9.3 环境与流程坑(记入 ai-context)
+
+- **构建系统不跟踪 CFLAGS 变化**:改 flags 后必须 `make clean-dongle`, 否则旧 `.ARM.exidx` 目标文件残留,
+  链接仍报 `__aeabi_unwind_cpp_pr0`。
+- WSL 的 arm-none-eabi 是 **10.3.1**(Windows 侧为 14.3), 栈帧数字会略有差异(本次 1936B vs 上次 1928B); 2 条
+  ARM warning 来自既有 `base/grammar/XDPDA_MACHINE_DECLARE.INL`, 与本改动无关。
+- UNC 路径(`\\wsl$`)读取可用, 但文件工具**写**会 `GetFileSecurityW EIO` ⇒ 用"拷到 Windows 暂存区编辑再回写"。
+
+### 9.4 待做
+
+- **A5**(`bits/base.h` 平台中立设施:端序宏、`rLANG_CONTAINER_OF`;VERIFY/调试家族需先定设备侧策略)
+- **A6**(`bits/task.h` + `src/task.cc`)
+- **B1-B4** 补丁系列

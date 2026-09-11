@@ -46,7 +46,7 @@ for (let i = 0; i < args.length; ++i) {
 
 /* map 定位: 默认完整固件(含脚本 VM)的链接图 */
 if (mapFile === null)
-  mapFile = path.join(__dirname, "..", "..", "..", ".bin", ".obj", "arm-RockeyARM-native-release", "RockeyTrust.map");
+  mapFile = path.join(__dirname, "..", "..", "..", "..", ".bin", ".obj", "arm-RockeyARM-native-release", "RockeyTrust.map");
 mapFile = path.resolve(mapFile);
 if (!fs.existsSync(mapFile)) {
   console.error(`[stack-check] 找不到 map 文件: ${mapFile}\n               请先执行 make dongle`);

@@ -5,13 +5,13 @@
  *! min/max 取自注释的 argc(支持 N、N...M、N/M)。
  *!
  *! 该文件在 .gitignore 中忽略, 由 make jsWrapper / npm run gen:opcode 在构建期生成。
- *! 用法: node Build/tools/script/opcode.cjs [--dry-run]
+ *! 用法: node Build/tools/LIMIT/script/opcode.cjs [--dry-run]
  */
 
 const fs = require("fs");
 const path = require("path");
 
-const root = path.resolve(__dirname, "..", "..", "..");
+const root = path.resolve(__dirname, "..", "..", "..", "..");
 const kHeader = path.join(root, "Interface", "script.h");
 const kOpcodeTs = path.join(root, "Web", "Script", "lib", "opcode.ts");
 const dryRun = process.argv.includes("--dry-run");
@@ -113,8 +113,8 @@ for (const o of opcodes) {
 /* ---------------- 生成 opcode.ts ---------------- */
 const lines = [
   "/**",
-  " *! AUTO-GENERATED from Interface/script.h (enum class OpCode) by Build/tools/script/opcode.cjs. 请勿手工编辑.",
-  " *! 修改请改 script.h 后运行: node Build/tools/script/opcode.cjs (或 make jsWrapper)",
+  " *! AUTO-GENERATED from Interface/script.h (enum class OpCode) by Build/tools/LIMIT/script/opcode.cjs. 请勿手工编辑.",
+  " *! 修改请改 script.h 后运行: node Build/tools/LIMIT/script/opcode.cjs (或 make jsWrapper)",
   " */",
   "export const enum OpCode {",
 ];

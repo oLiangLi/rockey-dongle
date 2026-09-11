@@ -22,7 +22,7 @@ PEM 私钥: `.bin/rsa3072-testkey-2026-09-11.pem`(`.bin` 不参与提交);
 
 ## 2. 可复现性验证(CA 方案的核心承诺)
 
-用 `Build/tools/sbin/rsa-prime-repro.cjs`(与设备算法逐位对齐的独立实现)从设备上读回的种子重跑:
+用 `Build/tools/LIMIT/sbin/rsa-prime-repro.cjs`(与设备算法逐位对齐的独立实现)从设备上读回的种子重跑:
 
 | 素数 | 设备探测数 | 独立复现探测数 | 结果比对 | host 耗时 |
 | --- | --- | --- | --- | --- |
@@ -46,13 +46,13 @@ PEM 私钥: `.bin/rsa3072-testkey-2026-09-11.pem`(`.bin` 不参与提交);
 
 ```sh
 # 设备侧重新生成(bits 选择 argv[2]: 0=1024, 非 0=1536; rounds argv[3]: 0 → 16)
-node Build/tools/sbin/run-dongle-exe.cjs --tag gen1536 -2 13 3 1 10
+node Build/tools/LIMIT/sbin/run-dongle-exe.cjs --tag gen1536 -2 13 3 1 10
 
 # 读回 dashboard(自动 OpenSSL 复核并直出 seed/p/q 小端 hex)
-node Build/tools/sbin/run-dongle-exe.cjs --tag readkey -0 13 5
+node Build/tools/LIMIT/sbin/run-dongle-exe.cjs --tag readkey -0 13 5
 
 # 用种子独立复现(应得到与 dashboard 逐字节相同的素数, 且探测次数一致)
-node Build/tools/sbin/rsa-prime-repro.cjs --seed <seed_p> --bits 1536 --rounds 16 --expect <p>
+node Build/tools/LIMIT/sbin/rsa-prime-repro.cjs --seed <seed_p> --bits 1536 --rounds 16 --expect <p>
 ```
 
 ## 5. 说明与后续

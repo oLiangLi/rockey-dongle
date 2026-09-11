@@ -218,7 +218,7 @@
 ### D3. 2026-09-11 合并准备:内容归属(整体合并前必读)
 
 **已并入本分支 `feat/liangli/rsa-rm-test-2`:**
-- `Makefile` 的 `rockey-stack-check` 目标(工具 `Build/tools/stack-check/` 本就在 master);
+- `Makefile` 的 `rockey-stack-check` 目标(工具 `Build/tools/LIMIT/stack-check/` 本就在 master);
 - `src/__Testing__/__trngfail__/xModule.mk` 的"非 native 才构建可执行"修正(host-only 模块不进固件);
 - AGINX 分支的 **7 条 `ai-context.md` 历史**(置于文件末尾"合并自 feat/AGINX…"标记之后);
 - `ai-doc/ukey-rsa-prime-recovery-2026-09-13.md`(原样带入,两分支内容一致)。

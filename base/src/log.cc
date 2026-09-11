@@ -373,4 +373,34 @@ rLANGEXPORT void rlLoggingWrite(int level, uint32_t tag, int line, const char* f
   va_end(ap);
 }
 
+/* ---------------------------------------------------------------------------
+ *! 并入自上游 9a5ca8d5: 校验(VERIFY)失败钩子。默认只记录不中断;
+ *! 调用 rLANG_SetVerifyAbort(1) 之后才会 abort。
+ *! 设备侧 __RockeyARM__: 无日志通道, 且固件 .bss 只有 16B 预算(不能新增可变全局)
+ *! ⇒ 空实现, 上层可自行替换 hook。
+ * ------------------------------------------------------------------------- */
+#if defined(__RockeyARM__)
+rLANGEXPORT void rLANGAPI rLANG_SetVerifyAbort(int flag) {
+  (void)flag;
+}
+rLANGEXPORT void rLANGAPI rLANG_OnVerifyFailed(const char* expr, const char* file, int line) {
+  (void)expr;
+  (void)file;
+  (void)line;
+}
+#else  /* __RockeyARM__ */
+static bool global_abort_if_verify_failed_ = false;
+
+rLANGEXPORT void rLANGAPI rLANG_SetVerifyAbort(int flag) {
+  global_abort_if_verify_failed_ = (0 != flag);
+}
+
+rLANGEXPORT void rLANGAPI rLANG_OnVerifyFailed(const char* expr, const char* file, int line) {
+  fprintf(stderr, "[verify] %s:%d: %s\n", file ? file : "?", line, expr ? expr : "?");
+  fflush(stderr);
+  if (global_abort_if_verify_failed_)
+    abort();
+}
+#endif /* __RockeyARM__ */
+
 rLANG_DECLARE_END

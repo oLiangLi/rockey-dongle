@@ -11,7 +11,7 @@
  * (设备端 Montgomery 只影响速度, 不影响判定; 复现只需要同一判定顺序。)
  *
  * 用法:
- *   node Build/tools/sbin/rsa-prime-repro.cjs --seed <小端hex> --bits 1024|1536 [--rounds 16]
+ *   node Build/tools/LIMIT/sbin/rsa-prime-repro.cjs --seed <小端hex> --bits 1024|1536 [--rounds 16]
  *                                            [--expect <小端hex>] [--selftest]
  *   --expect 给出设备 dashboard 里读回的 p/q(小端 hex)时可做逐字节比对。
  *   种子/期望值都按设备 dashboard 的小端字节序书写(即 ReadDataFile 出来的顺序)。
