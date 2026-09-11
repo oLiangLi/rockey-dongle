@@ -19,13 +19,13 @@
 #include <openssl/evp.h>
 #include <openssl/obj_mac.h>
 #include <openssl/objects.h>
+#include <openssl/pem.h>
 #include <openssl/rand.h>
 #include <openssl/rsa.h>
 #include <openssl/sha.h>
 #include <openssl/sm2.h>
 #include <openssl/sm3.h>
 #include <openssl/sm4.h>
-#include <openssl/pem.h>
 #include <openssl/x509.h>
 #include <openssl/x509v3.h>
 #endif /* X_BUILD_native */
@@ -119,7 +119,7 @@ class Ed25519 {
             int message_len,
             const uint8_t public_key[32],
             const uint8_t private_key[32]);
-  int Verify(void* vExtBuffer,/* Stack Overflow, [X]InOutBuffer ... */
+  int Verify(void* vExtBuffer, /* Stack Overflow, [X]InOutBuffer ... */
              const void* message,
              int message_len,
              const uint8_t signature[64],
@@ -164,8 +164,8 @@ rLANG_DECLARE_HANDLE(ROCKEY_HANDLE);
 
 #ifdef X_BUILD_native
 #define virtual /* nothing */ /* Welcome to the Real World! */
-#define override /* nothing */
-#endif /* X_BUILD_native */
+#define override              /* nothing */
+#endif                        /* X_BUILD_native */
 
 /**
  *!
@@ -251,7 +251,7 @@ class Dongle {
   virtual int HwARandBytes(uint8_t* buffer, size_t size);
   virtual int SeedSecret(const void* input, size_t size, void* value /* size_is(16) */);
 
-public:
+ public:
   virtual int GetRealTime(DWORD* time);
   virtual int GetExpireTime(DWORD* time);
   virtual int GetTickCount(DWORD* ticks);
@@ -268,7 +268,7 @@ public:
  public:
   virtual int DeleteFile(SECRET_STORAGE_TYPE type, int id);
 
- public: // DATA FILE ...
+ public:  // DATA FILE ...
   /* SECRET_STORAGE_TYPE::kData */
   virtual int CreateDataFile(int id, size_t size, PERMISSION read, PERMISSION write);
   virtual int WriteDataFile(int id, size_t offset, const void* buffer, size_t size);
@@ -323,7 +323,7 @@ public:
                          const uint8_t R[32],
                          const uint8_t S[32]);
 
- public: // SM2 ECDSA ...
+ public:  // SM2 ECDSA ...
   virtual int SM2Sign(int id, const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
   virtual int SM2Sign(const uint8_t private_[32], const uint8_t hash[32], uint8_t R[32], uint8_t S[32]);
   virtual int SM2Verify(const uint8_t X[32],
@@ -387,8 +387,22 @@ public:
   virtual int SHA512(const void* input, size_t size, uint8_t md[64]);
 
  public:
-  virtual int CHACHAPOLY_Seal(const uint8_t key[32], const uint8_t nonce[12], void* buffer /* max_size(16 + *size) */, size_t* size);
-  virtual int CHACHAPOLY_Open(const uint8_t key[32], const uint8_t nonce[12], void* buffer, size_t* size);
+  /**
+   *! ChaCha20-Poly1305 AEAD; aad/aad_len 可选(RFC 8439 §2.8 的 additional data, 参与 Poly1305 认证,
+   *! 必须在密文之前喂入 —— 本接口内部已保证顺序): aad == nullptr 或 aad_len == 0 表示无 AAD。
+   */
+  virtual int CHACHAPOLY_Seal(const uint8_t key[32],
+                              const uint8_t nonce[12],
+                              void* buffer /* max_size(16 + *size) */,
+                              size_t* size,
+                              const void* aad = nullptr,
+                              size_t aad_len = 0);
+  virtual int CHACHAPOLY_Open(const uint8_t key[32],
+                              const uint8_t nonce[12],
+                              void* buffer,
+                              size_t* size,
+                              const void* aad = nullptr,
+                              size_t aad_len = 0);
 
  public: /* ... uECC ... */
   /**
@@ -528,7 +542,7 @@ class RockeyARM : public Dongle {
 };
 
 class Emulator : public Dongle {
-public:
+ public:
   Emulator(PERMISSION perm = PERMISSION::kAnonymous);
   virtual ~Emulator();
 
@@ -538,17 +552,15 @@ public:
   virtual int Write(const char* file);
   virtual int SetPermission(PERMISSION perm);
 
-public:
+ public:
   int Create(const char* master_secret, uint32_t uid = 0, int loop = 256);
   int Open(const char* file, const char* master_secret, int loop = 256);
 
-protected:
+ protected:
   PERMISSION permission_; /* 可变: SetPermission 可运行时切换(测试用) */
 };
 
-
-
-} // namespace dongle
+}  // namespace dongle
 
 rLANG_DECLARE_END
 

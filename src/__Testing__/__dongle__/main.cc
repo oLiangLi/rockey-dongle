@@ -1307,9 +1307,256 @@ int Testing_Secp256K1Exec(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+/**
+ *! ChaCha20-Poly1305 的 **AAD 路径**测试(RFC 8439 §2.8.2 标准向量 + 篡改负例 + 宿主对拍)。
+ *! 背景: `rlCryptoChaChaPolyUpdateAAd` 此前只在 `rlCryptoRandBytes` 内部被用到, 脚本侧的
+ *! ExChaChaPolySeal/Open 不支持 AAD(与 JS/world 的 CipherAEAD.Seal(input,nonce,aad) 不一致);
+ *! 本用例用于确认 AAD 在**设备端**与 host/OpenSSL 完全一致。
+ */
+int Testing_ChaChaPolyAad(Dongle& rockey, void* work) {
+  int error = 0;
+
+  /*! 工作区用调用方给的 1KB(设备端就是 ExtendBuf): 本用例曾把 ~1.4KB 缓冲区放在栈上,
+   *! 叠加 Testing_ChaChaPoly 的 784B 帧后超过设备 2032B 栈预算(静态栈检查超 392-496B),
+   *! 表现为"只在 ukey 上卡死/异常" —— 设备端任何大缓冲都必须走 ExtendBuf/InOutBuf。 */
+  uint8_t* const w = static_cast<uint8_t*>(work);
+  uint8_t* const plain = w;         /* data_len */
+  uint8_t* const ct_ok = w + 128;   /* data_len + 16 */
+  uint8_t* const ct_tmp = w + 256;  /* data_len + 16 */
+  uint8_t* const scratch = w + 384; /* data_len + 16 */
+  const size_t data_len = 97;
+
+  /* ---- 1) 运行期自洽性测试(所有平台, 包括 ukey 设备端) ----
+   *! 这里刻意不使用任何静态常量: 固件的 `.rodata` 必须为空(链路脚本 ASSERT)。
+   *! 判据(足以证明"AAD 真的参与了认证"):
+   *!   a) 密文与 AAD 无关(三条路径的密文必须相同);
+   *!   b) AAD 不同 ⇒ tag 必须不同;有/无 AAD ⇒ tag 必须不同;
+   *!   c) 用正确 AAD Open 成功并还原明文;用错误/缺失 AAD Open 必须失败。 */
+  {
+    uint8_t key[32], nonce[12], aad_ok[32], aad_bad[32];
+    size_t size;
+
+    std::ignore = rockey.RandBytes(key, sizeof(key));
+    std::ignore = rockey.RandBytes(nonce, sizeof(nonce));
+    std::ignore = rockey.RandBytes(aad_ok, sizeof(aad_ok));
+    std::ignore = rockey.RandBytes(plain, data_len);
+    memcpy(aad_bad, aad_ok, sizeof(aad_bad));
+    aad_bad[sizeof(aad_bad) - 1] ^= 0x01; /* 只差 1 bit */
+
+    /* a) 带 AAD(正确) —— 结果留在 ct_ok 供后面 Open 用 */
+    memcpy(scratch, plain, data_len);
+    size = data_len;
+    if (rockey.CHACHAPOLY_Seal(key, nonce, scratch, &size, aad_ok, sizeof(aad_ok)) < 0 || size != data_len + 16) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Seal(aad_ok) 失败");
+    } else {
+      memcpy(ct_ok, scratch, data_len + 16);
+    }
+
+    /* a) 带 AAD(错误, 只差 1 bit) */
+    memcpy(scratch, plain, data_len);
+    size = data_len;
+    if (rockey.CHACHAPOLY_Seal(key, nonce, scratch, &size, aad_bad, sizeof(aad_bad)) < 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Seal(aad_bad) 失败");
+    } else {
+      memcpy(ct_tmp, scratch, data_len + 16);
+    }
+    /* a) 密文与 AAD 无关;b) tag 必须随 AAD 变化 */
+    if (0 != memcmp(ct_ok, ct_tmp, data_len)) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: 密文随 AAD 变化(AAD 不应影响密钥流)");
+    }
+    if (0 == memcmp(ct_ok + data_len, ct_tmp + data_len, 16)) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: AAD 改变但 tag 未变 ⇒ AAD 未参与认证");
+    }
+
+    /* a/b) 不带 AAD: 密文相同、tag 必须不同 */
+    memcpy(scratch, plain, data_len);
+    size = data_len;
+    if (rockey.CHACHAPOLY_Seal(key, nonce, scratch, &size) < 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Seal(no aad) 失败");
+    } else {
+      if (0 != memcmp(ct_ok, scratch, data_len)) {
+        ++error;
+        rlLOGE(TAG, "ChaChaPolyAad: 有/无 AAD 的密文不一致");
+      }
+      if (0 == memcmp(ct_ok + data_len, scratch + data_len, 16)) {
+        ++error;
+        rlLOGE(TAG, "ChaChaPolyAad: 有无 AAD 的 tag 相同 ⇒ AAD 未参与认证");
+      }
+    }
+
+    /* c) 正确 AAD: Open 成功且明文还原 */
+    memcpy(scratch, ct_ok, data_len + 16);
+    size = data_len + 16;
+    if (rockey.CHACHAPOLY_Open(key, nonce, scratch, &size, aad_ok, sizeof(aad_ok)) < 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Open(aad_ok) 失败");
+    } else if (size != data_len || 0 != memcmp(scratch, plain, data_len)) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Open(aad_ok) 明文不一致");
+    }
+
+    /* c) 错误 AAD / 缺失 AAD: 必须被拒绝 */
+    memcpy(scratch, ct_ok, data_len + 16);
+    size = data_len + 16;
+    if (rockey.CHACHAPOLY_Open(key, nonce, scratch, &size, aad_bad, sizeof(aad_bad)) >= 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Open(aad_bad) 未被拒绝");
+    }
+    memcpy(scratch, ct_ok, data_len + 16);
+    size = data_len + 16;
+    if (rockey.CHACHAPOLY_Open(key, nonce, scratch, &size) >= 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Open(no aad) 未被拒绝");
+    }
+  }
+
+#if !defined(__RockeyARM__)
+  /* ---- 2) RFC 8439 §2.8.2 标准向量 + 3) OpenSSL 对拍(仅宿主/模拟器) ----
+   *! 设备端不编这段: 下面的 `static const` 向量会进 .rodata, 而固件要求 .rodata 为空。 */
+  {
+    /* RFC 8439 §2.8.2: AEAD_CHACHA20_POLY1305, AAD = 50515253c0c1c2c3c4c5c6c7 */
+    static const uint8_t kKey[32] = {
+        0x80, 0x81, 0x82, 0x83, 0x84, 0x85, 0x86, 0x87, 0x88, 0x89, 0x8a, 0x8b, 0x8c, 0x8d, 0x8e, 0x8f,
+        0x90, 0x91, 0x92, 0x93, 0x94, 0x95, 0x96, 0x97, 0x98, 0x99, 0x9a, 0x9b, 0x9c, 0x9d, 0x9e, 0x9f,
+    };
+    static const uint8_t kNonce[12] = {0x07, 0x00, 0x00, 0x00, 0x40, 0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47};
+    static const uint8_t kAad[12] = {0x50, 0x51, 0x52, 0x53, 0xc0, 0xc1, 0xc2, 0xc3, 0xc4, 0xc5, 0xc6, 0xc7};
+    static const uint8_t kPlain[114] = {
+        0x4c, 0x61, 0x64, 0x69, 0x65, 0x73, 0x20, 0x61, 0x6e, 0x64, 0x20, 0x47, 0x65, 0x6e, 0x74, 0x6c, 0x65,
+        0x6d, 0x65, 0x6e, 0x20, 0x6f, 0x66, 0x20, 0x74, 0x68, 0x65, 0x20, 0x63, 0x6c, 0x61, 0x73, 0x73, 0x20,
+        0x6f, 0x66, 0x20, 0x27, 0x39, 0x39, 0x3a, 0x20, 0x49, 0x66, 0x20, 0x49, 0x20, 0x63, 0x6f, 0x75, 0x6c,
+        0x64, 0x20, 0x6f, 0x66, 0x66, 0x65, 0x72, 0x20, 0x79, 0x6f, 0x75, 0x20, 0x6f, 0x6e, 0x6c, 0x79, 0x20,
+        0x6f, 0x6e, 0x65, 0x20, 0x74, 0x69, 0x70, 0x20, 0x66, 0x6f, 0x72, 0x20, 0x74, 0x68, 0x65, 0x20, 0x66,
+        0x75, 0x74, 0x75, 0x72, 0x65, 0x2c, 0x20, 0x73, 0x75, 0x6e, 0x73, 0x63, 0x72, 0x65, 0x65, 0x6e, 0x20,
+        0x77, 0x6f, 0x75, 0x6c, 0x64, 0x20, 0x62, 0x65, 0x20, 0x69, 0x74, 0x2e,
+    };
+    static const uint8_t kCipher[114] = {
+        0xd3, 0x1a, 0x8d, 0x34, 0x64, 0x8e, 0x60, 0xdb, 0x7b, 0x86, 0xaf, 0xbc, 0x53, 0xef, 0x7e, 0xc2, 0xa4,
+        0xad, 0xed, 0x51, 0x29, 0x6e, 0x08, 0xfe, 0xa9, 0xe2, 0xb5, 0xa7, 0x36, 0xee, 0x62, 0xd6, 0x3d, 0xbe,
+        0xa4, 0x5e, 0x8c, 0xa9, 0x67, 0x12, 0x82, 0xfa, 0xfb, 0x69, 0xda, 0x92, 0x72, 0x8b, 0x1a, 0x71, 0xde,
+        0x0a, 0x9e, 0x06, 0x0b, 0x29, 0x05, 0xd6, 0xa5, 0xb6, 0x7e, 0xcd, 0x3b, 0x36, 0x92, 0xdd, 0xbd, 0x7f,
+        0x2d, 0x77, 0x8b, 0x8c, 0x98, 0x03, 0xae, 0xe3, 0x28, 0x09, 0x1b, 0x58, 0xfa, 0xb3, 0x24, 0xe4, 0xfa,
+        0xd6, 0x75, 0x94, 0x55, 0x85, 0x80, 0x8b, 0x48, 0x31, 0xd7, 0xbc, 0x3f, 0xf4, 0xde, 0xf0, 0x8e, 0x4b,
+        0x7a, 0x9d, 0xe5, 0x76, 0xd2, 0x65, 0x86, 0xce, 0xc6, 0x4b, 0x61, 0x16,
+    };
+    static const uint8_t kTag[16] = {0x1a, 0xe1, 0x0b, 0x59, 0x4f, 0x09, 0xe2, 0x6a,
+                                     0x7e, 0x90, 0x2e, 0xcb, 0xd0, 0x60, 0x06, 0x91};
+    /* 同参数但不带 AAD(OpenSSL 实测): 用来证明"AAD 确实改变了 tag" */
+    static const uint8_t kTagNoAad[16] = {0x6a, 0x23, 0xa4, 0x68, 0x1f, 0xd5, 0x94, 0x56,
+                                          0xae, 0xa1, 0xd2, 0x9f, 0x82, 0x47, 0x72, 0x16};
+
+    uint8_t buffer[sizeof(kPlain) + 16];
+    uint8_t bad_aad[sizeof(kAad)];
+    size_t size;
+
+    /* 2) Seal + AAD → 密文与 tag 必须与 RFC 逐字节一致 */
+    memcpy(buffer, kPlain, sizeof(kPlain));
+    size = sizeof(kPlain);
+    if (rockey.CHACHAPOLY_Seal(kKey, kNonce, buffer, &size, kAad, sizeof(kAad)) < 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Seal failed");
+    } else if (size != sizeof(kPlain) + 16) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Seal size %d != %d", (int)size, (int)sizeof(kPlain) + 16);
+    } else {
+      if (0 != memcmp(buffer, kCipher, sizeof(kCipher))) {
+        ++error;
+        rlLOGE(TAG, "ChaChaPolyAad: ciphertext mismatch");
+      }
+      if (0 != memcmp(buffer + sizeof(kPlain), kTag, sizeof(kTag))) {
+        ++error;
+        rlLOGXI(TAG, buffer + sizeof(kPlain), 16, "ChaChaPolyAad: tag mismatch");
+      }
+    }
+
+    /* 2) Open + AAD → 还原明文 */
+    size = sizeof(kPlain) + 16;
+    if (rockey.CHACHAPOLY_Open(kKey, kNonce, buffer, &size, kAad, sizeof(kAad)) < 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Open failed");
+    } else if (size != sizeof(kPlain) || 0 != memcmp(buffer, kPlain, sizeof(kPlain))) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Open plaintext mismatch");
+    }
+
+    /* 2) 篡改 AAD → Open 必须失败 */
+    memcpy(bad_aad, kAad, sizeof(kAad));
+    bad_aad[0] ^= 0x01;
+    memcpy(buffer, kCipher, sizeof(kCipher));
+    memcpy(buffer + sizeof(kPlain), kTag, sizeof(kTag));
+    size = sizeof(kPlain) + 16;
+    if (rockey.CHACHAPOLY_Open(kKey, kNonce, buffer, &size, bad_aad, sizeof(bad_aad)) >= 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: tampered AAD 未被拒绝");
+    }
+
+    /* 2) 不带 AAD 的 tag 必须等于 OpenSSL 值且不同于带 AAD 的 tag */
+    memcpy(buffer, kPlain, sizeof(kPlain));
+    size = sizeof(kPlain);
+    if (rockey.CHACHAPOLY_Seal(kKey, kNonce, buffer, &size) < 0) {
+      ++error;
+      rlLOGE(TAG, "ChaChaPolyAad: Seal(no aad) failed");
+    } else if (0 != memcmp(buffer + sizeof(kPlain), kTagNoAad, sizeof(kTagNoAad))) {
+      ++error;
+      rlLOGXI(TAG, buffer + sizeof(kPlain), 16, "ChaChaPolyAad: no-aad tag mismatch");
+    }
+  }
+
+  /* 3) host: 随机对拍 OpenSSL EVP_chacha20_poly1305(覆盖多种 AAD 长度)
+   *! 注意: 两条路径必须喂**同一份明文** —— 曾误把 EVP 加密后的密文再交给 Seal(等于二次加密)。 */
+  {
+    static const int kAadLens[] = {0, 1, 15, 16, 17, 32, 63, 64};
+    for (int k = 0; k < (int)(sizeof(kAadLens) / sizeof(kAadLens[0])); ++k) {
+      const int aad_len = kAadLens[k];
+      const int len = 1 + (k * 37) % 200;
+      uint8_t plain2[200 + 16], check[200 + 16], mine[200 + 16];
+      uint8_t key[32], nonce[12], aad[64];
+      std::ignore = rockey.RandBytes(key, sizeof(key));
+      std::ignore = rockey.RandBytes(nonce, sizeof(nonce));
+      std::ignore = rockey.RandBytes(aad, sizeof(aad));
+      std::ignore = rockey.RandBytes(plain2, (size_t)len);
+
+      /* OpenSSL 参考实现 */
+      memcpy(check, plain2, (size_t)len);
+      int out_size = (int)sizeof(check), mac_size = 16;
+      EVP_CIPHER_CTX* ctx = EVP_CIPHER_CTX_new();
+      DONGLE_VERIFY(ctx && EVP_EncryptInit_ex(ctx, EVP_chacha20_poly1305(), nullptr, key, nonce) == 1);
+      if (aad_len)
+        DONGLE_VERIFY(EVP_EncryptUpdate(ctx, nullptr, &out_size, aad, aad_len) == 1);
+      DONGLE_VERIFY(EVP_EncryptUpdate(ctx, check, &out_size, check, len) == 1);
+      DONGLE_VERIFY(out_size == len);
+      DONGLE_VERIFY(EVP_EncryptFinal_ex(ctx, check + out_size, &mac_size) == 1 && mac_size == 0);
+      DONGLE_VERIFY(EVP_CIPHER_CTX_ctrl(ctx, EVP_CTRL_AEAD_GET_TAG, 16, check + len) == 1);
+      EVP_CIPHER_CTX_free(ctx);
+
+      /* 我们的实现: 同一明文 + 同一 AAD ⇒ 密文与 tag 必须逐字节相同 */
+      memcpy(mine, plain2, (size_t)len);
+      size_t size2 = (size_t)len;
+      if (rockey.CHACHAPOLY_Seal(key, nonce, mine, &size2, aad_len ? aad : nullptr, (size_t)aad_len) < 0) {
+        ++error;
+        rlLOGE(TAG, "ChaChaPolyAad(host): Seal aad=%d failed", aad_len);
+      } else if (0 != memcmp(mine, check, (size_t)len + 16)) {
+        ++error;
+        rlLOGE(TAG, "ChaChaPolyAad(host): mismatch aad=%d data=%d", aad_len, len);
+      }
+    }
+  }
+#endif /* !__RockeyARM__ */
+
+  rlLOGI(TAG, "Testing_ChaChaPolyAad error = %d", error);
+  return error;
+}
+
 int Testing_ChaChaPoly(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   int error = 0;
   uint32_t state[16];
+
+  error += Testing_ChaChaPolyAad(rockey, ExtendBuf); /* 大缓冲走 ExtendBuf, 避免顶爆设备 2KB 栈 */
 
 #if defined(__EMULATOR__)
   constexpr int kTestLoop = 10000;

@@ -1,4 +1,4 @@
-﻿#include "script.h"
+#include "script.h"
 
 rLANG_DECLARE_MACHINE
 
@@ -685,10 +685,9 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
       zero_ = SIGILL;
     } else {
       int id = argv[0];
-      if(id == kKeyIdGlobalSM2ECDSA) {
+      if (id == kKeyIdGlobalSM2ECDSA) {
         zero_ = -EACCES;
-      }
-      else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
+      } else if (id < kUserFileID && valid_permission_ != PERMISSION::kAdministrator) {
         zero_ = -EACCES;
       } else {
         uint8_t* pkey = static_cast<uint8_t*>(OpCheckMM(argv[1], 32));
@@ -815,7 +814,7 @@ int VM_t::OpFuncSM2(uint16_t op, int argc, int32_t argv[]) {
   } else if (op == OpCode::kExSM2Encrypt) {
     cycles_ -= kCyclesInternal;
 
-    if(argc != 3) {
+    if (argc != 3) {
       zero_ = SIGILL;
     } else {
       uint8_t pubk[64];
@@ -1031,28 +1030,32 @@ int VM_t::OpFuncTDES(uint16_t op, int argc, int32_t argv[]) {
 int VM_t::OpFuncChaChaPoly(uint16_t op, int argc, int32_t argv[]) {
   int value = 0;
 
-  if (op >= OpCode::kExChaChaPolySeal && op <= OpCode::kExChaChaPolyOpen && argc == 4) {
+  /* argc == 4: (key[32], nonce[12], buffer[len±16], len) —— 无 AAD(保持兼容);
+   * argc == 6: 追加 (aad[aad_len], aad_len) —— RFC 8439 的 additional data, 参与 Poly1305 认证。 */
+  if (op >= OpCode::kExChaChaPolySeal && op <= OpCode::kExChaChaPolyOpen && (argc == 4 || argc == 6)) {
     size_t size = argv[3];
+    int32_t aad_len = (argc == 6) ? argv[5] : 0;
     if ((int)size <= 0) {
       value = -EINVAL;
-    } else if (size > 1024) {
+    } else if (size > 1024 || aad_len < 0 || aad_len > 1024) {
       zero_ = SIGSEGV;
     } else {
-      cycles_ -= 1024 + 64 * (int)size;
+      cycles_ -= 1024 + 64 * (int)size + 16 * aad_len;
       const uint8_t* key = static_cast<uint8_t*>(OpCheckMM(argv[0], 32));
       const uint8_t* nonce = static_cast<uint8_t*>(OpCheckMM(argv[1], 12));
-      if (key && nonce) {
+      const void* aad = (argc == 6 && aad_len > 0) ? OpCheckMM(argv[4], aad_len) : nullptr;
+      if (key && nonce && (0 == aad_len || aad)) {
         if (op == OpCode::kExChaChaPolySeal) {
           uint8_t* buffer = static_cast<uint8_t*>(OpCheckMM(argv[2], (int)size + 16));
           if (buffer) {
-            value = dongle_->CHACHAPOLY_Seal(key, nonce, buffer, &size);
+            value = dongle_->CHACHAPOLY_Seal(key, nonce, buffer, &size, aad, (size_t)aad_len);
             if (value >= 0)
               value = (int)size;
           }
         } else {
           uint8_t* buffer = static_cast<uint8_t*>(OpCheckMM(argv[2], (int)size));
           if (buffer) {
-            value = dongle_->CHACHAPOLY_Open(key, nonce, buffer, &size);
+            value = dongle_->CHACHAPOLY_Open(key, nonce, buffer, &size, aad, (size_t)aad_len);
             if (value >= 0)
               value = (int)size;
           }

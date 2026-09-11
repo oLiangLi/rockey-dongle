@@ -1,4 +1,4 @@
-﻿#pragma once
+#pragma once
 
 #ifndef __WTINC_DONGLE_SCRIPT_H__
 #define __WTINC_DONGLE_SCRIPT_H__
@@ -224,7 +224,6 @@ struct RuntimeHeader {
   };
 };
 rLANG_ABIREQUIRE(256 == sizeof(RuntimeHeader));
-
 
 /**
  *! 全局的密钥信息保存在数据文件偏移 7KB 的位置, 大小为 1024 ...
@@ -527,8 +526,10 @@ enum class OpCode : uint16_t {
   /**
    *!
    */
-  kExChaChaPolySeal = 0x1E0,  // argc : 4, value = ExChaChaPolySeal(key[32], nonce[12], buffer[len+16], len)
-  kExChaChaPolyOpen,          // argc : 4, value = ExChaChaPolyOpen(key[32], nonce[12], buffer[len], len)
+  kExChaChaPolySeal = 0x1E0,  // argc : 4...6, value = ExChaChaPolySeal(key[32], nonce[12], buffer[len+16], len[,
+                              // aad[aad_len], aad_len])
+  kExChaChaPolyOpen,  // argc : 4...6, value = ExChaChaPolyOpen(key[32], nonce[12], buffer[len], len[, aad[aad_len],
+                      // aad_len])
 
   /**
    *!
@@ -583,13 +584,12 @@ enum class OpCode : uint16_t {
    *!
    *! 操作权限定义为 pkeyId < 1000 || dataFileId < 1000 则需要管理员权限 ...
    */
-  kExecuteImportX509,            // argc : 4/5, Exit(OpExecute_ImportX509()) ...
+  kExecuteImportX509,  // argc : 4/5, Exit(OpExecute_ImportX509()) ...
 
   /**
    *! [0x300, 0x3FF]的OpCode为以后的扩展所保留 ...
    */
 };
-
 
 /**
  *!
