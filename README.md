@@ -1,7 +1,9 @@
 ﻿# Rockey-dongle 在 Rockey-ARM 上实现了一套常用的密码学套件, 可以在 dongle 中比较安全的执行自定义的代码
 
 ## 如何编译程序 ...
-- make -j8 && make foobar -j8 && make dongle -j8 && make wasm -j8 && npm run release ...
+- https://github.com/oLiangLi/rockey-dongle 或者 git clone https://gitee.com/oLiangLI/rockey-dongle 
+- make install-hooks  ## 在合并, 提交时触发 ci 检查(可选的) ...
+- make -j8 && make foobar -j8 && make dongle -j8 && make wasm -j8 && make jsWrapper -j8
 - 程序每次编译时都会使用一些私有的常数使得每次编译的版本是不兼容的 (特别是操作 MASTER_SECRET 时)...
 - 不同版本的 jsCrypto.js 无法解密保存的 MASTER_SECRET, 如果模拟器需要依赖该功能, 一定记得保存生成模拟器时的 jsCrypto.js 文件 ...
 - 刷入真实 RockeyARM 设备每次都应该刷入不同密码学常数的版本(每次都应该先 make dongle -j8 成功编译之后再写入固件) ...
@@ -28,6 +30,7 @@
 - Ed25519
 - Secp256r1 ECDSA/ECDH, 支持压缩格式
 - Secp256k1 ECDSA/ECDH, 支持压缩格式
+- RSA3072(软件实现): 设备内**单指令**生成整对 1536 位素数实测 **≈52 分钟**(16 轮 MR,见 ai-doc/rsa3072-device-generation-2026-09-11.md), 只应该 ROOT CA 或重要的中级 CA 才应该使用
 
 ## 移植的额外支持的对称加密算法, ROM 空间有点不够了, AES 就不加了
 
@@ -44,13 +47,14 @@
 - 不支持函数调用
 - opstk 只有16个字大小
 - 代码最多100个半字长度
-- 当前的parse不支持 break, continue, switch...case
+- 当前的parser不支持 break, continue, switch...case
 
+## 正在进行的工作
+
+- CA 系统的基本原语的准备 ...
+- CSR/CRL/X509 的实现 ...
 
 ## 剩下的工作
 
 - 更多的脚本单元测试 ...
-
-
-
-
+- jsSSL 的封装 ...
