@@ -5,6 +5,7 @@
 
 #if !defined(__RockeyARM__) && !defined(__EMULATOR__)
 #include <signal.h>
+#include <cstdio> /* LogLeHex 用 std::snprintf; Linux/GCC 下不会从其它头传递进来 */
 #include <set>
 #include <thread>
 #endif /* #if !defined(__RockeyARM__) && !defined(__EMULATOR__) */
@@ -1829,34 +1830,270 @@ int Testing_X509Tests(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
+/*! 用 OpenSSL 独立验证一对 RSA 素因子 p/q(小端字节): 素性 + gcd(e,p-1)=1 + p≠q + n 位宽 + d 存在 */
+static int VerifyRsaPrimePair(const uint8_t* pbuf, const uint8_t* qbuf, int bits, const char* label) {
+  BIGNUM* p = BN_lebin2bn(pbuf, bits / 8, nullptr);
+  BIGNUM* q = BN_lebin2bn(qbuf, bits / 8, nullptr);
+  BN_CTX* bnctx = BN_CTX_new();
+  BIGNUM* e = BN_new();
+  BIGNUM* pm1 = BN_new();
+  BIGNUM* qm1 = BN_new();
+  BIGNUM* g1 = BN_new();
+  BIGNUM* g2 = BN_new();
+  BIGNUM* lcm = BN_new();
+  BIGNUM* n = BN_new();
+  BIGNUM* d = BN_new();
+  std::ignore = BN_set_word(e, 65537);
+  std::ignore = BN_sub_word(BN_copy(pm1, p), 1);
+  std::ignore = BN_sub_word(BN_copy(qm1, q), 1);
+  std::ignore = BN_gcd(g1, e, pm1, bnctx);
+  std::ignore = BN_gcd(g2, e, qm1, bnctx);
+  const int prime_p = BN_is_prime_ex(p, 64, bnctx, nullptr);
+  const int prime_q = BN_is_prime_ex(q, 64, bnctx, nullptr);
+  const int gcd_ok = BN_is_one(g1) && BN_is_one(g2);
+  const int distinct = (BN_cmp(p, q) != 0);
+  std::ignore = BN_mul(n, p, q, bnctx);
+  std::ignore = BN_mul(lcm, pm1, qm1, bnctx); /* e 与 pm1/qm1 互素 ⇒ 与乘积互素, 逆元存在 */
+  const int d_ok = (nullptr != BN_mod_inverse(d, e, lcm, bnctx));
+  const int ok = prime_p && prime_q && gcd_ok && distinct && d_ok;
+  rlLOGI(TAG, "%s RSA%d verify: prime_p=%d prime_q=%d gcd(e,p-1)=1:%d distinct=%d bits(n)=%d d_ok=%d ok=%d", label,
+         bits * 2, prime_p, prime_q, gcd_ok, distinct, BN_num_bits(n), d_ok, ok);
+  rlLOGI(TAG, "%s p = %s", label, BN_bn2hex(p));
+  rlLOGI(TAG, "%s q = %s", label, BN_bn2hex(q));
+  BN_free(p);
+  BN_free(q);
+  BN_free(e);
+  BN_free(pm1);
+  BN_free(qm1);
+  BN_free(g1);
+  BN_free(g2);
+  BN_free(lcm);
+  BN_free(n);
+  BN_free(d);
+  BN_CTX_free(bnctx);
+  return ok;
+}
+
+/*! 小端字节序 hex 直出(与设备 dashboard 存储顺序一致, 便于外部工具复现同一对素数) */
+static void LogLeHex(const char* tag, const char* what, const uint8_t* buf, int n) {
+  char line[2 * 192 + 1];
+  for (int i = 0; i < n; ++i)
+    std::snprintf(&line[2 * i], 3, "%02x", buf[i]);
+  line[2 * n] = '\0';
+  rlLOGI(TAG, "%s %s(le,%dB)=%s", tag, what, n, line);
+}
+
+/*! 长跑进度读回(dashboard 测试用进度区): 设备内 GetTickCount 不自走, 时长只能由 host 墙钟换算。
+ *! 同一偏移在生成模式下是 GenResult(见 mr.h), 这里按 magic 自动区分并顺带验证 p/q。 */
+static void ReadMRProgress(Dongle& rockey, const char* tag) {
+  /* 同一偏移(4096)在不同模式下含义不同: 长跑 Progress / 生成 GenResult, 用 union 复用 32B */
+  union {
+    MillerRabinContext::Progress p;
+    MillerRabinContext::GenResult g;
+  } u{};
+  const int rc = rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kProgressOffset, &u, sizeof(u));
+  if (u.g.magic == MillerRabinContext::kMagicGenDone) {
+    const uint64_t probes_p = ((uint64_t)u.g.probes_p_hi << 32) | u.g.probes_p_lo;
+    const uint64_t probes_q = ((uint64_t)u.g.probes_q_hi << 32) | u.g.probes_q_lo;
+    rlLOGI(TAG, "%s dashboard[%u] rc=%d magic=%08x(MGen) bits=%u rounds=%u ok=%u probes_p=%llu probes_q=%llu", tag,
+           MillerRabinContext::kProgressOffset, rc, u.g.magic, u.g.bits, u.g.rounds, u.g.ok,
+           (unsigned long long)probes_p, (unsigned long long)probes_q);
+    if ((u.g.ok & 3u) == 3u && (u.g.bits == 1024 || u.g.bits == 1536)) {
+      uint8_t pbuf[192] = {0}, qbuf[192] = {0}, spbuf[192] = {0}, sqbuf[192] = {0};
+      const int nbytes = (int)u.g.bits / 8;
+      const int r1 = rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenPOffset, pbuf, nbytes);
+      const int r2 = rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenQOffset, qbuf, nbytes);
+      const int r3 =
+          rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenSeedPOffset, spbuf, nbytes);
+      const int r4 =
+          rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenSeedQOffset, sqbuf, nbytes);
+      rlLOGI(TAG, "%s read p/q/seeds rc=%d/%d/%d/%d", tag, r1, r2, r3, r4);
+      if (0 == r3 && 0 == r4) {
+        /* 小端 hex 直出: 可直接喂 Build/tools/sbin/rsa-prime-repro.cjs 独立复现同一对素数 */
+        LogLeHex(tag, "seed_p", spbuf, nbytes);
+        LogLeHex(tag, "seed_q", sqbuf, nbytes);
+      }
+      if (0 == r1 && 0 == r2) {
+        LogLeHex(tag, "p", pbuf, nbytes);
+        LogLeHex(tag, "q", qbuf, nbytes);
+        std::ignore = VerifyRsaPrimePair(pbuf, qbuf, (int)u.g.bits, tag);
+      }
+    }
+    return;
+  }
+  const uint64_t units = ((uint64_t)u.p.units_hi << 32) | (uint64_t)u.p.units_lo;
+  const char* kind = u.p.magic == MillerRabinContext::kMagicDone
+                         ? "done"
+                         : (u.p.magic == MillerRabinContext::kMagicAlive
+                                ? "alive"
+                                : (u.p.magic == MillerRabinContext::kMagicStart ? "start" : "stale/empty"));
+  rlLOGI(TAG, "%s dashboard[%u] rc=%d magic=%08x(%s) seq=%u units=%llu beats=%u checksum=%08x writeRc=%d", tag,
+         MillerRabinContext::kProgressOffset, rc, u.p.magic, kind, u.p.seq, (unsigned long long)units, u.p.beats,
+         u.p.checksum, (int)u.p.result);
+}
+#endif /* !__RockeyARM__ && !__EMULATOR__ */
+
 int Testing_PrimeMRTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   int result = 0;
   memset(ExtendBuf, 0, 1024);
 
   auto* MR = static_cast<MillerRabinContext*>(ExtendBuf);
   MR->InitSmallBases();
+  MR->SetDongle(&rockey); /* 设备侧 KickWDG 需要 COS 句柄(SetLEDState/GetTickCount) */
 
-#if 0
-  for (int j = 0; j < 100; ++j) {
-    MR->Delay(1);
-    MR->KickWDG();
-  }
-#endif
+  /* 候选工作区放 InOut[384, 772): Context_t 恰 360B, 且不越 1024 处的 GuardBytes。
+   *! 旧写法 (BN*)Context + 2 在 k=48(BN=388B) 时会盖掉 GuardBytes → 假栈溢出惩罚 */
+  auto* Val = reinterpret_cast<MillerRabinContext::BN*>(static_cast<uint8_t*>(Context) + 384);
 
-  auto* Val = static_cast<MillerRabinContext::BN*>(Context) + 2;
+  /* argv_[1]=mode(0=随机/1=素数/2=半素数/3=RSA 素数生成/4=长跑耐久/5=读 dashboard 进度),
+   * argv_[2]=MR 基轮数或 64 位参数的低 32 位, argv_[3]=64 位参数的高 32 位(host 按 hex 解析) */
+  const int mode = (int)(reinterpret_cast<Context_t*>(Context)->argv_[1] & 0xff);
 
   /* argv_[2]=MR 基轮数(1..16, 测试时可只跑前几轮缩短设备端耗时; 缺省 16) */
   int mr_rounds = (int)(reinterpret_cast<Context_t*>(Context)->argv_[2] & 0xff);
   if (mr_rounds < 1 || mr_rounds > MillerRabinContext::kMaxRounds)
     mr_rounds = MillerRabinContext::kMaxRounds;
 
+  if (mode == 5) {
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
+    /* 独立进程可随时调用(不触发 ExecuteExeFile), 用于长跑期间观察进度 */
+    ReadMRProgress(rockey, "mode5");
+    exit(0);
+#else
+    return 0;
+#endif
+  }
+
+  if (mode == 4) {
+    /* 设备内长跑(定工作量 + KickWDG), 期间周期把进度写到 dashboard;
+     * 即使被看门狗复位, host 也能从 dashboard 读回最后一次进度 → 最大连续执行时间 */
+    [[maybe_unused]] const uint64_t iters = ((uint64_t)reinterpret_cast<Context_t*>(Context)->argv_[3] << 32) |
+                                            (uint64_t)reinterpret_cast<Context_t*>(Context)->argv_[2];
+    rockey.SetLEDState(LED_STATE::kBlink);
+#if defined(__RockeyARM__)
+    rlLOGI(TAG, "Endurance enter: iters=%llu", (unsigned long long)iters);
+    const uint32_t checksum = MR->Endurance(iters);
+    Context_t* ctx = reinterpret_cast<Context_t*>(Context);
+    ctx->result_[0] = checksum;
+    ctx->result_[1] = MR->Heartbeats();
+    ctx->result_[2] = (uint32_t)iters;
+    ctx->result_[3] = (uint32_t)(iters >> 32);
+    rlLOGI(TAG, "Endurance leave: checksum=%08x beats=%u", checksum, MR->Heartbeats());
+#elif !defined(__EMULATOR__)
+    MillerRabinContext::Progress zero{};
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kProgressOffset, &zero,
+                                       sizeof(zero)); /* 先清掉上一次的记录 */
+    rlLOGI(TAG, "Endurance(host): 触发设备内长跑 iters=%llu", (unsigned long long)iters);
+    auto start = rLANG_GetTickCount();
+    int main_result = 0;
+    const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+    auto end = rLANG_GetTickCount();
+    rlLOGI(TAG, "Endurance(host): ExecuteExeFile result=%d mainRet=%d in %lld ms", exec_result, main_result,
+           static_cast<long long>(end - start));
+    Context_t* rctx = reinterpret_cast<Context_t*>(Context);
+    const uint64_t req_iters = ((uint64_t)rctx->result_[3] << 32) | (uint64_t)rctx->result_[2];
+    rlLOGI(TAG, "Endurance(host): checksum=%08x beats=%u reqIters=%llu (%.3f us/unit)", rctx->result_[0],
+           rctx->result_[1], (unsigned long long)req_iters,
+           req_iters ? static_cast<double>(end - start) * 1000.0 / static_cast<double>(req_iters) : 0.0);
+    ReadMRProgress(rockey, "mode4");
+    exit(0); /* 不走后续通用尾部: 进度已经读回并打印 */
+#else
+    return 0; /* 模拟器: 长跑/进度落盘不适用 */
+#endif /* __RockeyARM__ */
+    return 0;
+  }
+
+  if (mode == 3) {
+    /* RSA 素数生成(设备内单指令完成): argv_[2] = 位宽选择(0=1024, 非 0=1536),
+     * argv_[3] = MR 轮数(0 → kMaxRounds)。结果全部落到 dashboard 测试区
+     * (状态 GenResult / p / q / 种子), 见 MillerRabinContext 里的偏移定义。 */
+    const uint32_t sel_bits = reinterpret_cast<Context_t*>(Context)->argv_[2] & 0xff;
+    [[maybe_unused]] const int gen_bits = sel_bits ? 1536 : 1024;
+    int gen_rounds = (int)(reinterpret_cast<Context_t*>(Context)->argv_[3] & 0xff);
+    if (gen_rounds < 1 || gen_rounds > MillerRabinContext::kMaxRounds)
+      gen_rounds = MillerRabinContext::kMaxRounds;
+    [[maybe_unused]] constexpr uint64_t kGenMaxProbes = 1000000; /* 安全上限: 期望探测数 ≈ ln(2^bits)/2 */
+
+#if defined(__RockeyARM__)
+    /* 工作区放 InOut(设备运行时内存, 不占栈): Context_t 恰 360B, 从 384B 起用 1 个 BN */
+    uint8_t* inout = reinterpret_cast<uint8_t*>(Context);
+    auto* W = reinterpret_cast<MillerRabinContext::BN*>(inout + 384);
+    MillerRabinContext::GenResult st{};
+    st.magic = MillerRabinContext::kMagicGenDone;
+    st.bits = (uint32_t)gen_bits;
+    st.rounds = (uint32_t)gen_rounds;
+    rockey.SetLEDState(LED_STATE::kBlink);
+
+    for (int which = 0; which < 2; ++which) {
+      const uint32_t seed_off = which ? MillerRabinContext::kGenSeedQOffset : MillerRabinContext::kGenSeedPOffset;
+      const uint32_t out_off = which ? MillerRabinContext::kGenQOffset : MillerRabinContext::kGenPOffset;
+      W->clear();
+      const int rr = rockey.RandBytes(reinterpret_cast<uint8_t*>(&W->v[0]), (size_t)gen_bits / 8);
+      if (0 != rr) {
+        rlLOGI(TAG, "GenPrime: RandBytes(%d) = %d", which, rr);
+        break;
+      }
+      std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, seed_off, &W->v[0], (size_t)gen_bits / 8);
+      uint64_t probes = 0;
+      const int hit = MR->FindPrime(*W, gen_bits, gen_rounds, kGenMaxProbes, probes, (uint32_t)(which + 1));
+      const uint32_t bit = which ? 2u : 1u;
+      if (hit > 0) {
+        st.ok |= bit;
+        std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, out_off, &W->v[0], (size_t)gen_bits / 8);
+      }
+      if (which) {
+        st.probes_q_lo = (uint32_t)probes;
+        st.probes_q_hi = (uint32_t)(probes >> 32);
+      } else {
+        st.probes_p_lo = (uint32_t)probes;
+        st.probes_p_hi = (uint32_t)(probes >> 32);
+      }
+      rlLOGI(TAG, "GenPrime %d: hit=%d probes=%llu", which, hit, (unsigned long long)probes);
+    }
+    /* 状态最后写: dashboard 上出现 kMagicGenDone 即"生成流程已结束" */
+    std::ignore =
+        rockey.WriteDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenStatusOffset, &st, sizeof(st));
+    rlLOGI(TAG, "GenPrime done: ok=%u bits=%u rounds=%u", st.ok, st.bits, st.rounds);
+#elif !defined(__EMULATOR__)
+    auto gen_start = rLANG_GetTickCount();
+    int main_result = 0;
+    const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+    auto gen_end = rLANG_GetTickCount();
+    MillerRabinContext::GenResult st{};
+    uint8_t pbuf[192] = {0}, qbuf[192] = {0};
+    std::ignore =
+        rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenStatusOffset, &st, sizeof(st));
+    if (st.bits == 1024 || st.bits == 1536) {
+      std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenPOffset, pbuf, st.bits / 8);
+      std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, MillerRabinContext::kGenQOffset, qbuf, st.bits / 8);
+    }
+    const uint64_t probes_p = ((uint64_t)st.probes_p_hi << 32) | st.probes_p_lo;
+    const uint64_t probes_q = ((uint64_t)st.probes_q_hi << 32) | st.probes_q_lo;
+    rlLOGI(TAG, "GenPrime(host): ExecuteExeFile=%d mainRet=%d in %lld ms", exec_result, main_result,
+           static_cast<long long>(gen_end - gen_start));
+    rlLOGI(TAG, "GenPrime(host): magic=%08x bits=%u rounds=%u ok=%u probes_p=%llu probes_q=%llu", st.magic, st.bits,
+           st.rounds, st.ok, (unsigned long long)probes_p, (unsigned long long)probes_q);
+
+    int ok = 0;
+    if (st.magic == MillerRabinContext::kMagicGenDone && (st.ok & 3u) == 3u) {
+      ok = VerifyRsaPrimePair(pbuf, qbuf, (int)st.bits, "mode3");
+    } else {
+      rlLOGE(TAG, "GenPrime(host): 生成未完成(magic=%08x ok=%u)", st.magic, st.ok);
+    }
+    exit(ok ? 0 : 1);
+#else
+    return 0; /* 模拟器: RSA 素数生成(设备内/OpenSSL 复核)不适用 */
+#endif /* __RockeyARM__ */
+    return 0;
+  }
+
 #if !defined(__EMULATOR__) && !defined(__RockeyARM__)
-  memset(Val, 0, sizeof(*Val));
+  Val->clear(); /* 等价 memset + n=0, 但不会触发 GCC -Wclass-memaccess(BN 有默认成员初始化) */
 
   Val->clear();
   Val->n = 32;
   /* argv_[1]: 0=随机奇数(多为合数); 1=注入 1024 位素数; 2=注入半素数 p*q(无小因子合数) */
-  const int mode = (int)(reinterpret_cast<Context_t*>(Context)->argv_[1] & 0xff);
   if (mode == 2) {
     /* 两个 512 位素数之积 → 1024 位合数且无 ≤1000 小因子(验证 Montgomery 判合路径) */
     BIGNUM* p = BN_new();
@@ -1887,15 +2124,14 @@ int Testing_PrimeMRTests(Dongle& rockey, void* Context, void* ExtendBuf) {
 
   BIGNUM* bn = BN_new();
   std::ignore = BN_set_word(bn, Val->v[Val->n - 1]);
-  for(int i = Val->n - 2; i >= 0; --i) {
+  for (int i = Val->n - 2; i >= 0; --i) {
     std::ignore = BN_lshift(bn, bn, 32);
     std::ignore = BN_add_word(bn, Val->v[i]);
   }
   result = BN_is_prime_ex(bn, 0, nullptr, nullptr);
   BN_free(bn);
 
-  rlLOGI(TAG, "BN_is_prime_ex %d (mode=%d, hostTrialDivide=%d)", result, mode,
-         MR->TrialDivide(*Val) ? 1 : 0);
+  rlLOGI(TAG, "BN_is_prime_ex %d (mode=%d, hostTrialDivide=%d)", result, mode, MR->TrialDivide(*Val) ? 1 : 0);
 #endif /* !__EMULATOR__ && !__RockeyARM__ */
 
   rockey.SetLEDState(LED_STATE::kOff);

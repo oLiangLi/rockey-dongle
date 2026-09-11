@@ -17,18 +17,17 @@ namespace dongle {
 static constexpr int kSizeDebuggerLimit = 4;
 #else
 /**
- *! 必须传入 1024 位的整数进行素数测试
+ *! 允许的最小测试宽度: 1024 位(kMinCountWords); 上限为 kCountWords=1536 位
  */
-static constexpr int kSizeDebuggerLimit = MillerRabinContext::kCountWords;
+static constexpr int kSizeDebuggerLimit = MillerRabinContext::kMinCountWords;
 #endif
 
 static constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("kRMPT");
 
 /* r = a*b*R^{-1} mod n (CIOS, R=2^{32k}, k=n.n); r 可与 a/b 别名(结果经局部 t 回写) */
-rLANG_NOINLINE void MillerRabinContext::MontMul(BN& r, const BN& a, const BN& b, const BN& n,
-                                                uint32_t n0inv) {
+rLANG_NOINLINE void MillerRabinContext::MontMul(BN& r, const BN& a, const BN& b, const BN& n, uint32_t n0inv) {
   const int k = n.n;
-  uint32_t t[34];
+  uint32_t t[kCountWords + 2];
   for (int i = 0; i < k + 2; ++i)
     t[i] = 0;
   for (int i = 0; i < k; ++i) {
@@ -167,7 +166,8 @@ rLANG_NOINLINE int MillerRabinContext::IsPrimeMRW(const BN& n, int rounds) {
   if (TrialDivide(n))
     return 0;
 
-  /* Montgomery 域: R = 2^{32k}; 全程在域内比较(one_m/nm1_m 只转换一次) */
+  /* Montgomery 域: R = 2^{32k}; 全程在域内比较(one_m_/nm1_m_ 只转换一次)
+   *! one_m_/nm1_m_ 放类成员而非栈: k=48 时单个 BN 388B, 与 d/base_m/x 一起放栈会顶穿 */
   const uint32_t n0inv = N0Inv(n.v[0]);
   BN d = n;
   subSmall(d, 1);
@@ -177,15 +177,14 @@ rLANG_NOINLINE int MillerRabinContext::IsPrimeMRW(const BN& n, int rounds) {
     ++s;
   }
 
-  BN one_m, nm1_m, base_m, x;
-  /* 原地构造, 省两个 BN 栈槽(设备栈预算紧张): one_m = 1*R, nm1_m = (n-1)*R */
-  one_m.clear();
-  one_m.v[0] = 1;
-  one_m.n = 1;
-  ToMont(one_m, one_m, n);
-  nm1_m = n;
-  subSmall(nm1_m, 1);
-  ToMont(nm1_m, nm1_m, n);
+  BN base_m, x;
+  /* 原地构造: one_m_ = 1*R, nm1_m_ = (n-1)*R = n - R mod n(域内减法, 省一次 ToMont) */
+  one_m_.clear();
+  one_m_.v[0] = 1;
+  one_m_.n = 1;
+  ToMont(one_m_, one_m_, n);
+  nm1_m_ = n;
+  subEq(nm1_m_, one_m_);
 
   if (rounds < 1 || rounds > (int)(sizeof(smallBases_) / sizeof(smallBases_[0])))
     rounds = (int)(sizeof(smallBases_) / sizeof(smallBases_[0]));
@@ -198,9 +197,9 @@ rLANG_NOINLINE int MillerRabinContext::IsPrimeMRW(const BN& n, int rounds) {
     base_m.n = 1;
     ToMont(base_m, base_m, n); /* 原地把小基转进 Montgomery 域 */
     x.clear();
-    x.n = one_m.n;
-    for (int j = 0; j < one_m.n; ++j)
-      x.v[j] = one_m.v[j];
+    x.n = one_m_.n;
+    for (int j = 0; j < one_m_.n; ++j)
+      x.v[j] = one_m_.v[j];
     for (int i = bitlen(d) - 1; i >= 0; --i) {
       MontMul(x, x, x, n, n0inv);
       if ((d.v[i >> 5] >> (i & 31)) & 1u)
@@ -208,16 +207,16 @@ rLANG_NOINLINE int MillerRabinContext::IsPrimeMRW(const BN& n, int rounds) {
       if ((i & 31) == 0)
         KickWDG(); /* 每 32 次平方: LED 反转 + COS 心跳 */
     }
-    if (cmp(x, one_m) == 0 || cmp(x, nm1_m) == 0)
+    if (cmp(x, one_m_) == 0 || cmp(x, nm1_m_) == 0)
       continue;
     bool witness = false;
     for (int j = 1; j < s; ++j) {
       MontMul(x, x, x, n, n0inv);
-      if (cmp(x, nm1_m) == 0) {
+      if (cmp(x, nm1_m_) == 0) {
         witness = true;
         break;
       }
-      if (cmp(x, one_m) == 0)
+      if (cmp(x, one_m_) == 0)
         break;
       if ((j & 31) == 0)
         KickWDG();
@@ -228,84 +227,112 @@ rLANG_NOINLINE int MillerRabinContext::IsPrimeMRW(const BN& n, int rounds) {
   return 1;
 }
 
-rLANG_NOINLINE void MillerRabinContext::mulTo(BN& r, const BN& a, const BN& b) {
-  r.clear();
-  for (int i = 0; i < a.n; ++i) {
-    uint64_t carry = 0;
-    for (int j = 0; j < b.n; ++j) {
-      uint64_t s = (uint64_t)a.v[i] * b.v[j] + r.v[i + j] + carry;
-      r.v[i + j] = (uint32_t)s;
-      carry = s >> 32;
+/*! a -= b(要求 a >= b): 在 Montgomery 域内由 one_m_ 直接得到 nm1_m_ = n - R mod n */
+rLANG_NOINLINE void MillerRabinContext::subEq(BN& a, const BN& b) {
+  int64_t borrow = 0;
+  for (int j = 0; j < a.n; ++j) {
+    const int64_t bj = (j < b.n) ? (int64_t)b.v[j] : 0;
+    int64_t d = (int64_t)a.v[j] - bj - borrow;
+    if (d < 0) {
+      d += (int64_t)1 << 32;
+      borrow = 1;
+    } else {
+      borrow = 0;
     }
-    int j = b.n;
-    while (carry) {
-      uint64_t s = (uint64_t)r.v[i + j] + carry;
-      r.v[i + j] = (uint32_t)s;
-      carry = s >> 32;
-      ++j;
-    }
+    a.v[j] = (uint32_t)d;
   }
-  r.n = a.n + b.n;
-  trim(r);
+  trim(a);
 }
 
-rLANG_NOINLINE void MillerRabinContext::remTo(BN& rr, const BN& a, const BN& b) {
-  if (cmp(a, b) < 0) {
-    rr = a;
-    return;
+/*! 候选定型: c.v 已由调用方用种子/TRNG 填满 bits/8 字节, 这里保证它是严格 bits 位的奇数 */
+rLANG_NOINLINE void MillerRabinContext::SeedCandidate(BN& c, int bits) {
+  const int words = bits / 32;
+  c.n = words;
+  c.v[0] |= 1u;               /* 最低位: 奇数 */
+  c.v[words - 1] |= 1u << 31; /* 最高位: 恰 bits 位 */
+  trim(c);
+}
+
+/*! 从候选起点 +2 搜索素数; 幂模内部已有周期心跳, 这里只为试除密集的长尾补一次喂狗 */
+rLANG_NOINLINE int MillerRabinContext::FindPrime(BN& out,
+                                                 int bits,
+                                                 int rounds,
+                                                 uint64_t maxProbes,
+                                                 uint64_t& probes,
+                                                 uint32_t label) {
+  const int words = bits / 32;
+  probes = 0;
+  SeedCandidate(out, bits);
+  for (uint64_t i = 0; i <= maxProbes; ++i) {
+    probes = i;
+    if (IsPrimeMRW(out, rounds) > 0)
+      return 1;
+    addSmall(out, 2);
+    /* 边界防御: 进位越过最高位就不再是 bits 位候选(预算内不可能发生, 仅防呆) */
+    if (out.n != words || 0 == (out.v[words - 1] >> 31))
+      return 0;
+    if ((i & 0x3ffu) == 0)
+      KickWDG();
+    /* 每 32 次探测落一次进度(带 MR 的候选每次约几十秒 ⇒ ≈3 分钟一次):
+     * 即使中途被看门狗复位, dashboard 上也能看到搜到第几个候选、在找 p 还是 q。
+     * ! 该记录会被最终 GenResult 覆盖(magic 不同)。*/
+    if (label && (i & 0x1fu) == 0)
+      ReportProgress(kMagicAlive, label, i, 0);
   }
-  rr.n = 1;
-  rr.v[0] = 0;
-  for (int i = bitlen(a) - 1; i >= 0; --i) {
-    uint32_t carry = (a.v[i >> 5] >> (i & 31)) & 1u;
-    for (int j = 0; j < rr.n; ++j) {
-      uint64_t t = ((uint64_t)rr.v[j] << 1) | carry;
-      rr.v[j] = (uint32_t)t;
-      carry = (uint32_t)(t >> 32);
+  return 0;
+}
+
+/*! 长跑进度落盘: dashboard[kProgressOffset, +64)(factory dataFile 0xFFFF) */
+rLANG_NOINLINE void MillerRabinContext::ReportProgress(uint32_t magic,
+                                                       uint32_t seq,
+                                                       uint64_t units,
+                                                       uint32_t checksum) {
+  Progress p{};
+  p.magic = magic;
+  p.seq = seq;
+  p.units_lo = (uint32_t)units;
+  p.units_hi = (uint32_t)(units >> 32);
+  p.beats = counter_;
+  p.checksum = checksum;
+  p.result = 0xFFFFFFFFu; /* 未调用; 写入失败时保留返回码 */
+  if (dongle_) {
+    const int rc = dongle_->WriteDataFile(Dongle::kFactoryDataFileId, kProgressOffset, &p, sizeof(p));
+    p.result = (uint32_t)rc;
+    if (0 != rc) /* 失败重试一次并把返回码留在 dashboard 上 */
+      std::ignore = dongle_->WriteDataFile(Dongle::kFactoryDataFileId, kProgressOffset, &p, sizeof(p));
+  }
+  std::ignore = TAG;
+}
+
+/**
+ *! 长跑/看门狗耐久测试(设备内执行): 定工作量(LCG 依赖链, 不会被优化掉)+ 周期性 KickWDG,
+ *! 并按 kReportBeats 节奏把进度写到 dashboard —— 即使被看门狗复位, 最后一次进度也留在
+ *! dashboard 上, host 据此算出"程序连续执行的最大时间"。
+ */
+rLANG_NOINLINE uint32_t MillerRabinContext::Endurance(uint64_t iters) {
+  uint32_t checksum = 0x9e3779b9u;
+  uint32_t seq = 0;
+  uint64_t units = 0;
+
+  ReportProgress(kMagicStart, seq++, 0, checksum); /* 起始记录: 区分"从未启动"与"刚启动即死" */
+  for (uint64_t i = 0; i < iters; ++i) {
+    checksum = checksum * 1664525u + 1013904223u;
+    ++units;
+    if (0 == (units % kBeatUnits)) {
+      KickWDG();
+      if (0 == (counter_ % kReportBeats))
+        ReportProgress(kMagicAlive, seq++, units, checksum);
     }
-    if (carry)
-      rr.v[rr.n++] = carry;
-    if (cmp(rr, b) >= 0) { /* rr -= b */
-      int64_t borrow = 0;
-      for (int j = 0; j < rr.n; ++j) {
-        int64_t s = (int64_t)rr.v[j] - (j < b.n ? (int64_t)b.v[j] : 0) - borrow;
-        if (s < 0) {
-          s += (int64_t)1 << 32;
-          borrow = 1;
-        } else {
-          borrow = 0;
-        }
-        rr.v[j] = (uint32_t)s;
-      }
-      trim(rr);
-    }
   }
+  ReportProgress(kMagicDone, seq, units, checksum); /* 正常结束记录 */
+  return checksum;
 }
-
-rLANG_NOINLINE void MillerRabinContext::mulmodW(BN& r, const BN& a, const BN& b, const BN& m, BN& prod, BN& rem) {
-  KickWDG();
-  mulTo(prod, a, b);
-  remTo(rem, prod, m);
-  r = rem;
-}
-
-rLANG_NOINLINE void
-MillerRabinContext::powmodMRW(BN& r, uint32_t base, const BN& e, const BN& m, BN& bs, BN& prod, BN& rem) {
-  bs.v[0] = base; /* base < m(MR 路径已保证), 单 limb, 其余槽位不读 */
-  bs.n = 1;
-  r.clear();
-  r.v[0] = 1;
-  r.n = 1; /* 注意: BN::clear() 置 n=0, 必须显式置 1, 否则 mulTo 空转 → 恒判合数 */
-  for (int i = bitlen(e) - 1; i >= 0; --i) {
-    mulmodW(r, r, r, m, prod, rem);
-    if ((e.v[i >> 5] >> (i & 31)) & 1u)
-      mulmodW(r, r, bs, m, prod, rem);
-  }
-}
-
 void MillerRabinContext::KickWDG() {
 #if defined(__RockeyARM__)
   ++counter_;
+
+  if (nullptr == dongle_)
+    return; /* 未注入 COS 句柄: 只能计数, 无法真正喂狗 */
 
   dongle_->SetLEDState(counter_ & 1 ? LED_STATE::kOn : LED_STATE::kOff);
 
