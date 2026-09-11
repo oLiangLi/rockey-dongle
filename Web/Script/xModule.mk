@@ -10,7 +10,7 @@ SCRIPT_SCENARIO_SOURCE  := $(LOCAL_PATH)/grammar/dongle.ts
 
 $(eval $$(LOCAL_MODULE)-prepare : $$(SCRIPT_SCENARIO_SOURCE))
 $(SCRIPT_SCENARIO_SOURCE): $(SCRIPT_SCENARIO_DECLARE)
-	$(hide) $(X_NODE) $(wORLD_ROOT)/Build/tools/script/scenario.cjs $<  \
+	$(hide) $(X4C_NODE) $(wORLD_ROOT)/Build/tools/script/scenario.cjs $<  \
 	  --output-ts-file=$(SCRIPT_SCENARIO_SOURCE)
 	$(hide) touch $@
 

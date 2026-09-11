@@ -20,6 +20,11 @@ TSC ?= $(if $(wildcard $(wORLD_ROOT)/node_modules/.bin/tsc),$(wORLD_ROOT)/node_m
 ##
 R ?= 1
 
+##
+## 宿主平台约定(用户 2026-09-11): Windows 侧**只在 Cygwin 下构建** —— MSYS2 / Git-Bash 缺太多工具,
+## 不在支持范围内 ⇒ 下面 `uname -o` == "Cygwin" 就是 Windows 的唯一判据, 不要为 Msys/MINGW 扩写。
+## 支持的宿主: Cygwin(Windows) / Linux(x86_64) / Linux(aarch64)。
+##
 ifeq ("$(shell uname -m)","aarch64")
 all: aarch64-linux
 clean: clean-aarch64-linux

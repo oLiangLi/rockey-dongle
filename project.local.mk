@@ -47,7 +47,7 @@ optimize: $(X4C_OPTIMIZE_OUTPUT)/$(strip $1).wasm
 $(X4C_OPTIMIZE_OUTPUT)/$(strip $1).wasm: $(X4C_BINARY)/$(strip $1).wasm
 	$$(info WASM-OPTIMIZE $$@)
 	$$(hide) $$(X4C_WASM_OPT) $$($(strip $1)_BUILD_OPTIMIZE_FLAGS) -o $$@ $$<
-	$$(hide) $$(X_NODE) $$(wORLD_ROOT)/Build/tools/script/wasm2string.cjs $$@
+	$$(hide) $$(X4C_NODE) $$(wORLD_ROOT)/Build/tools/script/wasm2string.cjs $$@
 endef
 endif
 

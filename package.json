@@ -1,4 +1,5 @@
 {
+  "name": "RockeyDongle",
   "type": "commonjs",
   "scripts": {
     "build": "tsc && node Web/Emulator/lib/packScript.cjs && webpack -c Web/Emulator/lib/webpack.cjs --mode development",

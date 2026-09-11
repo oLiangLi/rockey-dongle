@@ -94,14 +94,17 @@ function isWindowsDir(dir) {
 }
 
 function platformDirOf() {
+  // 宿主架构 + 平台前缀(amd64/aarch64 × windows/linux), 使 aarch64 宿主也能找到自己的产物目录
+  const arch = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "amd64" : process.arch;
+  const host = process.platform === "win32" ? "windows" : "linux";
   const dirs = fs.existsSync(path.join(root, ".bin"))
-    ? fs.readdirSync(path.join(root, ".bin")).filter((d) => /amd64-(windows|linux|foobar)/.test(d))
+    ? fs.readdirSync(path.join(root, ".bin")).filter((d) => /^(amd64|aarch64)-/.test(d))
     : [];
   const want = process.env.CI_PLATFORM;
   if (want && dirs.includes(want)) return want;
-  // 优先与宿主平台一致(Windows 侧 .exe / Linux 侧无扩展名), 再退回任一可用平台
-  const host = process.platform === "win32" ? "windows" : "linux";
+  // 优先"本机架构 + 宿主平台", 其次宿主平台, 再退回任一 windows/linux 产物
   return (
+    dirs.find((d) => d.startsWith(`${arch}-${host}-`)) ||
     dirs.find((d) => new RegExp(`-${host}-release$`).test(d)) ||
     dirs.find((d) => /windows-release$/.test(d)) ||
     dirs.find((d) => /linux-release$/.test(d)) ||

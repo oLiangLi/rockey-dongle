@@ -46,7 +46,7 @@ endif
 ##
 ##
 ##
-X_NODE  ?= node
+X4C_NODE ?= node
 
 ##
 ##
