@@ -51,6 +51,12 @@
 #define rLANG_UNLIKELY(x) (x)
 #endif /* rLANG_UNLIKELY */
 
+#if !defined(rLANG_NOINLINE) && (defined(__GNUC__) || defined(__clang__))
+#define rLANG_NOINLINE __attribute__((noinline, unused))
+#elif !defined(rLANG_NOINLINE)
+#define rLANG_NOINLINE
+#endif /* rLANG_NOINLINE */
+
 #include <inttypes.h>
 #include <stdarg.h>
 #include <stdbool.h>

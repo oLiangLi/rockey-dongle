@@ -6,8 +6,6 @@ LOCAL_MODULE := __Testing__trngfail__
 $(call add_general_source_files_under, $(LOCAL_PATH))
 $(call module_depends, rockey base)
 
-ifeq ("$(X4C_BUILD)","native")
-$(call build-library)
-else
+ifneq ("$(X4C_BUILD)","native")
 $(call build-executable)
 endif

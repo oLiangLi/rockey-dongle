@@ -39,7 +39,7 @@ ROCKEY_MASTER_FILES := master.cc secret.cc TRNG.cc
 ##
 LOCAL_SRC_FILES := $(ROCKEY_DECLARE_FILE) $(ROCKEY_MASTER_FILES)
 LOCAL_SRC_FILES += curves.cc chachapoly.cc sha256.cc sha512.cc curve25519.cc
-LOCAL_SRC_FILES += execute.cc script.cc x509.cc
+LOCAL_SRC_FILES += execute.cc script.cc x509.cc mr.cc
 
 ##
 ##

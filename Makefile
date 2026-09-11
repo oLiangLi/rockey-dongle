@@ -7,7 +7,7 @@ X4C_NODE ?= $(shell if [ -e /Machine/System/bin/node-rlang ] ; then echo /Machin
 
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
-.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check jsWrapper
+.PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check rockey-stack-check jsWrapper
 .PHONY : ci test install-hooks test-optmatrix test-web
 
 ##
@@ -59,6 +59,15 @@ wORLD_DONGLE ?= $(wORLD_DEFAULT_DONGLE)
 ## 调用栈深度静态检查(退出码 0=无违规 10=超预算) ...
 stack-check: dongle
 	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/stack-check/stack-check.cjs
+
+##
+## rockey_dongle(设备 App, 含 Testing_* 项)的调用栈深度静态检查 —— 与 stack-check 同一工具,
+## 但 map 用 rockey-dongle.map(app_entry → machine::dongle::Start → Testing_* 路径可见)。
+## 默认预算与 stack-check 一致 2032B; 预算覆盖: make rockey-stack-check BUDGET=4096。
+## 需先 make dongle(本目标自动依赖)。
+##
+rockey-stack-check: dongle
+	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/stack-check/stack-check.cjs --budget=$(if $(BUDGET),$(BUDGET),2032) $(wORLD_ROOT)/.bin/.obj/arm-RockeyARM-native-release/rockey-dongle.map
 
 ##
 ##

@@ -1,4 +1,5 @@
 #include <Interface/dongle.h>
+#include <Interface/mr.h>
 #include <Interface/x509.h>
 #include <base/base.h>
 
@@ -53,7 +54,9 @@ enum class kTestingIndex : int {
 
   PKeyCountDownTest,
 
-  X509Tests
+  X509Tests,
+
+  PrimeMRTests
 
 };
 
@@ -1826,6 +1829,94 @@ int Testing_X509Tests(Dongle& rockey, Context_t* Context, void* ExtendBuf) {
   return error;
 }
 
+int Testing_PrimeMRTests(Dongle& rockey, void* Context, void* ExtendBuf) {
+  int result = 0;
+  memset(ExtendBuf, 0, 1024);
+
+  auto* MR = static_cast<MillerRabinContext*>(ExtendBuf);
+  MR->InitSmallBases();
+
+#if 0
+  for (int j = 0; j < 100; ++j) {
+    MR->Delay(1);
+    MR->KickWDG();
+  }
+#endif
+
+  auto* Val = static_cast<MillerRabinContext::BN*>(Context) + 2;
+
+  /* argv_[2]=MR 基轮数(1..16, 测试时可只跑前几轮缩短设备端耗时; 缺省 16) */
+  int mr_rounds = (int)(reinterpret_cast<Context_t*>(Context)->argv_[2] & 0xff);
+  if (mr_rounds < 1 || mr_rounds > MillerRabinContext::kMaxRounds)
+    mr_rounds = MillerRabinContext::kMaxRounds;
+
+#if !defined(__EMULATOR__) && !defined(__RockeyARM__)
+  memset(Val, 0, sizeof(*Val));
+
+  Val->clear();
+  Val->n = 32;
+  /* argv_[1]: 0=随机奇数(多为合数); 1=注入 1024 位素数; 2=注入半素数 p*q(无小因子合数) */
+  const int mode = (int)(reinterpret_cast<Context_t*>(Context)->argv_[1] & 0xff);
+  if (mode == 2) {
+    /* 两个 512 位素数之积 → 1024 位合数且无 ≤1000 小因子(验证 Montgomery 判合路径) */
+    BIGNUM* p = BN_new();
+    BIGNUM* q = BN_new();
+    BIGNUM* m = BN_new();
+    BN_CTX* bnctx = BN_CTX_new();
+    BN_generate_prime_ex(p, 512, 0, nullptr, nullptr, nullptr);
+    BN_generate_prime_ex(q, 512, 0, nullptr, nullptr, nullptr);
+    BN_mul(m, p, q, bnctx);
+    BN_bn2lebinpad(m, reinterpret_cast<unsigned char*>(&Val->v[0]), 32 * 4);
+    BN_CTX_free(bnctx);
+    BN_free(p);
+    BN_free(q);
+    BN_free(m);
+    Val->v[0] |= 1;
+  } else if (mode == 1) {
+    BIGNUM* bp = BN_new();
+    BN_generate_prime_ex(bp, 1024, 0, nullptr, nullptr, nullptr);
+    BN_bn2lebinpad(bp, reinterpret_cast<unsigned char*>(&Val->v[0]), 32 * 4);
+    BN_free(bp);
+    Val->v[0] |= 1;
+  } else {
+    std::ignore = rockey.RandBytes((uint8_t*)&Val->v[0], 32);
+    Val->v[0] |= 1;
+    Val->v[31] &= 0x7fffffff;
+    Val->v[31] |= 0x40000000;
+  }
+
+  BIGNUM* bn = BN_new();
+  std::ignore = BN_set_word(bn, Val->v[Val->n - 1]);
+  for(int i = Val->n - 2; i >= 0; --i) {
+    std::ignore = BN_lshift(bn, bn, 32);
+    std::ignore = BN_add_word(bn, Val->v[i]);
+  }
+  result = BN_is_prime_ex(bn, 0, nullptr, nullptr);
+  BN_free(bn);
+
+  rlLOGI(TAG, "BN_is_prime_ex %d (mode=%d, hostTrialDivide=%d)", result, mode,
+         MR->TrialDivide(*Val) ? 1 : 0);
+#endif /* !__EMULATOR__ && !__RockeyARM__ */
+
+  rockey.SetLEDState(LED_STATE::kOff);
+  MR->KickWDG();
+
+  result = MR->IsPrimeMRW(*Val, mr_rounds);
+
+  rlLOGI(TAG, "IsPrimeMRW %d (rounds=%d)", result, mr_rounds);
+
+#if !defined(__EMULATOR__) && !defined(__RockeyARM__)
+  // HOST + RockeyARM 需要共享当前的 Context, 我们必须手动执行 ...
+  int main_result = 0;
+  int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+  rlLOGI(TAG, "ExecuteExeFile result: %d %d %d", result, main_result, exec_result);
+
+  exit(10086 - result);
+#endif /* !__EMULATOR__ && !__RockeyARM__ */
+
+  return result;
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   const int kSizeGuardBytes = 16;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -2018,6 +2109,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(Ed25519Test);
   DONGLE_RUN_TESTING(PKeyCountDownTest);
   DONGLE_RUN_TESTING(X509Tests);
+  DONGLE_RUN_TESTING(PrimeMRTests);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
@@ -2053,6 +2145,8 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
 rLANG_DECLARE_END
 
+#if !defined(__RockeyARM__)
+/* host 入口: 设备固件(arm)不链接 libc 的 calloc/strtoul, 必须排除, 否则固件链接失败 */
 int main(int argc, char* argv[]) {
   using namespace machine;
   using namespace machine::dongle;
@@ -2095,3 +2189,4 @@ int main(int argc, char* argv[]) {
 
   return Start(Context, ExtendBuf);
 }
+#endif /* !__RockeyARM__ */
