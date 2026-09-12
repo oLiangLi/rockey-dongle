@@ -1,3 +1,4 @@
+#include <Interface/aginx.h>
 #include <Interface/dongle.h>
 
 AGINX_DECLARE_MACHINE

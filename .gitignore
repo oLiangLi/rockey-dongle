@@ -48,5 +48,8 @@ log
 !/.githooks/**
 !/Build/
 !/Build/tools/
-!/Build/tools/ci/
-!/Build/tools/ci/**
+!/Build/tools/LIMIT/ci/
+!/Build/tools/LIMIT/ci/**
+
+## git submodule 配置(必须入库; .* 规则会忽略它)
+!/.gitmodules

@@ -1,4 +1,11 @@
 wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+##
+## 子模块守卫: base/ 与 Build/ 已改为 git submodule; 未初始化时给出可操作提示
+## (非致命 —— 否则 install-hooks 等目标会被挡住; 真正的构建会在缺文件时报错)
+##
+ifeq ("$(wildcard $(wORLD_ROOT)/Build/Main.mk)","")
+$(warning [build] 子模块未初始化(base/Build 为空) — 请先执行: git submodule update --init)
+endif
 
 ##
 ##
@@ -163,11 +170,11 @@ typescript0: wasm
 	@$(TSC)
 
 ##
-## 统一 CI 入口(见 Build/tools/ci/run-ci.cjs): 进程内 JS 模拟器回归
+## 统一 CI 入口(见 Build/tools/LIMIT/ci/run-ci.cjs): 进程内 JS 模拟器回归
 ## 前置: make wasm && make jsWrapper(生成 Web/Agent/Tests/js 封装); CI_STRICT=1 严格
 ##
 ci:
-	$(X4C_NODE) Build/tools/ci/run-ci.cjs
+	$(X4C_NODE) Build/tools/LIMIT/ci/run-ci.cjs
 test: ci
 
 ##
@@ -188,7 +195,7 @@ install-hooks:
 ## 精简子集: OPTMATRIX_OPTS="-O0 -O3"; 跳过: CI_SKIP_HEAVY=1; 并行度: JOBS=N
 ##
 test-optmatrix:
-	$(X4C_NODE) Build/tools/ci/optmatrix.cjs
+	$(X4C_NODE) Build/tools/LIMIT/ci/optmatrix.cjs
 
 ##
 ## 网页端 CI(需本机 Chrome): 加载 Web/Agent/Tests 页面, 点击 EmuCreate→EmuTests
@@ -196,7 +203,7 @@ test-optmatrix:
 ## 缺省 headless(无界面); WEB_HEADED=1 以有界面窗口运行; CHROME 可指定浏览器路径。
 ##
 test-web:
-	$(X4C_NODE) Build/tools/ci/web-emutests.cjs
+	$(X4C_NODE) Build/tools/LIMIT/ci/web-emutests.cjs
 
 ##
 ##

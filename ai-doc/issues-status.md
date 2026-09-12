@@ -16,7 +16,7 @@
 | ID | 简述 | 状态 | 验证/备注 |
 |---|---|---|---|
 | C-01 | digest handler md=nullptr 未检(设备 DoS) | ✅ | script.cc 五处补 `if(md)`;构建通过 |
-| C-02 | cipher_memset/memcpy 严格别名,-O2 下 X25519 静默错 | ✅ | 删除自实现改 libc;**-O1/-O2/-O3 RFC 7748/8032 全过**;进入优化矩阵门禁建议 |
+| C-02 | cipher_memset/memcpy 严格别名,-O2 下 X25519 静默错 | ✅ | 删除自实现改 libc;**-O1/-O2/-O3 RFC 7748/8032 全过**;进入优化矩阵门禁建议。**2026-09-12 已上游化**: base `evolution` `a9eb747`(内网 + GitHub) —— 换基到上游后曾因这条修复没跟上而复发(`make test-optmatrix` -O2 档 Abort), 补回后矩阵 4/4 PASS |
 | C-03 | --list base64 无界写 2048 | ✅ | 缓冲 2048→4096(最坏 64 只狗 3462) |
 | C-04 | rl_BASE64_Read(len=-1) 越界读/无界写 | 🔒 | 用户决策:strlen 模式与现状退出条件一致,调用端保证 NUL/容量,不修 |
 

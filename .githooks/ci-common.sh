@@ -5,6 +5,12 @@ repo="$(git rev-parse --show-toplevel 2>/dev/null)" || exit 0
 [ -n "$repo" ] || exit 0
 cd "$repo" || exit 0
 [ -x "$(command -v node)" ] || { echo "[ci-hook] node 不可用, 跳过"; exit 0; }
+
+## 子模块未初始化时给出可操作提示(base/Build 已改为 submodule)
+if [ ! -f "$repo/Build/tools/LIMIT/ci/run-ci.cjs" ]; then
+  echo "[ci-hook] 子模块未初始化(Build/tools/LIMIT/ci/run-ci.cjs 缺失) — 请先执行: git submodule update --init"
+  exit 0
+fi
 [ "${CI_SKIP_RUN:-0}" = "1" ] && { echo "[ci-hook] CI_SKIP_RUN=1 跳过"; exit 0; }
 
 last=".git/rlang-ci-last"
@@ -12,7 +18,7 @@ head="$(git rev-parse HEAD 2>/dev/null)"
 [ "$(cat "$last" 2>/dev/null)" = "$head" ] && { echo "[ci-hook] $head 已跑过, 跳过"; exit 0; }
 
 echo "[ci-hook] post-merge/post-commit: 自动 CI 快速回归 @ $head ..."
-node Build/tools/ci/run-ci.cjs
+node Build/tools/LIMIT/ci/run-ci.cjs
 rc=$?
 echo "$head" > "$last"
 if [ "$rc" -ne 0 ]; then

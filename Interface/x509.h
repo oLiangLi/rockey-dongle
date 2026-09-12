@@ -3,6 +3,7 @@
 #ifndef __WTINC_DONGLE_X509_H__
 #define __WTINC_DONGLE_X509_H__
 
+#include <Interface/aginx.h>
 #include "dongle.h"
 
 AGINX_DECLARE_MACHINE

@@ -1,6 +1,6 @@
 ﻿# 回馈上游的补丁(2026-09-11)
 
-这里的 `.patch` 是对**上游仓库**(`base` / `build`,参考树见 `/.bin/ai-ref-code/`,自带 `.git`)
+这里的 `.patch` 是对**上游仓库**(`base` / `build`)
 的**建议改动**,不是本仓代码。生成方式: 在上游 scratch 仓库里建分支提交, 再 `git format-patch -1`。
 
 背景与 B 类清单见 `ai-doc/upstream-base-merge-plan-2026-09-11.md` §4。

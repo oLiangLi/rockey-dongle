@@ -24,7 +24,7 @@
 | `bits/base.h` | 1156 | 1503 | **裁剪 -347**(去 minimal-world/STL/平台设施)+ fork 宏(`AGINX_*`、`rLANG_NOINLINE`) |
 | `src/log.cc` | 406 | 607 | **裁剪 -201**(去 dbghelp/execinfo/回溯/日志文件);我们的 verify 钩子为精简实现 |
 | `src/data.cc` | 320 | 314 | 已含上游版 B4 ✓ 余差为 BOM 与注释位置 |
-| `src/crypto.cc` | 5531 | 5510 | **+21**:我们 `#if 0` 掉上游 libc shim、改用 `__builtin_*`;B1 已上游 ✓ |
+| `src/crypto.cc` | 5531 | 5510(+23) | **已上游化(2026-09-12 `a9eb747`)**: 我们 `#if 0` 停用自实现 `cipher_mem*` + 改用 `__builtin_*`(= C-02 修复)已并入上游, 差异消失;B1 亦已上游 ✓ |
 | `src/base.cc` | 162 | 176 | -14:去 minimal-world 分支 |
 | `src/task.cc` | 164 | 162 | 平台层守卫改为 `__RockeyARM__`(上游为 minimal-world) |
 | `bits/task.h` | 127 | 124 | 注释/细节 |
@@ -35,7 +35,7 @@
 ### 2.2 `Build/`:相同 16 / 差异 8 / **仅本仓 10**
 
 - 差异:A1-A4 涉及的 `core/{common,build-binary,build-executable,build-shared-library}.mk`、`Main.mk`、`config/arm-none-eabi.conf`(我们的 A4 偏差:unwind 缺省为空)+ 2 个仅换行差异的 `tools/script/{grammar.actions,wasm2string}.cjs`。
-- **仅本仓**:`tools/ci/{optmatrix,web-emutests,run-ci}.cjs`(仓库级 CI)、`tools/LIMIT/sbin/*`(ukey 侧运维)、`tools/LIMIT/stack-check/*`(设备栈预算)、`tools/LIMIT/script/opcode.cjs`(脚本 opcode 生成)。
+- **仅本仓**:`tools/LIMIT/ci/{optmatrix,web-emutests,run-ci}.cjs`(仓库级 CI;2026-09-12 由 `tools/ci/` 移入)、`tools/LIMIT/sbin/*`(ukey 侧运维)、`tools/LIMIT/stack-check/*`(设备栈预算)、`tools/LIMIT/script/opcode.cjs`(脚本 opcode 生成)。
   注:上列前两项按 **2026-09-11 的世界分区**给出(见 §5);分区前它们位于 `tools/sbin/`、`tools/stack-check/`、`tools/script/opcode.cjs`。
 
 ### 2.3 上游目录现状与引用面
@@ -113,7 +113,7 @@
 
 1. **上游化 vs overlay**: 推荐把 base 剩余 delta 以上游提交方式落库(用 `rLANG_CONFIG_ENABLE_LIMIT_WORLD`
    门控), 本仓只做 submodule pin;若你不希望上游出现 LIMIT 专有门控, 则改用 overlay(方案 B)。
-2. ✅ **工具世界归属**(已按 §5 判定): `ci/` 通用;`opcode.cjs` 归 LIMIT;`grammar.*` 不移动。
+2. ✅ **工具世界归属**: `opcode.cjs` 归 LIMIT、`grammar.*` 不移动(§5 判定);`ci/` 原判为“通用”, **2026-09-12 按用户决定改为归 LIMIT** —— 三个门禁断言的都是 dongle 受限世界的产物与模拟器行为, 已 `git mv` 到 `tools/LIMIT/ci/`(见 §8 补记)。
 3. **LIMIT 工具归宿**: 上游化到共享 `build` 仓的 `tools/LIMIT/`, 还是留在本仓(如 `tools-local/LIMIT/`)。
 4. **pin 策略**: 跟 tag(如 `v1.1.0.0`)还是跟 `main`(需要定期 bump + CI 漂移检查)。
 
@@ -146,3 +146,12 @@
   `downlevelIteration` / `moduleResolution=node10` 的 TS7 弃用报错(TS5101/TS5107),不改 tsconfig 无法通过。
 - `make rockey-stack-check`(走新路径的 `stack-check.cjs`)、`make linux -j8`、`make ci`:见提交记录。
 
+
+### 2026-09-12 补:`tools/ci/` → `tools/LIMIT/ci/`
+
+按用户决定:这三个 CI 门禁只服务 dongle 受限世界。共享 `build` 仓在 `evolution` 上
+`git mv tools/ci tools/LIMIT/ci`,三个脚本按“世界子目录深一层”各补一级 `..`
+(`run-ci.cjs` / `optmatrix.cjs` / `web-emutests.cjs`),并补 `100755`;`tools/README.md`、
+`tools/LIMIT/README.md` 同步。提交 **`db0ebfc`**(已签名,内网镜像 + GitHub 双远端一致),
+本仓子模块 pin 由 `7d78de3` 提到 `db0ebfc`。本仓引用面:`Makefile`(3 个目标 + 1 条注释)、
+`.githooks/ci-common.sh`(3 处)、`.gitignore`(2 行 un-ignore)已改为新路径。
