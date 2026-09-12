@@ -17,6 +17,17 @@ X4C_TOOLCHAIN_CFLAGS    += -fomit-frame-pointer
 X4C_TOOLCHAIN_CXXFLAGS  += -fomit-frame-pointer
 endif
 
+##
+## TODO: LiangLI, 在合适的时候将 rLANG_BUILD_WORLD 并入 Build/Main.mk
+##
+ifeq ("$(X4C_BUILD)","linux")
+rLANG_BUILD_WORLD ?= COSMO
+endif ## X4C_BUILD
+
+ifeq ("$(X4C_BUILD)","windows")
+rLANG_BUILD_WORLD ?= COSMO
+endif ## X4C_BUILD
+
 .PHONY : optimize
 optimize : build-all
 all: optimize
