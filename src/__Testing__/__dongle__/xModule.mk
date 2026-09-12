@@ -1,4 +1,4 @@
-LOCAL_PATH := $(my-dir)
+﻿LOCAL_PATH := $(my-dir)
 
 $(call clear-local-vars)
 LOCAL_MODULE := __Testing__dongle__
@@ -8,7 +8,9 @@ $(call module_depends, rockey base)
 
 ifeq ("$(X4C_BUILD)","native")
 $(call build-library)
-else
+else ## X4C_BUILD
+ifeq ("$(rLANG_BUILD_WORLD)","COSMO")
 $(call build-executable)
-endif
+endif ## rLANG_BUILD_WORLD
+endif ## X4C_BUILD
 

@@ -40,8 +40,16 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	mkdir -p $(BUILD_TASSL_LIBRARY_BUILD_ROOT)
 	cd $(BUILD_TASSL_LIBRARY_BUILD_ROOT) && emconfigure $(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-no-asm -no-threads -no-pic -no-zlib -static -no-tests linux-generic32 --openssldir=/tmp/jsCrypto/ssl
+	##
+	## 生成一个头来提供 OPENSSLDIR/ENGINESDIR: 直接在命令行写 -D'...="\"$(...)\""' 时,
+	## 参数在 Windows/emcc 的往返里会散架(clang: missing terminating '"'), 且默认值会退化成
+	## 绝对构建路径; 头里的值就是 project.mk 一直用命令行覆盖的那两个路径, 直接跑生成的
+	## Makefile 也一致。
+	##
+	printf '#define OPENSSLDIR "/Machine/System/ssl"\n#define ENGINESDIR "/Machine/System/engine"\n' > $(BUILD_TASSL_LIBRARY_BUILD_ROOT)/rlang-dirs.h
+	sed -i -e 's|-DOPENSSLDIR=[^ ]*||g' -e 's|-DENGINESDIR=[^ ]*||g' -e 's|-DOPENSSL_USE_NODELETE|-DOPENSSL_USE_NODELETE -include rlang-dirs.h|' $(BUILD_TASSL_LIBRARY_BUILD_ROOT)/Makefile
 	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install_sw -i
+	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl install_sw -i
 	touch $@
 
 endif ## Wasm build Tassl ...
@@ -83,7 +91,7 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	$(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-static -no-tests linux-x86_64 --openssldir=/tmp/jsCrypto/ssl
 	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= install_sw -i
+	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE= ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl install_sw -i
 	touch $@
 
 endif ## linux build Tassl && RockeyARM ...
@@ -118,7 +126,7 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	$(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-static -no-tests linux-aarch64 --openssldir=/tmp/jsCrypto/ssl
 	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE=aarch64-linux-gnu- ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE=aarch64-linux-gnu- install_sw -i
+	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) CROSS_COMPILE=aarch64-linux-gnu- ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl install_sw -i
 	touch $@
 
 endif ## aarch64-linux RockeyARM ...
@@ -174,7 +182,7 @@ $(BUILD_TASSL_LIBRARY_BUILD_STAMP):
 	cd $(BUILD_TASSL_LIBRARY_BUILD_ROOT) && $(BUILD_TASSL_LIBRARY_SOURCE_ROOT)/Configure --prefix=$(THIRD_PARTY_INSTALL_PREFIX) \
 		-no-tests mingw64 --cross-compile-prefix=x86_64-w64-mingw32- --openssldir=/tmp/jsCrypto/ssl
 	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl -i
-	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) install_sw -i
+	$(MAKE) $(rLANG_TASSL_BUILD_JOBS) -C $(BUILD_TASSL_LIBRARY_BUILD_ROOT) ENGINESDIR=/Machine/System/engine OPENSSLDIR=/Machine/System/ssl install_sw -i
 	install -m $(SO_INSTALL_MODE) $(THIRD_PARTY_INSTALL_PREFIX)/bin/libcrypto-1_1-x64.dll "$(THIRD_PARTY_INSTALL_BINARY)"
 	install -m $(SO_INSTALL_MODE) $(THIRD_PARTY_INSTALL_PREFIX)/bin/libssl-1_1-x64.dll "$(THIRD_PARTY_INSTALL_BINARY)"
 	touch $@
