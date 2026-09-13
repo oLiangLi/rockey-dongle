@@ -1142,3 +1142,16 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ⑤**环境注记(只影响本会话工具链, 非仓库缺陷)**: PATH 上的 `gpg` = `C:\cygwin64\bin\gpg.exe` **不可执行**(`Program 'gpg.exe' failed to run` / Cygwin `CreateFileMapping ... Win32 error 5`);
   可用者为 Git 自带 `C:\Program Files\Git\usr\bin\gpg.exe`(**2.4.8**)。⚠ **陷阱**: `gpg.program` 未设时 `%G?` 会**全部报 `N`**(实测: 无可用 gpg 时 298 条全 `N`;指定可用 gpg 后 76 G/221 N/1 E)
   ⇒ **`N` 在 gpg 缺失时不可信, 不能当作"未签名"的证据**。本会话内一律 `git -c "gpg.program=C:\Program Files\Git\usr\bin\gpg.exe" ...`;用户决定**不改 `.git/config`**(其自身环境签名正常)。
+- 2026-09-14 **四条 CI 门控落地(用户指定): 新增 `Build/tools/LIMIT/ci/gates.cjs` 的 G1..G4 并接入 `run-ci.cjs`**(子模块 `Build` 分支 `evolution`, 提交 `dc4f329`; 本轮含**反向验证**):
+  ①**G1 gpg 密钥状态** —— 本机钥匙串必须恰为用户清单的两把主钥: `9F7E6E5B…97876293`(rsa3072) 与 `B9C754FC…5E51D027`(ed25519); 校验 uid、算法/长度、主钥用途含 SC、**未过期**(实测到期 2028-03-30 / 2029-03-31)、存在私钥与未过期的 `[E]` 子钥。
+  ②**G2 明文无被禁 trailer 字面量** —— 扫**跟踪文件**(`git grep -i -I`: 本仓 + Build 子模块)与**提交信息**(本仓 `--all`, 8 条在册历史白名单内; Build 子模块全量);`base` 子模块属上游, 不纳入(其改动不受本仓控制)。
+  **字面量由片段拼出**(`["co","authored","by"].join("-")`)—— 否则门控会把自己扫出来。
+  ③**G3 提交签名全部有效** —— `git log --all --format=%G?`: `G` 通过、`N`(未签名)放行、其余(`B`/`U`/`E`/`X`/`Y`/`R`)失败。
+  唯一在册例外 = `8719021c…`(2024-08-30 Gitee 代提交, 本地缺上游 RSA 公钥 `63A71EA5…`; 导入该公钥后可删该条)。实测 tally: **G=77 / E=1 / N=221**。
+  ④**G4 aginx.h 署名** —— `Interface/aginx.h` 的署名行必须**恰出现 1 次**(用户给定文本), 草案占位不得残留, 且宏对 C++/C 两分支齐备。
+  ⑤**关键设计: gpg 缺失即失败, 不 skip** —— 实测 gpg 不可用时 `%G?` 会把**已签名**提交也报成 `N`(见本文件 2026-09-14 CI 四项核验 ⑤)⇒ 若按 `run-ci.cjs` 既有风格"前置缺失即跳过", G3 会变成**假绿**。
+  故 G1/G3 找不到可用 gpg 时**计为失败**, 并给出修复指引(`RKEY_GPG=<路径>` / `git config gpg.program <路径>`);gpg 定位顺序 = `RKEY_GPG` → `gpg.program` → `PATH(gpg/gpg2)` → Windows 常见安装路径,
+  **逐个实跑 `--version` 探测**(PATH 上那把 Cygwin gpg 实测不可用)。另含**防假绿兜底**: 若"带 `gpgsig` 头部的提交数 > `%G?` 判为有签名的提交数" ⇒ 直接 FAIL(说明 gpg 并未真正校验)。
+  ⑥**反向验证(故障注入后可自证, 全部通过)**: 空钥匙串(`GNUPGHOME=空目录`)⇒ **G1/G3 变红**(rc=1, G3 逐条列出 E); 注入含字面量的 canary 文件 ⇒ **G2 变红并报出文件名**; 抹掉署名换成占位 ⇒ **G4 变红**(报"出现 0 次"+"占位残留"); 还原后四条复绿。
+  **完整 `run-ci.cjs` 复跑: 14 项 PASS + `failed=0`(rc=0)**。
+  ⑦**署名范围**: 本轮门控提交**不加** `Assisted-by` —— 按 2026-09-11 约定(仅本仓 ukey 侧, 且每个 squash 只出现一次);用户的"代码里一次 + git log 里一次"已由父仓提交 `82f4180` 满足, 不重复计。
