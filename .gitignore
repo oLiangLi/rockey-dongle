@@ -14,6 +14,9 @@ node_modules
 /Web/Agent/Tests/js/jsCrypto.js
 ## packScript.cjs 打包出该文件
 /Web/Agent/Tests/js/jsScriptBundled.js
+## commitHash.cjs 生成(当前提交 hash + 预计算字, 供 jsWorldEvent.js)
+/Web/Agent/Tests/js/jsCommitHash.js
+/mkey/tools/Tests/js/jsCommitHash.js
 
 ## 由 /Web/Script/grammar/dongle.sc 自动生成 ...
 /Web/Script/grammar/dongle.ts

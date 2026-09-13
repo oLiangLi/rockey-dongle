@@ -1,0 +1,12 @@
+///
+/// Permission probe: can THIS session create an admin-only data file (id < kUserFileID=1000)?
+///   exit 0 + Probe=5a5a5a5a  -> the session had kAdministrator permission
+///   exit != 0                -> refused (-EACCES) => the session was NORMAL/ANONYMOUS
+/// Uses a fresh id (202) so that -EEXIST cannot be mistaken for a permission refusal.
+///
+public 1024;
+
+@ 0 [4] : Probe;
+
+CreateDataFile(202, 64, 2, 2);
+StoreI32(0, 0x5a5a5a5a);

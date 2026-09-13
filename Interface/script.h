@@ -461,6 +461,29 @@ enum class OpCode : uint16_t {
   kExRSAPublicDecrypt,     // argc : 2, value = ExRSAPublicDecrypt(public[260], buffer[256])
 
   /**
+   *! 软件实现的 RSA-3072 模幂(设备内 Montgomery, 见 Interface/modexp.h): 硬件 RSA 只到 2048 位,
+   *! 3072 位(ROOT CA)的签名/验签幂运算由本指令完成。
+   *! 大数一律小端(与 dashboard 落盘同序): 模数 N 走**数据文件**(N 是常驻量, 且 1KB 的 VM
+   *! 数据区装不下 3072 位的 N+m+指数三者), 底数/指数/结果走 VM 数据区。
+   */
+  kExRSAModExp = 0x150,    // argc : 6, value = ExRSAModExp(nFile, nOffset, mAddr, outAddr, expAddr, bits)
+
+  /**
+   *! CRT 私钥运算(3072 位 RSA 的快速路径): 从数据文件的**完整私钥 blob** 取 p/q/dmp1/dmq1/iqmp,
+   *! 做两次 1536 位模幂再重组(s_q + q*((s_p-s_q)*iqmp mod p)), 代价约为全宽 ExRSAModExp 的 1/3-1/4。
+   *! blob 布局见 Interface/modexp.h 的 RsaModexp::KeyBlob(magic 'RSAK' + n/e/d + p/q/dmp1/dmq1/iqmp)。
+   *! 校验失败(magic/bits/flags、p*q != n、q*iqmp != 1 mod p)返回负值; **outAddr 不得等于 mAddr**
+   *! (校验阶段用结果区当 p*q 乘积缓冲)。
+   */
+  kExRSACrtModExp = 0x151, // argc : 5, value = ExRSACrtModExp(keyFile, keyOffset, mAddr, outAddr, bits)
+
+  /**
+   *! 只校验数据文件里的私钥 blob(不改动其它内存): magic/bits/flags、p*q == n、
+   *! q*iqmp ≡ 1 (mod p)、dmp1 < p-1、dmq1 < q-1; 0 = 通过。scratchAddr 需 bits/8 字节。
+   */
+  kExRSAKeyCheck = 0x152,  // argc : 4, value = ExRSAKeyCheck(keyFile, keyOffset, scratchAddr, bits)
+
+  /**
    *!
    */
   kDeleteP256File = 0x160,   // argc : 1, value = DeleteP256File(id)

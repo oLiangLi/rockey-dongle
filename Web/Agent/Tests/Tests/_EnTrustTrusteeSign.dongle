@@ -1,0 +1,39 @@
+///
+/// EnTrust trustee-side signing script.
+///
+/// Runs on the TRUSTEE ukey (#1) as a BOOTSTRAP frame (admin session), so that this device's
+/// own SM2ECDSA key (kKeyIdGlobalSM2ECDSA = 1) can be used to decrypt the target's escrowed
+/// ECIES private key and then sign the digest of an ADMIN/LIMIT frame for the TARGET device.
+///
+/// Inputs (data segment, provided by the host):
+///   [256,368) = 112B escrow entry copied from the TARGET dashboard[6K+180 ..)
+///               layout: hid[12] | kid[3] | Yodd | C1x[32] | H[32] | XOR[32]
+///   [384,416) = 32B digest to sign (SM3 of the target admin/LIMIT frame data)
+/// Output:
+///   [0,64)    = SM2 signature (declared as rLANG_SIGNATURE)
+///
+/// Verified on real hardware on 2026-09-13 (trustee ukey #1, target ukey #0).
+///
+public 96;
+
+@ 0 [64] : rLANG_SIGNATURE;
+
+rLANG_ENTRY  @ 256 [112] = { ${ENTRY} };
+rLANG_DIGEST @ 384 [32]  = { ${DIGEST} };
+
+/// decompress C1 Y: Yodd at entry+15, C1x at entry+16 -> Y at [512,544)
+ExSM2DecompressPoint(LoadU8(271), 272, 512);
+
+/// assemble the 128B SM2 ciphertext: C1x || Y || H || XOR
+Memset(640, 0, 128);
+Memcpy(640, 272, 32);
+Memcpy(672, 512, 32);
+Memcpy(704, 304, 64);
+
+/// decrypt with this trustee's SM2ECDSA(id=1) -> target ECIES private key (32B, in place)
+SM2Decrypt(1, 640, 128);
+
+/// sign the digest with the recovered private key -> signature at [0,64)
+ExSM2Sign(640, 384, 0);
+
+Exit(0);

@@ -1,0 +1,9 @@
+///
+/// Cleanup: remove the USER test data file (id=1002) created by the permission probes.
+///
+public 1024;
+
+@ 0 [4] : Probe;
+
+DeleteDataFile(1002);
+StoreI32(0, 0x44444444);

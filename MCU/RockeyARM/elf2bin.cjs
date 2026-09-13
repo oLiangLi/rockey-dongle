@@ -3,7 +3,15 @@ const crypto = require("crypto");
 const rLANG_MATRIX_TEXT_OFFSET = 0;
 const rlTXT_SIZEMAX = 65520;
 const rlFillHeader = true;
-const rlPaddingFile = true; /// process.argv[4] === "--padding-file";
+/*!
+ *! 只有**发布构建**才把镜像用随机数填充到 64K-16(=rlTXT_SIZEMAX):
+ *!   rLANG_ROCKEY_CONFIG_RELEASE=true  ⇒ 填充(镜像大小固定 65520B)
+ *!   未设置/其它值                      ⇒ 不填充(产物大小 = .text 实际大小, 刷写更快、便于比对)
+ */
+const rlRelease =
+  String(process.env.rLANG_ROCKEY_CONFIG_RELEASE || "").toLowerCase() ===
+  "true";
+const rlPaddingFile = rlRelease; /// process.argv[4] === "--padding-file";
 
 function err(m) {
   throw new Error(m);

@@ -1,0 +1,10 @@
+///
+/// Cleanup: remove the ADMIN-ONLY test data file (id=100) holding the test RSA key blob.
+/// Must run as an ADMIN frame (admin-signed), since id < kUserFileID requires kAdministrator.
+///
+public 1024;
+
+@ 0 [4] : Probe;
+
+DeleteDataFile(100);
+StoreI32(0, 0x55555555);

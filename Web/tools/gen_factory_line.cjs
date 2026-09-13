@@ -30,7 +30,11 @@ if (val_uid < 1 || val_uid >= 2 ** 32) {
 BIN_UID.writeUInt32BE(val_uid);
 
 if (BIN_SEED.length !== 64) throw new Error("Invalid seed length");
-if (BIN_FILE.length !== 65520) throw new Error("Invalid file length");
+if (BIN_FILE.length !== 65520)
+  throw new Error(
+    "Invalid file length: factory image must be padded to 65520B " +
+      "(build with rLANG_ROCKEY_CONFIG_RELEASE=true)",
+  );
 
 const sha256 = crypto
   .createHash("sha256")

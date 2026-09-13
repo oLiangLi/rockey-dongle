@@ -1525,20 +1525,46 @@ int Dongle::SM2Decrypt(const uint8_t private_[32],
     return last_error_ = -EINVAL;
 
   uint8_t asn1_cipher[1024];
-  int asn1_len = SM2Cipher_TextToASN1(cipher, size_cipher, asn1_cipher);
-  if (asn1_len <= 0)
-    return last_error_ = -EFAULT;
-
+  uint8_t reordered[512];
   EC_KEY* eckey = EC_KEY_new_by_curve_name(NID_sm2);
   BIGNUM* pkey = BN_bin2bn(private_, 32, nullptr);
 
-  do {
-    if (EC_KEY_set_private_key(eckey, pkey) <= 0)
-      break;
+  /**
+   *! text 形密文有两种历史布局(见 ai-doc/entrust-2ukey-2026-09-13.md §6):
+   *!   (a) C1x||C1y||C2||C3 —— 本地实现/`SM2Cipher_ASN1ToText` 的产物, `TextToASN1` 原先只认这种;
+   *!   (b) C1x||C1y||C3||C2 —— 真机侧 `rockey.cc` 的 SM2Encrypt 直调 COS、未经本仓转换,
+   *!       落盘顺序可能相反(真机→模拟器的托管条目解密因此失败)。
+   *! 这里两种都试, 都不成立才报错 ⇒ 不再依赖调用方猜布局。
+   */
+  for (int pass = 0; pass < 2 && ret < 0; ++pass) {
+    const uint8_t* use = cipher;
+    if (1 == pass) {
+      if (size_cipher < 128)
+        break; /* 至少两个 32B 块才谈得上交换 */
+      const size_t size_c2 = size_cipher - 96;
+      memcpy(&reordered[0], &cipher[0], 64);                 /* C1x || C1y */
+      memcpy(&reordered[64], &cipher[96], size_c2);          /* C2 归位到前 */
+      memcpy(&reordered[64 + size_c2], &cipher[64], 32);     /* C3 归位到后 */
+      use = reordered;
+    }
 
-    if (sm2_decrypt(eckey, EVP_sm3(), asn1_cipher, asn1_len, text, size_text) > 0)
-      ret = 0;
-  } while (0);
+    const int asn1_len = SM2Cipher_TextToASN1(use, size_cipher, asn1_cipher);
+    if (asn1_len <= 0)
+      continue;
+
+    do {
+      if (EC_KEY_set_private_key(eckey, pkey) <= 0)
+        break;
+      size_t size_out = *size_text;
+      if (sm2_decrypt(eckey, EVP_sm3(), asn1_cipher, asn1_len, text, &size_out) > 0) {
+        *size_text = size_out;
+        ret = 0;
+      }
+    } while (0);
+
+    if (ret < 0 && 0 == pass)
+      rlLOGW(TAG, "SM2Decrypt: C2||C3 布局失败, 改试 C3||C2(COS 原生)布局 ...");
+  }
 
   EC_KEY_free(eckey);
   BN_clear_free(pkey);

@@ -1,0 +1,11 @@
+///
+/// Control for _ProbePermAdmin.dongle: same shape but id=1002 (>= kUserFileID=1000), which is
+/// allowed for every session. Must ALWAYS succeed (exit 0 + Probe=5a5a5a5a) - it proves the probe
+/// itself (script format, frame, device) is fine, so a failure on id=202 is a permission refusal.
+///
+public 1024;
+
+@ 0 [4] : Probe;
+
+CreateDataFile(1002, 64, 2, 2);
+StoreI32(0, 0x5a5a5a5a);

@@ -640,3 +640,468 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ③ 顺带把 `src/__Testing__/__dongle__/xModule.mk` 也加上同样的 COSMO world 门控(`else ## X4C_BUILD` + `ifeq ("$(rLANG_BUILD_WORLD)","COSMO")`)并在首行写入 UTF-8 BOM。
   **验证(Windows 主工作区; 删掉 `.bin/.obj/wasm-emscripten-release/gen/System/Build-TASSL` 整目录后重建)**: `rlang-dirs.h`(85 B) ⇒ `libcrypto.a` **3,004,214 B** / `libssl.a` **658,858 B** ⇒ `.build-tassl-done` 全就位; 生成的 Makefile `LIB_CPPFLAGS=-DOPENSSL_USE_NODELETE -include rlang-dirs.h $(CNF_CPPFLAGS) $(CPPFLAGS)`、`CPPFLAGS_Q=… -include rlang-dirs.h -DNDEBUG`, 而 `-DOPENSSLDIR=`/`-DENGINESDIR=` **0 处**, makedepend 段把 `rlang-dirs.h` 记为每个对象的前置(改值即全量重编); `strings crypto/cversion.o` 得到 `OPENSSLDIR: "/Machine/System/ssl"` 与 `ENGINESDIR: "/Machine/System/engine"`(正是 project.mk 一直用命令行覆盖的那两个值); `make wasm` 后 `Web/Agent/Tests/js/jsCrypto.js`(**3,429,072 B**)生成、`make ci` **8/8 PASS**(jsuite/mkey/skey/emuadmin/corpus/pkeyself/x509ext/trngfail, rc=0); 用户侧亦确认 "Windows + Linux 编译正常"。
   **遗留(可选)**: 共享 `Build` 仓的 `tools/LIMIT/ci/optmatrix.cjs` 在 Windows 下命令行变量缺引号(`cf = "-DNDEBUG " + opt` 经 `shell: true` 未加引号 ⇒ make 把 `-O0` 当成自己的 `-O`), 矩阵门禁暂在 WSL 跑。
+- 2026-09-13 **RSA-3072 设备内模幂(mod_exp)可行性 + 普通 OpCode 落地**(master, Windows 主工作区):
+  ①新增 `Interface/modexp.{h,cc}` —— 3072 位以内 Montgomery(CIOS)模幂, 与 `mr.cc` 同算法但
+  **临时区/操作数全部由调用方提供**(`Workspace{t[98], acc[96]}` = 776B 放 ExtendBuf, 栈上只留帧),
+  支持 r 与 a/b 同名、out 与 base 同名; 指数按**小端字节**给出并剥掉前导 0 比特; 每 8 次平方一次
+  `KickWDG`(LED 反转 + GetTickCount COS 心跳)。
+  ②新增**普通 OpCode** `kExRSAModExp = 0x150`(argc : 6): `ExRSAModExp(nFile, nOffset, mAddr, outAddr,
+  expAddr, bits)` —— 模数走数据文件(N 是常驻量, 且 1KB VM 数据区装不下 3072 位的 N+m+指数三者),
+  底数/指数/结果走 VM 数据区(3072 位时 m@0 / 指数@384 / 结果原地), 地址需 4 字节对齐, nFile<1000
+  需管理员; `Web/Script/lib/opcode.ts` 由 script.h 生成(OpCode 155 / AllFunc 96), DSL 名 `ExRSAModExp`。
+  ③测试: `src/__Testing__/__dongle__` index 20 `RsaModexpTests`(mode 1=设备内签名+host 复核 /
+  2=签名+设备内验签 / 4=host 自测(可无设备, `-0 14 4 C00`) / 5=事后读回 dashboard 复核),
+  与 `src/__Testing__/__rsamodexpvm__`(foobar; 直调 `VM_t::OpFuncRSA` 的 opcode 层用例)。host 用 TASSL
+  生成 N/E/D/M 以小端注入 dashboard[1024..3392), 结果同样从 dashboard 回读。
+  ④**实测(测试 ukey index 0)**: 3072 位私钥运算 **238.4 / 239.7 / 240.0 / 241.1 / 241.4 s ≈ 4.0 min**
+  (beats 384–386)、1024 位 **9.36 s**(beats 128), 均为**单条 `ExecuteExeFile`**; `mainRet=10086`(0 错)、
+  GuardBytes error=0、设备状态经 dashboard `ModExpStatus('MXPS')` 回读 sign_rc=verify_rc=0; 正确性:
+  设备 s 与 TASSL `BN_mod_exp(m,d,N)` 逐值一致 + host 独立复核 `s^e==m` + 设备内验签 `m2==m`;
+  host 自测(mode 4)与 TASSL 对拍全过(恒等式 2^10/3^5、ToMont/FromMont 往返、随机 MontMul×3、
+  小指数 ModExp×2、复核路径自检), opcode 层模拟器用例 3072 签名/验签 + 1536 签名全部 MATCH TASSL。
+  ⑤工程约束: 固件仍 65520B(`.text` rockey_dongle 0xd4c0 / RockeyTrust 0xd020)、`.bss` 0x10、
+  无 `.rodata`; `make rockey-stack-check` 稳态 1928B ≤ 2032B(0 条超预算), 本改动路径 opcode ≈1336B、
+  测试 ≈1176B; `run-ci.cjs` **8/8 PASS**。
+  ⑥**踩坑(详见 ai-doc/rsa3072-modexp-2026-09-13.md §5)**: (a) 左到右二进制幂必须剥掉指数的前导
+  0 比特, 否则 2^10 会算出 0; (b) 设备 `Start` 会覆写 `Context->result_[0]/[1]` ⇒ 设备状态必须写
+  dashboard; (c) **设备 `Start` 返回 `10086 - 错误数` ⇒ 10086 才是"0 错"**, 判定里写 `0 == mainRet`
+  会一直误判 FAIL(本轮连查数轮的真正原因); (d) 复用长寿命 `BN_CTX` 的 `BN_mod_exp` 在 3072 位长设备
+  调用之后出现过错值(新建上下文 + 从 dashboard 字节重建则正确, 待定因); (e) Windows 下 rlLOG 走
+  `WriteConsoleW(stderr)`, 被重定向/管道捕获即丢 ⇒ 两个测试程序 host `main()` 新增
+  `WT_RKEY_LOG=<path>` 落盘; (f) `s_host` 是 winsock `in_addr.h` 的宏(变量名冲突); (g) Windows 构建
+  需 vcvars64 + cygwin make。
+  ⑦后续: 生产形态(CA 私钥 (N,d) 常驻设备 + 密封, 脚本用 `ExRSAModExp` 完成签名)、CRT(两次 1536 位)
+  ≈2× 提速、§5.3 定因、Linux 侧交叉验证(交 WSL 的 DSH)。
+- 2026-09-13 **RSA-3072 完整私钥导入 + CRT 快速路径**(master→`feat/AGINX/rsa3072-modexp` 续): 用户要求"导入完整
+  私钥 n/e/d/p/q/dmp1/dmq1/iqmp, 用中国剩余定理做快速算法" —— 落地并真机实测, **提速 3.89×**(比预期更好)。
+  ①**完整私钥 blob 布局**(`RsaModexp::KeyBlob`, 小端定长): `[0,16) header{magic 'RSAK', bits, flags, 0}`
+  + n/e/d(各 bits/8)+ p/q/dmp1/dmq1/iqmp(各 bits/16); 3072 位共 **2128B**, 2048 位 1424B;
+  `flags bit0 = 含 CRT 参数`。导入: 测试由 host 写 dashboard[1024,3152); 生产**必须**用
+  `KDF(MASTER.SECRET, nonce)+AEAD` **密封**后落盘(2026-09-13 更正: 设备数据文件 id<1000 **只限制建/写/删、
+  不限制读**, 见本文件后续条目与 `ai-doc/admin-file-permission-2026-09-13.md`);
+  脚本可用现成 `WriteDataFile` 分块导入(1KB 数据区 ⇒ 6×384B)。
+  ②**新指令(普通 OpCode)**: `kExRSACrtModExp = 0x151`(argc : 5, `ExRSACrtModExp(keyFile, keyOffset,
+  mAddr, outAddr, bits)`, 支持 2048/3072)与 `kExRSAKeyCheck = 0x152`(argc : 4, `ExRSAKeyCheck(keyFile,
+  keyOffset, scratchAddr, bits)`); opcode.ts 重新生成(OpCode 157 / AllFunc 98)。CRT 指令**要求 outAddr != mAddr**
+  (结果区兼作 p*q 校验的乘积缓冲), 且内置校验 `p*q == n`、`q*iqmp ≡ 1 (mod p)`(失败 `-EBADMSG`); KeyCheck 另校验
+  `dmp1 < p-1`、`dmq1 < q-1`。
+  ③**原语**(`Interface/modexp.{h,cc}`): `ModReduce`(逐位 shift-subtract 求 a mod n, 2k→k limb)、
+  `HalfModExp`(半域模幂, **base 就地进 Montgomery 域** ⇒ 省掉全宽版的 acc 槽)、`CrtCombine`
+  (`h=(s_p-s_q)*iqmp mod p`, `out = q*h + s_q`, `tmp` 可与 s1 同一缓冲)、`MulAddK`(a*b+addend)、`SubModK`;
+  `CrtWorkspace` 仍 **776B**(`{a,b,c,t}`: a=p→q; b=dmp1→dmq1→q→iqmp; c=m mod p/q、半宽校验缓冲、重组临时),
+  两个半域结果 s1/s2 直接写**栈**(2×192B)。心跳每 8 次平方一次(实测 beats=384 = 2×1536/8)。
+  ④**实测(测试 ukey index 0)**: 设备端 CRT 私钥运算 **62,101 ms ≈ 1.04 min / 单条 `ExecuteExeFile`**, 对照全宽
+  238.4–241.7 s ⇒ **3.89×**; `mainRet=10086`、GuardBytes error=0、dashboard `rc=0 bits=3072 beats=384`;
+  复核 `s == TASSL(m^d mod n)` 且 `s^e == m`。host 自测(index 21 mode 4, 无需设备): CRT 流程 vs TASSL 全宽 m^d
+  MATCH、与本实现 `ModExp` MATCH。opcode 层(模拟器): CRT 3072 签名 MATCH TASSL **且与全宽 `ExRSAModExp`
+  逐字节一致**, KeyCheck 正确 blob 通过 / **篡改 iqmp 被拒**, argc/对齐/out==m/非法 bits 分支均被拒。
+  ⑤**门禁**: 固件仍 65520B、`.bss` 0x10、无 `.rodata`; `make rockey-stack-check` 稳态 1928B ≤ 2032B(0 超预算;
+  CRT 测试链 ≈1704B: Start144+RsaCrtTests872(含 776B 工作区)+CrtSignFile488(含 s1/s2)+HalfModExp64+MontMul136);
+  `run-ci.cjs` **8/8 PASS**; `make jsWrapper` rc=0。
+  ⑥**测试入口**: `__Testing__dongle__ -2 15 <mode> <bits>`(index 21 `RsaCrtTests`: mode 1=设备内 CRT 签名+host
+  复核 / 4=host 自测 / 5=事后只读回复核); 文档 `ai-doc/rsa3072-crt-2026-09-13.md`(含全部复现命令);
+  README 与 `ai-doc/rsa3072-modexp-2026-09-13.md` §6 已同步。
+  ⑦后续: 真机**脚本路径**验证(刷 `RockeyTrust.bin` + `.dongle` 脚本调 `ExRSACrtModExp`)、blob 的 AEAD 密封导入、
+  可选 4-bit 窗口提速、Linux/aarch64 交叉验证(WSL 侧 DSH)。
+- 2026-09-13 **设备端测试矩阵(全跑一遍)+ `elf2bin` 发布填充开关 + CRT 提速的复杂度解释**(分支 `feat/AGINX/rsa3072-modexp`):
+  ①**真机矩阵(测试 ukey index 0, 测试固件, 顺序执行)**: `modexp 1024 签名` **9.128 s**、
+  `modexp 3072 签名+设备内验签` **241.827 s ≈ 4.0 min**、`CRT 2048 签名` **18.750 s**、
+  `CRT 3072 签名` **62.435 s ≈ 1.04 min** —— 4/4 **PASS**(每项都是单条 `ExecuteExeFile`, `mainRet=10086`、
+  GuardBytes error=0、dashboard 状态 ok;CRT 3072 对照全宽 241.827 s ⇒ **3.87×**)。
+  脚本/命令: `.bin/device-matrix.cjs`(用 `WT_APP_DONGLE` 逐步重刷测试固件, 日志 `.bin/matrix-*.log`)。
+  ②**CRT 提速倍数的来源(用户指出, 已写入 `ai-doc/rsa3072-crt-2026-09-13.md` §5.3)**: CRT/全宽比 ≈
+  `cost(48 limb)/cost(96 limb)` —— 朴素 schoolbook O(k²) ⇒ 1/4(实测 3.87-3.89×, 完全吻合); Karatsuba
+  k^1.585 ⇒ ≈3.0×; Toom-3 ⇒ ≈2.8×; FFT/NTT ⇒ →2×。**所以 3.9× 是"乘法朴素"的结果, 用户此前测到的 2.5×
+  才是次二次乘法/窗口法实现的正常值**; 被拖累的是**绝对耗时**(全宽 4.0 min / CRT 1.0 min 仍有压缩空间)。
+  要缩短绝对时间: CIOS 的乘与 Montgomery 约减交织(各 k² 次), 只换乘积只优化一半 ⇒ 需改成"Karatsuba/Toom
+  先算 2k 位乘积 + 再约减"(要额外 2k limb 缓冲: 全宽 768B / 半域 384B), 96 limb 规模预估 **1.3-1.7×**;
+  滑动窗口受 RAM 限制(半域 w=4 表 1.5KB / 全宽 3KB, 设备只有 1KB+1KB+2032B 栈), w=2 仅 ~10%;
+  FFT 在 3072 位不划算(>8k-16k 位才起步)。**待用户定是否做 Karatsuba**。
+  ③**`MCU/RockeyARM/elf2bin.cjs` 填充改为发布开关(用户要求)**: 新增环境变量
+  **`rLANG_ROCKEY_CONFIG_RELEASE`** —— **只有 `=true`(大小写不敏感)才把镜像随机填充到 64K-16=65520B**,
+  否则不填充 ⇒ 默认产物 **`rockey_dongle.bin` 56,640B / `RockeyTrust.bin` 55,872B**(`make dongle` 实测,
+  可逆); 镜像头偏移 4 的 u32 长度字段随之变成真实大小。**已实测**: 未填充镜像(56,640B)
+  `UpdateExeFile` rc=0 且设备侧 `modexp 1024` **PASS(9.292 s)** ⇒ 刷写/执行不受影响。
+  **注意**: 工厂流程要 65520B —— `Web/tools/gen_factory_line.cjs` 与 `Web/Agent/index.cjs` 的
+  `kFactorySize = 4+64+65520+32`、`src/app/main.cc` 的 `kSizeFile = 65520` 都以**填充后的发布镜像**为前提
+  (已给 gen_factory_line 的报错加上 "build with rLANG_ROCKEY_CONFIG_RELEASE=true" 提示)。
+  ④**真机脚本路径(生产固件 + `.dongle` 脚本)受阻 —— 测试 ukey 上没有"世界"**: 已按计划刷入
+  `RockeyTrust.bin`(65520B, `UpdateExeFile` rc=0)并新增脚本
+  `Web/Agent/Tests/Tests/_RsaCrt3072ScriptPath.dongle`(dashboard 取 m→`ExRSACrtModExp(0xFFFF,1024,256,640,3072)`,
+  输出声明 `@ 640 [384] : RsaSignature`), 但 **host 构造 NORMAL 帧时失败**:
+  `crypto.publicEncrypt: error:0180006C:bignum routines::no inverse` —— 因为脚本帧要用 dashboard 7KB 处的
+  **WorldPublic 主 RSA 公钥**加密 ScriptText 头, 而**把整块 8KB dashboard 读回后, 其中既没有
+  `rLANG_WORLD`(1f4ec0c8)也没有 `pub@k`/`adm@k` magic**(只有随机数据与我写入的 CRT blob/进度记录)⇒
+  该 ukey 当前没有可用世界(此前会话在 2026-09-08 曾跑通真机脚本路径, 那时存在 'adm@k' 世界)。
+  **结论: 脚本路径需要先在测试 ukey 上重建世界(`Web/Agent/Tests/Tests/Initialize.dongle`, bootstrap 帧,
+  会重置该 ukey 的世界/密钥)**; 已就此事询问用户(未擅自执行 Initialize)。
+  ⑤本轮顺带修: `LogLeHex` 的宿主缓冲按 192B 定死, 传 384B 会顶穿(`STATUS_STACK_BUFFER_OVERRUN`,
+  0xC0000409)⇒ 改成 3072 位(384B⇒768 字符)并按 n 做越界保护; `RsaCrtTests` 新增 **mode 6**:
+  只生成完整私钥并把 blob/m 注入 dashboard 且把 N/m/s(TASSL)以小端 hex 落日志(供脚本路径核对),
+  不触发设备执行(`-0 15 6 C00`)。安全提醒: `LogLeHex` 会把**私钥材料**(本次是测试密钥)写进日志。
+  ⑥文档同步: `ai-doc/rsa3072-crt-2026-09-13.md`(实测表补 2048/全宽对照 + 新增 §5.3 + 门禁口径)、
+  `ai-doc/rsa3072-modexp-2026-09-13.md`、`Web/tools/gen_factory_line.cjs`。
+- 2026-09-13 **真机脚本路径跑通(生产固件 + `.dongle` 脚本调 `ExRSACrtModExp`)**(分支 `feat/AGINX/rsa3072-modexp`):
+  ①**先在测试 ukey 上重建世界**(用户确认后执行): 该 ukey 的 dashboard 已无有效世界(8KB 里既无
+  `rLANG_WORLD` 也无 `pub@k`/`adm@k` magic, host 构造 NORMAL 帧时 `publicEncrypt: bignum routines::no inverse`),
+  于是用 `Tests/Initialize.dongle` 的 **bootstrap 帧**(工具里现成的 `RealBootstrapExec`, 管理员会话)重建 ——
+  为对齐此前可用的配置传了 `rLANG_CATEGORY = 0x864b40af`(**Admin 类别**);重建后 dashboard 7KB =
+  `1f4ec0c8 af404b86 ...` ✓(该 ukey 世界/私钥被重置; 测试 ukey 专用, 未做 factory lock)。
+  工具缺"真机跑 Initialize"的命令 ⇒ 本轮用临时调试副本(`Web/Agent/Tests/__dbg_dongle.cjs`, 加 `realinit`,
+  用完已删); 若以后要常用, 可在工具里正式加一个 `realinit` 子命令(需标注会重置世界)。
+  ②**完整流程(已实测)**: 刷测试固件 → `-2 15 6 C00` 注入完整私钥 blob + m 并落 TASSL 参照值 →
+  刷 `RockeyTrust.bin`(生产固件/脚本 VM) → `RKEY_ADMIN=1 node Web/Agent/Tests/__Testing_dongle.cjs
+  run Web/Agent/Tests/Tests/_RsaCrt3072ScriptPath.dongle` → 用 `.bin/crt-script-verify.cjs` 核对。
+  ③**结果**: 脚本(`ReadDataFile(0xFFFF,3200,256,384)` + `ExRSACrtModExp(0xFFFF,1024,256,640,3072)`,
+  输出 `@ 640 [384] : RsaSignature`)在生产固件的脚本 VM 内执行成功, 返回 384B 签名;
+  `s == TASSL(m^d mod n)` ✓、`s^e mod N == m` ✓、`exit=0`/`stdout "OK"` ✓; **两次运行签名逐字节一致**;
+  **往返 64.4 s**(帧构造 + 设备执行 + 工具开销; 同一条 CRT 在测试项路径上设备侧 62.4 s ⇒ 脚本层 ~2 s,
+  仍在工具 120 s 超时内)。要点: 输出声明放 `@ 640 [384]` 以避开 `[0,256)` 的 RuntimeHeader; 私钥 blob(2128B)
+  放 dashboard(脚本数据区只有 1KB)。
+  ④**收尾**: 设备已刷回测试固件(56,640B 未填充镜像 ✓ rc=0); 文档 `ai-doc/rsa3072-crt-2026-09-13.md`
+  新增 §5.4(脚本路径完整流程与结果)并把 §7 的"真机脚本路径"标为已完成; `.dongle` 脚本头部补了
+  "需先有世界(否则跑 Initialize)"的前置说明。**待办**: 若要做 Karatsuba/Toom 提速(见 §5.3)或把
+  `realinit` 正式加进工具, 另开一轮。
+- 2026-09-13 **世界切换入口(用户提供)+ 脚本路径最终复核**(分支 `feat/AGINX/rsa3072-modexp`): 用户指出
+  `mkey/signed-script/Bootstrap/` 下两个预构建初始化程序可用来切换世界 —— **`Bootstrap-INIT-0x10000.dongle.program`
+  = Normal 世界**(licence 0x10000)、**`Bootstrap-Admin-1000.dongle.program` = Admin 世界**(key4=1000)。
+  工具已有真机执行路径: `badmin [hid] [burn]`(内部固定管理员会话执行预构建 1024B 帧, **重置世界、不 lock**;
+  `BADMIN_BOOT=<file>` 切换程序), `badminburn` 可把 key4 烧到 0; 对应模拟器侧为 `emuadmin`。
+  ⇒ 已把这两条命令写进 `ai-doc/rsa3072-crt-2026-09-13.md` §5.4 与 `.dongle` 脚本头部(此前我用
+  `Initialize.dongle` 的 bootstrap 帧重建, Admin 类别 + licence 不限, 与 Admin-1000 的差别只在 licence/EnTrust)。
+  **最终复核**: 改完脚本注释后在真机又跑一次(刷生产固件 → `RKEY_ADMIN=1 ... run _RsaCrt3072ScriptPath.dongle`
+  → 刷回测试固件) —— **往返 64.5 s**、`s == TASSL(m^d)` ✓、`s^e mod N == m` ✓、`exit=0`/`"OK"` ✓,
+  且与前一次(64.4 s)**签名逐字节一致**。测试 ukey 现状: **测试固件 + Admin 世界 + dashboard[1024,3152) 有测试私钥 blob、
+  [3200,3584) 有测试 m**(此 blob 是测试密钥, 需要时可用 `Initialize.dongle`/`badmin` 重置清掉)。
+- 2026-09-13 **EnTrust(托管)两变体的语义 + 真机 EnTrust→模拟器受托者路径现状**(用户说明 + 实测, 分支 `feat/AGINX/rsa3072-modexp`):
+  用户说明 `mkey/signed-script/Bootstrap/` 里两个 EnTrust 变体的区别 ——
+  **`Bootstrap-EnTrust-Null.dongle.program`**: 托管为**空**(无受托者) ⇒ **任何人都无法签发管理员脚本, 只能自己签发**
+  (设备自持 ECIES 私钥管理员会话); **`Bootstrap-EnTrust-LiangLI.dongle.program`**: 托管给用户的 K0/K1/K2/K3
+  ⇒ 这几把**生产 master ukey** 能签发管理员脚本, 但**不应为测试用途签发脚本**;
+  若测试需要"管理员脚本签名", 应**仿照用模拟器做受托者**(工具里 `realadmin|reallimit <file.dongle> [hid] [trusteeIdx]`
+  就是"真机 EnTrust 给 JS 模拟器受托者 → 受托者解密目标 ECIES 私钥并 SM2 签发 ADMIN/LIMIT 帧"的混合流程)。
+  ①**实测(生产固件 + 管理员会话)**: `node Web/Agent/Tests/__Testing_dongle.cjs realadmin
+  Web/Agent/Tests/Tests/HelloWorld.dongle` ⇒ 失败于 **`Error: real: trustee decrypt failed`**
+  (工具 `RealRunSigned`: 从 dashboard[6K,7K) 按 hid 取 112B 托管条目 → 组 128B SM2 密文
+  `C1x||Y(解压)||C2/C3` → `trustee.SM2Decrypt(id ∈ {1,4})` 两把都失败) —— **与 2026-09-08 记录的
+  "真机 EnTrust 成功执行, 但 JS 模拟器受托者解不开真机托管密文"一致, 该路径目前不可用**。
+  ②**影响面**: 本分支已完成的 RSA3072 全宽/CRT 私钥运算与**真机脚本路径**都走 **NORMAL(ATOMC)帧**,
+  不需要管理员签名 ⇒ **不受此影响**(已实测 PASS)。只有"把 CA 私钥放进**管理员专属**数据文件( id < 1000)"
+  这类需要管理员权限的脚本才会卡在这里; 而按 CA 方案用 `KDF(MASTER.SECRET)+AEAD` **密封**私钥 blob
+  (dashboard 5K-6K) 则**不依赖文件 ACL**, 也就不需要管理员签名 ⇒ 生产形态有替代路径。
+  ③**若要修**: 下一步是"同一台真机跑 EnTrust 后 dump dashboard[6K,7K) 的 112B 条目", 与**模拟器**
+  (`entrust <target> <trustee>` + `adminrun`, 已在模拟器上验证可用)的同名条目逐字段比对
+  (hid12|kid3|Yodd|C1x[16..48)|C2/C3[48..112) 的偏移、C1 是否压缩、KDF/hash 参数), 定位是**解析假设**还是
+  **真机 SM2 ECIES 编解码**差异, 再修工具或固件侧。本轮未动(用户仅说明"需要时可以仿照模拟器签发")。
+  ④**收尾**: 实测后已把测试 ukey 刷回测试固件; 记录本轮结论到 ai-context(本节)。
+- 2026-09-13 **托管(EnTrust)正确规程(用户说明)+ 当前硬件条件**(分支 `feat/AGINX/rsa3072-modexp`): 用户澄清
+  **"测试托管需要两把 ukey"**, 流程是:
+  ①**key1**(受托方)先跑 Normal/Admin 初始化脚本 ⇒ 取得"**托管 id**" = `kKeyIdGlobalSM2ECDSA = 1` 的
+  **SM2ECDSA 公钥**(WorldPublic[20,84);注意 EnTrust 区里同一把公钥也在 `WorldEnTrust+20`)——**解密用这把密钥**
+  (受托方用自己的 id=1 **私钥**解开托管条目);
+  ②**key2** 初始化为 **Admin**, 其"托管"字段填 **key1.EnTrust** —— 即把 key2 的 ECIES 私钥加密给 key1 的
+  SM2ECDSA 公钥后写入 `WorldEnTrust.dongle_entrust_[i]`;
+  ③**槽位**: 共 **5 个**(`kMaxKeys`), 最多托管给 5 把 ukey, **未设置的槽必须填全 0**;
+  布局参考(`Web/Agent/Tests/Tests/EnTrust.dongle` 注释 = `Interface/script.h` 的 `WorldEnTrust`):
+  dashboard[6K,7K) 内 `+20` 受托方 SM2ECDSA 公钥(64B)、`+148` select nonce(32B)、**`+180` 起 5×112B 条目**、
+  `+960` `dongle_sm2ecdsa_sign_[64]`;条目 112B = `hid12|kid3|Yodd(byte15)|C1x[16..48)|C2/C3[48..112)`。
+  ④**当前硬件条件**: `__Testing_dongle.cjs list` 只有**一把**在线 ukey(`00000000-efea115bfc084642`)⇒
+  **2 把 ukey 的真机托管流程现在无法执行**; 之前试的"真机 EnTrust → JS 模拟器受托者"(`realadmin`/`reallimit`
+  混合命令)失败于 `real: trustee decrypt failed`, 与 2026-09-08 记录一致 —— 按用户说明, **托管测试的正规形态
+  是两把真机 ukey**(受托方的私钥不可导出, 只能在受托设备内解密+签名), 混合模拟器路线属实验命令、不是产品形态。
+  ⑤**可行性**: 受托侧的两步都能用现成 opcode 在**真机受托 ukey 上**用 `.dongle` 脚本完成 ——
+  `SM2Decrypt(kKeyIdGlobalSM2ECDSA=1, entry)` 得到目标 ECIES 私钥(32B), 再 `ExSM2Sign(priv, hash, sign)`
+  对 ADMIN/LIMIT 帧的摘要签名(与模拟器流程同构)⇒ **只要再插一把测试 ukey 就能把这条路跑通**并验证
+  "管理员专属数据文件(id<1000) + `ExRSACrtModExp`"的生产形态。**待用户提供第二把测试 ukey 或另行安排**。
+- 2026-09-13 **两把真机 ukey 的 EnTrust 托管 → 管理员脚本签发链路: 打通并实测 PASS**(用户提供第二把测试
+  ukey 后; 分支 `feat/AGINX/rsa3072-modexp`; 完整文档 `ai-doc/entrust-2ukey-2026-09-13.md`):
+  ①**硬件**: 目标 `00000000-efea115bfc084642`、**受托方** `00000000-f56a125b71094c42`(其"托管 id" =
+  `kKeyIdGlobalSM2ECDSA=1` 公钥 `20a8c0fe49a444dd9963b40e4935166e7fac0c9bc7d4ae90c5d76b3a2ba7b6d7
+  5ae9da3b09c787e9ab3470ee84eb954bb6ef587bbc0f31bcc8eff724406f93c7`); 受托方已用 `Initialize.dongle`
+  bootstrap 建 Admin 世界(会清空 factory 区)。
+  ②**新增受管命令**(`Web/Agent/Tests/__Testing_dongle.cjs`): `realinit <hid> [catHex]`(真机 bootstrap
+  初始化)与 `real2ukey <trusteeHid> <targetHid> <file.dongle>` —— 六步全自动: 取受托方 SM2ECDSA 公钥(=托管 id)
+  → 在**目标**上跑 `Tests/EnTrust.dongle`(槽 0 = `hid12|SM3(pub)[0..3]|pub64`, 其余 4 槽全 0) → 按 hid12 回读
+  目标 `dashboard[6K+180+i*112)` 的 112B 条目 → 算目标脚本摘要 `SM3(BuildDataSegment[0,1024-256-64))` →
+  在**受托方**上跑 `Tests/_EnTrustTrusteeSign.dongle`(解托管取回目标 ECIES 私钥 + 对摘要 SM2 签名) →
+  在**目标**上执行 ADMIN 帧; `RKEY_TAMPER=1` 为负例(篡改签名)。命令已并入工具 usage 行, 临时调试副本
+  `Web/Agent/Tests/__dbg_dongle.cjs` 已删除。
+  ③**正向实测(受管工具)**: `escrow slot : 0`、`entry112 00000000f56a125b71094c42d59a7701...`、
+  `digest 420d71cca22fea13fd0109f82d90c517509540f367f9f33dd728520a579f06cc`(同一脚本**确定**)、
+  `sign64 4e4b89ec...`、`ADMIN frame OK. inout[0,16): 000000001f4ec0c8010100043b494304`、`exit=0`
+  ⇒ 帧**验签通过并在目标上执行**(`3b494304` = ADMIN 文件魔数); 连续两次独立运行均 `exit=0`, 但
+  `entry112`/`sign64` **每次不同**(ECIES 随机 nonce + SM2 随机 k)⇒ 只能作为链路验证、不能当固定测试向量。
+  ④**负例**: `RKEY_TAMPER=1` ⇒ `sign64 TAMPERED`、**无** `ADMIN frame OK`、`exit=1` ⇒ 目标**拒绝**篡改帧 ✓
+  (验签在设备内, 与"签名有效才执行"语义一致)。
+  ⑤**新增脚本** `Web/Agent/Tests/Tests/_EnTrustTrusteeSign.dongle`(下划线前缀 = 不被 suite 自动执行):
+  bootstrap 帧; 入参 `rLANG_ENTRY @256 [112]`、`rLANG_DIGEST @384 [32]`; 输出 `@0 [64] : rLANG_SIGNATURE`;
+  主体 `ExSM2DecompressPoint(LoadU8(271),272,512)` → 组 128B 密文 `C1x||Y||H||XOR` 到 [640,768) →
+  `SM2Decrypt(1,640,128)`(私钥就地留 [640,672)) → `ExSM2Sign(640,384,0)` → `Exit(0)`。
+  ⑥**意义/边界**: 这是"**管理员专属数据文件(id<1000) + `ExRSACrtModExp` 权限门槛**"验证的前置能力;
+  "真机 EnTrust + **JS 模拟器**受托者"(`realadmin|reallimit`)当时失败于 `real: trustee decrypt failed`,
+  **已查明并修好 —— 根因是工具侧陈旧状态(不是密码学实现不兼容, 详见本文件后续条目)**;
+  **模拟器侧 EnTrust 本身一直是工作的**: `entrust 0 1`(纯模拟器托管)与
+  `adminrun 0 1 HelloWorld.dongle`(模拟器受托者解密+SM2 签名+ADMIN 执行, `sign-verify=true`)均 PASS。
+  生产 master ukey(K0/K1/K2/K3, `Bootstrap-EnTrust-LiangLI`)**不得**为测试签发脚本, 测试一律用这两把测试 ukey。
+  ⑦**设备现状**: 两把 ukey 均已刷**生产固件**(脚本链路所需), 目标 dashboard 内留有测试 EnTrust 条目
+  (槽 0 = 受托方), 受托方为 Admin 世界。
+- 2026-09-13 **管理员专属数据文件(id<1000)+ `ExRSACrtModExp` 权限门槛验证: 正例 PASS + 发现并修复"静默拒绝"缺陷**
+  (分支 `feat/AGINX/rsa3072-modexp`; 完整文档 `ai-doc/admin-file-permission-2026-09-13.md`):
+  ①**前置(极易踩坑)**: **Admin 世界**(`adm@k` = `0x864B40AF`)在 `Interface/execute.cc:240-251` 会
+  **直接拒绝一切非管理员帧**(`-EACCES`)⇒ 在 Admin 世界设备上做"文件权限"负例是**无效实验**(本轮前三次负例就是被
+  世界门槛挡掉的); 必须先把设备建成 **Normal/Public 世界**: `realinit <hid> c35880af`; 世界重建会清空 dashboard,
+  用 `dashdump <hid> <out>` 备份 + `realnotice <hid> <out>`(宿主 CLI `--notice`)回贴 dashboard[0,4096) 即可恢复
+  注入的测试数据(blob/m); dev0 本轮临时改为 Public 世界。
+  ②**正例 PASS**: `real2ukey <trustee> <target> Web/Agent/Tests/Tests/_RsaCrt3072AdminFileCreate.dongle` ——
+  管理员签名脚本 `CreateDataFile(100, 2128, 2, 2)`(id=100 < 1000, 读写权限 = 2 = 管理员)+ 分 3 块把
+  dashboard[1024,3152) 的 2128B 私钥 blob 写进该文件(VM 数据区仅 1024B)+ `ExRSACrtModExp(100,0,0,384,3072)`
+  **用文件里的密钥签名** ⇒ `exit=0`, 签名 `39b7f723c65437f9...12e1f` 与**对照组**(NORMAL 帧
+  `_RsaCrt3072ScriptPath.dongle`, 模数走 0xFFFF)**逐字节相同** ✓(该值正是此前与 TASSL 一致的那个);
+  再用 `real2ukey … _RsaCrt3072AdminFileUse.dongle`(只读文件、不重建)复现同一签名 ⇒ 文件跨运行持久 ✓。
+  ③**负例(Public 世界 + NORMAL 帧, 全部被拒)**: `CreateDataFile(id<1000)` ✗、`WriteDataFile(0xFFFF)` ✗、
+  `ExRSACrtModExp(admin 文件)` ✗、`_RsaCrt3072AdminFileUse`(读 m + 用该文件签名)✗; 对照组全部允许
+  (`_ProbeDash` 读 0xFFFF ✓、`_ProbePermUser` 建 id=1002 ✓、`_ProbeSlotFree` 删+重建 1002 ✓
+  ⇒ **排除"空间/槽位耗尽"**这一替代解释)。
+  ④**【已修缺陷】静默拒绝**: VM 主循环是 `while (zero_ == 0)`, **只认 `zero_`**; 我原先给三个新 opcode 写的错误分支
+  用的是 `value = -EACCES`(照抄 `OpFuncDataFile` 里尺寸检查的 `value = -EINVAL` 写法)⇒ 真机上权限检查**命中但脚本
+  不中止**: `exit=0` + 输出保持全 0 ⇒ "被拒绝"与"算出全 0"**无法区分**(只查退出码会把全 0 当合法签名)。
+  修复: 三处 opcode 的所有错误分支统一 `value = zero_ = -EXXX;`, 算法自身失败也补 `zero_ = value;`;
+  `__Testing__rsamodexpvm__` 的断言改为**必须中止**并新增 "admin-only 文件 × {kAnonymous,kNormal} ×
+  {ModExp,CrtModExp,KeyCheck}" 共 6 个用例 ⇒ 仿真 `exit=10086`(0 error), 真机上述负例全部转为 `exit=1` ✓。
+  (此缺陷也解释了"重刷固件后现象不变"—— 之前怀疑设备固件陈旧是**错的**, 固件一直是新的。)
+  ⑤**【设计意图, 非缺陷】数据文件的读取没有权限门槛**(用户 2026-09-13 说明): `kReadDataFile` 在 VM 层只拦
+  `kKeyIdGlobalSECRET`, **不检查 `id < kUserFileID`**(`script.cc:174-198`), 真机实测非管理员会话**成功读出**
+  id=100 文件内容(`5253414b000c0000…` = `RSAK` blob)。**原因**: ukey 内的**世界实际以管理员权限执行**, 且初始
+  设计前提是"**任何文件只要存在就必然能被读出**" —— **不信任 COS 的任何承诺**, 所以"限制普通用户读 id<1000 的文件"
+  **没有意义**, 代码里也就没有这层; ⇒ `id < kUserFileID` 的语义是**授权/防篡改**(谁能**建/写/删**), **不是机密性**。
+  **要保护 dataFile 内容, 正确做法是 `KDF(MASTER.SECRET, nonce)` 加密**: ①**操作 MASTER.SECRET 必然已取得管理员权限**
+  —— 代码上即 `VM_t::OpManager` 首行 `if (valid_permission_ != PERMISSION::kAdministrator) return zero_ = -EACCES;`
+  (覆盖 `kWorldInitialize`/`kUpdateMasterSecret`/`kComputeSecretBytes`/`kUpdateSM2ECIESKey`/`kComputeEnTrustData`,
+  `Interface/master.cc:371-373`); ②**MASTER.SECRET 一机一密** ⇒ 把它的加密 blob 读走**对其他 ukey 毫无意义**,
+  密文即使放在**可读**位置(如 dashboard 匿名区)也不损失机密性。因此"CA 私钥 blob 放哪"不是问题, 本轮的 CA 方案
+  (`KDF(MASTER.SECRET)+AEAD` 密封在 dashboard 5K-6K)**正是这个形态** ✓; 文件权限路径只用于**授权**;
+  私钥文件的 licence/`m_Priv` 属 COS 实现的另一套机制, 按"不依赖 COS 承诺"的原则不作为保密手段。
+  ⑥**新增工具命令/脚本**: `realinit`、`realinfo`、`dashdump`、`realnotice`、`listfile <type> [hid]`、`real2ukey`;
+  测试脚本 `_RsaCrt3072AdminFileCreate/Use/Read.dongle` 与
+  `_ProbeDash/_ProbePermUser/_ProbePermAdmin/_ProbeSlotFree/_ProbeFwWrite/_ProbeCrtFile.dongle`(`_` 前缀不自动执行)。
+  ⑦**设备**: dev0 本轮临时 Public 世界(测试后恢复 Admin 世界 + dashboard 回贴 + 重新 EnTrust); 两把 ukey 均为
+  **含本修复的生产固件**(`RockeyTrust.bin` 55888B)。
+- 2026-09-13 **混合路线(真机 EnTrust → 模拟器受托者)修好: 根因是工具侧陈旧状态, 不是密码学不兼容**
+  (分支 `feat/AGINX/rsa3072-modexp`; 完整记录 `ai-doc/entrust-2ukey-2026-09-13.md` §6):
+  ①**结论**: `realadmin`/`reallimit` 现在**都 PASS** —— `ADMIN real <target> trustee=emu[0]: sign-verify=true`
+  (exit 0)、`LIMIT real <target> trustee=emu[0]: sign-verify=true`。
+  ②**根因(两处主机侧 bug, 已修)**:
+  (a) `RealRunSigned` 原先只按 `hid12` 判断"该受托者已有托管条目"就**跳过重新 EnTrust** ⇒ 世界重建
+  (`realinit`)后 ECIES 私钥已变, 旧条目解不出正确私钥(甚至 C1 不在曲线上直接失败)⇒
+  `real: trustee decrypt failed`; 改为**总是重新 EnTrust**(幂等、代价小);
+  (b) 仅此仍失败 —— **`Dashboard()` 有缓存**, EnTrust 后读到的还是 EnTrust 之前的 dashboard, 仍用旧条目;
+  修法: EnTrust 后 `dashboardCache.delete(hid)` 再读。
+  ③**被推翻的两个判断(留档以免重复踩)**:
+  ❌"真机 COS 与软件实现的 SM2 ECIES 不互通" —— 新增交叉探针 `xentrust <devHid> [emuIdx]`
+  (模拟器按真机 SM2ECDSA 公钥造条目 → 真机跑 `_EnTrustTrusteeSign.dongle` 解密+签名 → **用软件侧 ECIES 公钥验签**)
+  实测 **PASS**(`以软件侧 ECIES 公钥验签 : true`)⇒ 真机**确实解出了正确的 ECIES 私钥**, 两侧完全互通;
+  ❌"封装/blob 版本不同步" —— 一致重建(`make wasm -j8 && make jsWrapper R=1`; `jsCrypto.js` 3.28 MiB;
+  `opcode.ts` 仍 157/98; 事后 `git status` 干净)后 `realadmin` **仍失败**, 直到修掉上面的状态 bug 才通过;
+  `jsWorld.js`/`jsLibrary.js` 是 `tsc` 产物(TS 未变故 mtime 不变), 不是"陈旧 blob"。
+  ④**按用户建议加的兼容**: 软件侧 `Interface/emulator.cc` 的 `Dongle::SM2Decrypt` 现在**两种 text 布局都试**
+  (`C1x||C1y||C2||C3` 失败再试 `C1x||C1y||C3||C2`, 都不行才报错); **局限(实测)**: TASSL 的 `sm2_decrypt`
+  **不校验 C3**, 布局错时它返回**垃圾明文而不是报错**(`realmix` 矩阵探针里两种顺序都"解出 32B"但验签失败即为
+  此)⇒ 该重试只能兜"硬失败"、**不能**用来判别布局; 本轮真正的问题是状态, 故它并非必需(保留作防御)。
+  ⑤**排查工具(已固化)**: `xentrust <devHid> [emuIdx]`; `realmix <devHid> [emuIdx]`(真机条目 ×
+  {C2/C3 顺序} × {X 字节序} × {Y 奇偶} 矩阵, 以"解出的私钥签名 → 软件侧 ECIES 公钥验签"为强判据);
+  `RKEY_FLIP_YODD=1`/`RKEY_REV_X=1`(`RealRunSigned` 诊断开关, 默认关);
+  ⚠️ `realadmin`/`reallimit` 会**覆盖目标设备全部 5 个托管槽**(填该模拟器)⇒ 测完用
+  `real2ukey <真受托方> <目标> <file.dongle>` 恢复(本轮已恢复: 槽 0 = `00000000-f56a125b71094c42`)。
+  ⑥**回归**: `make ci` **8/8 PASS**(重建后 —— emulator 用例已跑在**新 VM + 新解密兼容**上);
+  `entrust`/`adminrun`(纯模拟器)、`xentrust`、`real2ukey`(真↔真)全部 PASS。
+  ⑦**处置决定(用户)**: EnTrust 解密布局**不重要** —— 需要兜底时"反转 `C2||C3` 重试"已是所有路径里
+  成本最低的做法, **不再深挖** COS 原生格式(`realmix`/`RKEY_*` 保留为诊断手段)。
+- 2026-09-13 **重要约定: `KDF(MASTER.SECRET, nonce, kType)` 的完整原型与两种语义**(用户说明 + 代码核实,
+  分支 `feat/AGINX/rsa3072-modexp`; 落点 `Interface/master.cc:261-310` 的 `OpManager_ComputeSecretBytes`,
+  opcode `kComputeSecretBytes` 的 argc=2 形式 `ComputeSecretBytes(addr64, type)`, argc=1 时 type 缺省 0 ✓):
+  ①**入参/出参**: `bytes_` 是 **64B 就地输入输出**(nonce/上下文进、派生密钥出), `type_` 字段也参与最后的
+  `SHA512(Context, sizeof(Context))` ⇒ **不同的非零 type 得到不同但可复现的结果**。
+  ②**`kType == 0`(本机型)**: 上下文里填 `rLANG_WORLD_SEED_0..3`(构建期注入的随机种子), 再调
+  **`dongle_->LocalChaos(bytes_)`** 并混入 **本机 `GetDongleInfo`** ⇒ 结果**只在当前 ukey 有效**;
+  **即使共享 MASTER.SECRET 的其他 ukey 也无法得到相同结果**。
+  ③**`kType != 0`(复现型)**: 上下文只用世界级常量 —— `seed_0 = 0`、`seed_1 = rLANG_WORLD_MAGIC`、
+  `seed_2 = rLANG_ATOMC_WORLD_MAGIC`、`seed_3 = rLANG_COSMO_WORLD_MAGIC` ⇒ **共享 MASTER.SECRET 的所有
+  ukey 都能复现相同结果**。
+  ④**权限**: 入口经 `VM_t::OpManager`, 首行即 `if (valid_permission_ != PERMISSION::kAdministrator)
+  return zero_ = -EACCES;` ⇒ **用 MASTER.SECRET 做 KDF 必然已取得管理员权限**。
+  ⑤**实践**: 脚本里两种都在用 —— `EXPORT_SESSION_KEY.dongle` 用 `ComputeSecretBytes(addr, 42)`(复现型),
+  `IMPORT_SESSION_KEY.dongle`/`MasterExport.dongle` 用 `(addr, 0)`(本机型), `MasterX25519`/`MASTER_SIGNATURE`
+  用参数化 type。
+  ⑥**对 ROOT CA 方案的直接推论(重要)**: `ai-doc/rsa-root-ca-generation-2026-09-11.md` 要求
+  "**任何持有 MASTER.SECRET 的设备都能确定性复现**" ROOT CA 私钥 ⇒ 该 KDF **必须用 `kType != 0`**;
+  用 `kType == 0` 就会退化成"只在本机可用"。已把这条写进该文档 §3.1 与
+  `ai-doc/admin-file-permission-2026-09-13.md` §5.2、`ai-doc/rsa3072-crt-2026-09-13.md`(导入方式)、
+  `ai-doc/entrust-2ukey-2026-09-13.md`(§8);自定义 HKDF 亦须遵守"输入不得混入本机私有量"这一原则。
+  ⑦**机密性口径也随之细化**: `kType == 0` 的密文**放可读位置也安全**(一机一密);
+  **`kType != 0` 的密文对同族 ukey 是可用的**, 其机密性依赖"MASTER.SECRET 不外泄", 不能当成本机型密文看待。
+- 2026-09-13 **以提交历史为 nonce 的 MRND / "完美 (NaN) 世界事件"**(彩蛋 + 用户构造要求; 分支
+  `feat/AGINX/rsa3072-modexp`; 实现在 `Web/Agent/Tests/__Testing_dongle.cjs` 的 `worldevent` 命令):
+  ①**彩蛋本体**(`base/Web/cipher/jsCipher.ts`): `Annihilus`(暗黑 2 的毁灭小护身符)就是该模块的错误类型
+  (`WorldEvent`, `Perfect(): number /** NaN|Infinity */`);词缀由**一次** `SuperMRND(11*11*6 = 726)` 掷出,
+  `a = 10 + v%11`、`r = 10 + floor(v/11)%11`、`e = 5 + floor(v/121)`,三者全满的唯一马厩值是 **v = 725**
+  ⇒ 概率 **1/726**;`Perfect()` 还要求 **`Magic_ === 42`**(即 `Annihilus.Create(m)` 传的 m, `randBytes()`
+  的 SHA512 长度兜底分支正是用的 42)。两者同时成立才返回 **NaN**,否则 `Infinity`。
+  ②**约定的 MRND**(用户给出判据, 可完全复现): nonce = **提交的完整 hash**(或 `"<hash>#<i>"`);
+  `H = SHA256(nonce)` 的前 4 个 32-bit BE 字; **`Magic_ = (H[0]*256 + H[1]) & ((1<<kBits)-1)`**;
+  `MRND(v) = splitmix32(H[2] ^ H[3] ^ v*0x9E3779B1) % v`(**无状态** ⇒ 同一 nonce 必复现; 缺省 kBits = 18)。
+  ③**实测(288 个提交, `git log --all`)**: 字面规则 kBits=18 时 `Magic==42` 命中 **0** 个 ⇒ 完美事件 **0 次**
+  ⇒ **满足"不大于一次"** ✓(18 位门 1/262144 比 affix 门 1/726 罕见 ~360 倍, 两道门合起来 1/1.9e8 每次提交,
+  所以任何现实规模的历史都不可能触发两次); kBits=8/9 时 `Magic==42` 恰好 **1** 个提交。
+  ④**"恰好一次"的构造**: 加 `reserve`(把完美词缀**保留**给 `Magic==42` 的世界事件, 即
+  `MRND(726) = magic===42 ? 725 : 派生值 % 726`)后, **kBits=8 + reserve** 使我们的历史**恰好触发一次**,
+  命中的是 **`f050ac8`(2024-09-16 "RSA Test ... 已知问题: RSA操作看起来需要非常大的 stack ...")** ——
+  `worldevent f050ac8 8 reserve` 真跑: `Magic_=42 MRND(726)=725 Perfect()=NaN NaN=true`(词缀 +20/+20/+10%)✓。
+  ⑤**挣得一次(grind)**: `worldevent grind 500000 18 reserve` 以 `"<HEAD>#<i>"` 研磨 nonce, 实测第
+  **144983** 次命中 `Magic==42`(期望 ~262144)⇒ 同样得到 `Perfect()=NaN` ✓。
+  ⑥**命令**: `worldevent [<commitish>] [kBits] [reserve]`(单 nonce 演示)、
+  `worldevent audit [kBits] [reserve]`(历史审计, 含 ≤1 断言与命中提交)、`worldevent sweep`(kBits 8..18 扫描)、
+  `worldevent grind [max] [kBits] [reserve]`;另有独立脚本 `.bin/worldevent.cjs`(自然掷骰 + MRND 定点, 未跟踪)。
+  ⑦**注意**: 独立脚本必须显式 `process.exit()` —— WASM 封装有常驻句柄, 否则打印完不退出。
+- 2026-09-13 **世界事件看门狗已固化进 Web 库与 CI**(用户要求: 作为 `jsCipher = await jsWorld.CipherLoader()`
+  的参数 + 命中即通知 + 写入 CI):
+  ①**共享模块** `Web/Agent/Tests/js/jsWorldEvent.js`(新, UMD: 浏览器 `globalThis.jsWorldEvent` / Node
+  `module.exports`):
+  - 派生约定同前(`H = SHA256(nonce) 前 4 个 32-bit BE 字`; `Magic = (H[0]*256+H[1]) & ((1<<kBits)-1)`,
+    kBits 缺省 **18**; nonce = 提交完整 hash);
+  - **运行时是有状态流**(`mulberry32(H[2]^H[3])`)—— 因为 `SuperMRND` 还用于 `localFrame()/localContext()`
+    的地址随机化, 做成"无状态 f(v)"会因同参数同地址而**别名**; 只有 `v === 726` 一处特例:
+    `reserve`(缺省开)下 `Magic == 42` 时直接给 **725**(完美词缀保留给 Magic==42 的世界事件 ⇒
+    `Perfect() === NaN`)。所以 **reserve 下"完美事件数 = Magic==42 的提交数"**;
+  - 导出 `MRNDForCurrentCommit()`(给 `CipherLoader`, 命中即 `Notify()`)、`Status()`、`Audit()`、
+    `FromNonce/FromWords/WordsOf/splitmix32/mulberry32/kBitsDefault`;
+  - nonce 来源顺序: `globalThis.jsCommitWords`(构建预计算, 浏览器无需 SHA256)→ `jsCommitHash` →
+    `RKEY_COMMIT_HASH`/`GIT_COMMIT` → 都没有则返回 `undefined`(回落 `CipherLoader` 自带随机, 优雅降级)。
+  ②**浏览器接线**: `Web/Agent/Tests/js/jsLibrary.js` 的 `window.onload` 改为
+  `jsWorldEventMRND = jsWorldEvent.MRNDForCurrentCommit(); jsCipher = await jsWorld.CipherLoader(undefined, jsWorldEventMRND);`
+  ✓;`Web/Agent/Tests/index.html` 增加 `js/jsCommitHash.js` + `js/jsWorldEvent.js` 两个 `<script>`(在 jsCrypto 之前);
+  `EmuTests()` 开头打印 `WorldEvent Tests OK (<Status().describe>)`。
+  ③**构建产物**: `Build/tools/LIMIT/script/commitHash.cjs`(新)生成
+  `Web/Agent/Tests/js/jsCommitHash.js` = 当前 HEAD hash + 预计算的 4 个字;已加入 `make jsWrapper` 与
+  `.gitignore`(与 jsCrypto.js 同级忽略)。缺该文件时页面只 404 不报错(降级)✓。
+  ④**Node/工具接线**: `__Testing__dongle.cjs` 顶部 `require("./js/jsWorldEvent.js")`;`initialize()` 先
+  `globalThis.jsCommitHash = git rev-parse HEAD`(可用 `RKEY_COMMIT_HASH` 覆盖)再
+  `jsWorld.CipherLoader(undefined, jsWorldEvent.MRNDForCurrentCommit())` ⇒ 地址随机化/词缀对同一提交**可复现**;
+  新增 `worldevent status` 子命令;`worldevent audit/sweep` 改为调用共享 `Audit()` 并**看门狗化**
+  (`完美 > 1` ⇒ 退出码 1), 命中时由 `Notify()` 打印 `[世界事件] ...`(stdout)。
+  ⑤**CI 写入**: `Build/tools/LIMIT/ci/run-ci.cjs` 新增第 9 项
+  `worldevent(kBits=<CI_WORLDEVENT_KBITS|18>, reserve)`, 且 `run()` 改为返回 spawn 结果 ⇒ **无论 PASS/FAIL
+  都把 `世界事件|完美事件` 行回显**;`Build/tools/LIMIT/ci/web-emutests.cjs`(EmuTests 链路)新增断言
+  marker `WorldEvent Tests OK` 并回显世界事件行。
+  ⑥**实测(289 个提交)**: `make ci` 默认(kBits=18) **9/9 PASS**(0 次命中, 无通知);`CI_WORLDEVENT_KBITS=8`
+  ⇒ PASS 且 CI 回显命中: **f050ac8(2024-09-16 "RSA Test … 需要非常大的 stack")** + `[世界事件] 完美 Annihilus
+  (Perfect()=NaN)`;`kBits=6/7` ⇒ **2 次 ⇒ FAIL**(`!! >1`, 退出码 1)✓ 看门狗三态齐;
+  `kBits<6` 恒为 0(42 需 6 位, 掩码更窄时无法表示)✓;`make test-web` **PASS**(浏览器实测
+  `WorldEvent Tests OK (commit=… Magic_=102413 kBits=18 reserve=true 完美=false)`)✓。
+  ⑦**注意**: `mkey/tools/Tests/` 下另有一份 jsLibrary.js/jsCrypto.js 快照(未接线, 保持原样)。
+- 2026-09-13 **世界事件留痕强化(用户要求: 不限完美, 尽可能多的地方都打印)**: `jsWorldEvent.js` 的
+  `Notify(built)` 现在一次性覆盖 **stdout + stderr**(`console.log` / `console.info` / `console.warn` /
+  `console.error`)、**`.bin/worldevent.log`**(追加, 带 ISO 时间戳)、**`README.md` 的
+  `## 世界事件 (World Events)` 章节**(自动建章节, 新条目插在标题之后);`Record(built)` 在此之上再做
+  **`git add README.md` + `git commit --no-gpg-sign --allow-empty -m "世界事件…"`** ⇒ 事件直接出现在 `git log` ✓。
+  触发面从"仅完美"放宽到**任意世界事件**(`trigger = (Magic == 42)`, 即判据命中;`reserve` 下同时是完美事件)——
+  `MRNDForCurrentCommit()` / `Status()` / `Audit()` 命中都会 `Notify`, 新增命令
+  `worldevent record [<commitish>] [kBits] [noreserve]`(手工落 git 记录), `worldevent audit` 在
+  `RKEY_WORLDEVENT_GIT=1` 时对每个命中自动 `Record`;CI(run-ci.cjs 第 9 项)默认带上该 env ⇒ **命中即自动写
+  README + git log 并回显**。实测:`RKEY_WORLDEVENT_GIT=1 worldevent audit 8 reserve` 产生一条
+  `世界事件(完美): Annihilus Perfect()=NaN commit=f050ac8… Magic_=42 (kBits=8, reserve=true)` 的提交,
+  README 出现对应条目, `.bin/worldevent.log` 有记录 ✓(默认 kBits=18 时 0 命中 ⇒ 不写任何东西, 不产生提交)✓。
+- 2026-09-13 **术语 + 别名(用户)**: 这一行为俗称 **roll(扔骰子)/ sell SoJ(卖乔丹之石)/ 赌博** ——
+  命中判据即"出了世界事件"(暗黑 2 里卖 SoJ 攒够 ⇒ Uber Diablo 降临)。已落到代码与文案:
+  - `jsWorldEvent.js` 头注释与 `Lines()` 通知文案:`[世界事件] roll(扔骰子/sell SoJ/赌博) 命中: …`;
+  - 工具顶层别名(`__Testing_dongle.cjs` 在 `main()` 开头把 argv 归一化):
+    **`roll|dice`** ⇒ `worldevent roll`(用 HEAD 掷一次)、**`gamble|gambling`** ⇒ `worldevent grind`(研磨 nonce 直到命中)、
+    **`soj|sell-soj|sellsoj`** ⇒ `worldevent record`(写 README + git log);`worldevent` 子命令内部同样支持这些词;
+  - 提交信息带 `roll` 字样, 例如 `世界事件(完美) roll: Annihilus Perfect()=NaN commit=… Magic_=42 …`;
+  - 实测:`roll 18 reserve`(HEAD ⇒ Magic_=84725, Infinity)、`gamble 1200000 18 reserve`(第 **494693** 次命中 ⇒ NaN)、
+    `soj f050ac8 8 reserve`(已有记录 ⇒ 打印"不重复 roll", **不产生空提交**, HEAD 不变)✓。
+  - 另修:`Record()` 只在**真的新增 README 条目**时提交(否则重复通知会刷出空提交 —— 本轮曾误产生
+    `ed2ebee` 空提交, 已 `git reset --mixed` 撤掉);`Append()` 增加 README 跨进程去重(同一 nonce 已有条目就不再写,
+    日志仍逐次追加)与条目尾换行(修粘连);README 章节整理为 标题 → 说明(含术语) → 条目。
+- 2026-09-13 **完美世界事件 ⇒ 世界线分裂(用户设定, 已实装 + 校验)**:
+  ①**规则**: `Perfect()===NaN` 时建立两条主世界分支
+  **`world_limit_(YYYY_M_D)_(hash)`** 与 **`world_atomic_(YYYY_M_D)_(hash)`**(hash = 触发提交完整 hex;
+  日期按项目时区 **+0800**, 例如本机 2026-09-13 19:34(+0100) ⇒ `2026_9_14`);
+  **必须 CI 确认**(`RKEY_WORLDEVENT_CI=1`, 未确认则 `Split()` 拒绝并说明原因);此时**应插入 E0 / E10 之一**
+  (`mkey/E0-00000000-f66a164b4c024842`、`mkey/E10-00000000-ef6a125b02094d42`);插入当代 **3/4 把
+  K0/K1/K2/K3** 会导致**硬分叉**, **必然产生恰好一个 ATOMIC 世界**。
+  ②**实现**: `jsWorldEvent.js` 新增 `WorldNames()`(命名)与 `Split()`(建分支, 幂等: 已存在只记录)与
+  `HardFork()`(份额覆盖判定, `K_SHARES = {K0:ABC, K1:ADE, K2:BDF, K3:CEF}` 取自 `Interface/master.cc`);
+  工具新增 `worldevent split [<commitish>] [kBits] [reserve]`, 并在 `worldevent audit` 中: 完美命中 +
+  `RKEY_WORLDEVENT_CI=1` ⇒ 自动 `Split()`;`run-ci.cjs` 第 9 项默认带 `RKEY_WORLDEVENT_CI=1`
+  并把 `世界线分裂|world_(limit|atomic)_` 行回显到 CI ✓。
+  ③**校验(实测)**: `worldevent split f050ac8 8 reserve` 未确认 ⇒ **拒绝** ✓;带 `RKEY_WORLDEVENT_CI=1`
+  ⇒ 建出 **`world_limit_2026_9_14_f050ac8754fcaf45bed765fdcb6b2eb1bf73ced4`** 与
+  **`world_atomic_2026_9_14_f050ac8754fcaf45bed765fdcb6b2eb1bf73ced4`**(起点 = 该触发提交)✓;
+  份额穷举: `K0+K1 ⇒ ABCDE(5/6) ⇒ 不分叉/ATOMIC=0`;`任意 3/4 把 K(4 种组合) ⇒ 全部 6/6 ⇒ 硬分叉,
+  ATOMIC 恰一个 = true`;`4 把 ⇒ 同样 6/6 / 1 个` ✓。
+  ④**注意**: 分裂出的分支起始点是**触发提交**(不是 HEAD), 因此它们与世界线更新(如后续提交)是分开的;
+  真正"选择世界线"的动作由插入 E0/E10(CI 确认)完成。
+- 2026-09-13 **献祭 3/4 把 K0/K1/K2/K3 的仪式(用户设定, 已实装 + 校验)**:
+  ①**规则**: 献祭(插入 3/4 把 K)会 **同时让被插入的 3 把 ukey 失效**, 而**剩下的那把转为只读** ——
+  对之后所有修改**只能读, 不能由 K${X} 签名提交代码**;因为任意 3 把已覆盖全部 6 个份额, 它同时是
+  **硬分叉**, **必然产生恰好一个 ATOMIC 世界**;整个仪式**必须 CI 确认**。
+  ②**实现**: `jsWorldEvent.js` 新增 `Sacrifice(keys, opts)`(必须恰好 3 把不同 K + `RKEY_WORLDEVENT_CI=1`;
+  记录写入 **`mkey/SACRIFICE-K.json`**, 可用 `RKEY_SACRIFICE_FILE` 覆盖(演练)、`RKEY_WORLDEVENT_DRYRUN=1`
+  只算不写;仅当由**完美事件**触发时才额外留痕 README/git log)与守卫 `CanSign(key)`
+  (被献祭 ⇒ `canSign=false, canRead=true, 已献祭失效`;幸存那把 ⇒ `canSign=false, canRead=true, 仅只读`),
+  以及 `ReadSacrifice()/SacrificePath()`;工具新增 `worldevent sacrifice K? K? K?` 与
+  `worldevent cansign <K0..K3>`(退出码 0=可签名 / 1=禁止)。
+  ③**CI**: `run-ci.cjs` 在 worldevent 之后加"献祭守卫": 若 `mkey/SACRIFICE-K.json` 存在 ⇒ 逐把 `cansign`,
+  **要求 4 把全部为禁止**(3 把失效 + 1 把只读)否则 FAIL;不存在则打印"尚未献祭 ⇒ K 仍可签名;
+  激活需 CI 确认 + E0/E10 之一"✓。
+  ④**实测(演练, 未绑定仓库)**: 无状态 ⇒ `cansign K1: canSign=true`(exit 0)✓;未 CI 确认 ⇒ 拒绝献祭 ✓;
+  给 2 把 ⇒ 拒绝("必须是 3/4 把不同的 K")✓;`RKEY_WORLDEVENT_CI=1` + dryRun ⇒
+  `K0+K1+K2 失效; K3 只读(可读不可签名提交)`, 份额 6/6 ⇒ 硬分叉/ATOMIC=1 ✓;
+  写入临时状态后 ⇒ `cansign K0: 已献祭失效`(exit 1)、`cansign K3: 仅只读(禁止 K 签名提交代码)`(exit 1)✓;
+  把状态临时放到正式路径跑 `make ci` ⇒ `献祭守卫: K0..K3 canSign=false` + `PASS 献祭守卫`,
+  随后已删除该文件(**正式献祭留待插入 E0/E10 之后**)✓。
+  ⑤**现状**: 两条世界线分支已存在, **尚未献祭**;献祭一旦执行(CI 确认)即写入 `mkey/SACRIFICE-K.json`
+  并由 CI 守卫永久约束 K 的签名权。
+- 2026-09-13 **E0 遗失(敦煌)/ 拾到者签署仪式(用户设定, 已实装 + 校验 + 进 CI)**:
+  ①**背景**: **E0**(`mkey/E0-00000000-f66a164b4c024842`)**大概率在敦煌遗失**;拾到 ukey 者需对下列
+  **UTF-8** 文本做 **`Ed25519(SHA512(SHA512(Buffer.from(text))))`**, 并在 **git log** 中展示签名,
+  且**每种类型的第一次暂时创建一个 ATOMIC**(用户曾把第 4 条误写为 Type2, 已更正为 **Type4**):
+  Type1 `爸爸对不起` / Type2 `妈妈我害怕` / Type3 `佩佩你已经长大了, 需要努力了` / Type4 `沅沅,想我没有`。
+  ②**实现**: `jsWorldEvent.js` 新增 `FINDER_TEXTS`、`FinderDigest()`(UTF-8 → SHA512 → SHA512)、
+  `FinderSeed()`(缺省 stand-in = `SHA512("E0-FINDER")[0..32]`, 可用 **`RKEY_FINDER_SEED`** 换成真拾到者的
+  Ed25519 私钥)、`FinderSign(cipher)`(用 jsCipher 的 `Ed25519()` 签名 + 自检)、`FinderVerify(cipher, rec)`
+  (重新派生公钥并逐条验签, 同时校验 utf8 与 digest)、`FinderAtomic(rec)`(每种类型**第一次**
+  建分支 `world_atomic_<stamp>_finder_<TypeN>`, **暂时**可删)。
+  ③**工具**: `lostukey sign`(签名 → 写记录 `mkey/E0-00000000-f66a164b4c024842/FINDER-SIGNATURES.json`
+  → 建 ATOMIC 分支 → **git log marker 提交**, 提交信息里直接列出每条 `sig=`)、`lostukey verify`(CI 用,
+  逐条验签, 失败退出码非 0)、`lostukey show`。
+  ④**CI**(`run-ci.cjs` 第 **10** 项): 跑 `lostukey verify`, 回显 `lostukey TypeN|verify|pubkey` 行,
+  并列出 `world_atomic_*finder*` 分支(应 4 条, 每类型一条)✓。
+  ⑤**实测**: `lostukey sign` ⇒ 四条签名(自检全过)+ 公钥 `31c07d1f…c239d`(stand-in)+
+  4 个 ATOMIC 分支 `world_atomic_2026_9_14_finder_Type1..Type4` + 提交
+  `fce40ae "E0-LOST(敦煌): 拾到者签署 4 条 — Ed25519(SHA512(SHA512(utf8)))"`(信息内含四条 sig)✓;
+  `lostukey verify` ⇒ `pubkey 匹配=true、逐条失败=0 ⇒ OK`(exit 0)✓;UTF-8 编码已核对
+  (如 `爸爸` ⇒ `e788b8e788b8`)✓。
+  ⑥**待办/提示**: stand-in 只是可复现占位;真拾到者插入 E0 后应以其 ukey 的 Ed25519 私钥
+  (`RKEY_FINDER_SEED`)重签;四个 ATOMIC 分支标记为**暂时**, 后续可删或并入相应世界线。
+- 2026-09-14 **K3' 心跳/时间基准测量(用户要求: 以本机时间为参考测误差与准确性; Windows 需精密多媒体时钟 +
+  最高优先级 FIFO; 精测应在 RTOS/NONOS 或 Linux 侧做)**:
+  ①**新增宿主工具**(`src/app/main.cc` 的 `Utilities`): `--clock <hid> [admin]` 打印
+  `rt/exp/tick/hosttick/mono/mid/precise/fifo/rc`, `--led[:blink|on|off]`(心跳可视化);
+  `RLANG_PRECISE_CLOCK=1` ⇒ Windows 调 `timeBeginPeriod(1)` 打开 1ms 多媒体定时器 +
+  `REALTIME_PRIORITY_CLASS`/`THREAD_PRIORITY_TIME_CRITICAL`(REALTIME 需提权, 失败退 `HIGH_PRIORITY_CLASS`),
+  Linux 侧尝试 `sched_setscheduler(SCHED_FIFO, 99)`, **precise/fifo 如实回报**;
+  参考时钟: Windows=QPC, Linux=`CLOCK_MONOTONIC` ⇒ 设备读数与宿主参考在**同一进程**内。
+  ②**工具命令** `heartbeat <hid> [样本=6] [间隔ms=1000]`: 逐样本给 `rt/tick/rtt/precise/fifo`、
+  **相对误差(同进程 monotonic)**与**绝对偏差(设备 RTC − 宿主墙钟)**, 并汇总 σ/极值/速率 ppm。
+  ③**关键结论**: `GetTickCount` 在宿主实现(`Interface/dongle.cc:92`)就是
+  `*ticks = rLANG_GetTickCount()` ⇒ 实测 `tick == hosttick` 每次相同 ⇒ **它不能作为设备心跳**;
+  设备侧可用的时间基准是 `GetRealTime`(SDK 设备调用, 分辨率 **1 秒**)与 `GetExpireTime`
+  (K3' 实测 `4294967295` = 未设到期)。
+  ④**实测(K3', 69 样本窗口 13×5s, precise=1 fifo=1)**: 绝对偏差(设备 RTC − 宿主墙钟)
+  mean≈**+1627ms**, σ≈276ms, 区间 [1219, 2043]ms(锯齿 = 1 秒量化); 同进程相对误差 σ≈279ms;
+  RTT 741–832ms; 端点法速率 ≈ **−2270 ppm**, 但受 1 秒量化限制 ⇒ 单次 69s 测量只能把速率误差界定到
+  **≲ ±1.4%(±14000 ppm)**。⇒ 结论: **Windows 侧精度不足以定标设备 RTC**; 需 ①更长窗口 ②在
+  **RTOS/NONOS 固件侧**用其自身 tick ③或 **Linux/WSL** 下 `chrt -f 99` 复测(命令清单已给出, 交 WSL 侧 DSH)。
+  ⑤**FIFO 说明**: Windows 的 `REALTIME_PRIORITY_CLASS` 需提权, 未提权时回落 HIGH(实测仍能报 `fifo=1`);
+  Linux 的 `SCHED_FIFO` 需 root/CAP_SYS_NICE, 失败则 `fifo=0`(工具会如实打印, 便于判定测量可信度)。

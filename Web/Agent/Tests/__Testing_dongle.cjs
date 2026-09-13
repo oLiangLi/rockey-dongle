@@ -29,6 +29,8 @@ const path = require("path");
  */
 require("./js/jsWorld.js");
 require("./js/jsCrypto.js");
+/*! 以"提交 hash"为 nonce 的确定性 MRND + "完美 (NaN) 世界事件"通知(与浏览器侧 jsLibrary.js 共用) */
+const jsWorldEvent = require("./js/jsWorldEvent.js");
 
 function DongleDisplayValue(key) {
   function V2(v) {
@@ -50,7 +52,18 @@ function DongleDisplayValue(key) {
  *!
  */
 async function initialize() {
-  const jsCipher = (globalThis.jsCipher = await jsWorld.CipherLoader());
+  /*! 以"当前提交 hash"为 nonce 的确定性 MRND(js/jsWorldEvent.js):
+   *!  - 命中完美 (NaN) 世界事件时打印通知(见 base/Web/cipher/jsCipher.ts 的 Annihilus);
+   *!  - 地址随机化/词缀掷骰因此对同一提交可复现(RKEY_COMMIT_HASH 可覆盖)。 */
+  if (!globalThis.jsCommitHash) {
+    try {
+      globalThis.jsCommitHash = child_process.execSync("git rev-parse HEAD", { cwd: ROOT, stdio: ["ignore", "pipe", "ignore"] })
+        .toString().trim();
+    } catch (e) {
+      /* 非 git 工作区 ⇒ 回落默认随机 */
+    }
+  }
+  const jsCipher = (globalThis.jsCipher = await jsWorld.CipherLoader(undefined, jsWorldEvent.MRNDForCurrentCommit()));
   const CryptoLoader = (globalThis.CryptoLoader =
     await jsWorld.CryptoLoader(jsCipher));
 
@@ -143,11 +156,12 @@ function rsaEncrypt(pubkey, data) {
 }
 
 // ---------------------------------------------------------------- exec
-function spawnExe(args, stdinB64, exe) {
+function spawnExe(args, stdinB64, exe, envExtra) {
   const exec = exe || EXECV;
   return new Promise((resolve) => {
     const child = child_process.spawn(exec, args, {
       stdio: ["pipe", "pipe", "inherit"],
+      env: envExtra ? Object.assign({}, process.env, envExtra) : process.env,
     });
     const stdout = [];
     let done = false;
@@ -966,15 +980,14 @@ async function RealRunSigned(kind, hid, trusteeIdx, source, tamper) {
     await EmuJsRun(trusteeIdx, initSrc, true);
   }
   let dash = await Dashboard(hid, true);
-  const world = dash.subarray(7 * 1024, 8 * 1024);
-  const entrust = dash.subarray(6 * 1024, 7 * 1024);
-  const want = Buffer.from(EmuJsGet(trusteeIdx).GetDongleInfo()).subarray(28, 40);
-  let has = false;
-  for (let off = 180; off + 112 <= 1024; off += 112) {
-    if (Buffer.compare(entrust.subarray(off, off + 12), want) === 0) has = true;
-  }
-  if (!has) await RealEnTrustToEmu(hid, trusteeIdx);
+  /* 注意: 不能只按 hid12 判断"已托管"就跳过 —— 世界重建(realinit)后 ECIES 私钥会变,
+   * 旧条目会解不出正确私钥(甚至 C1 不在曲线上直接解密失败)。这里**总是重新 EnTrust**,
+   * 保证条目一定对应当前世界的 ECIES 密钥(EnTrust 本身幂等、代价很小)。 */
+  await RealEnTrustToEmu(hid, trusteeIdx);
+  dashboardCache.delete(hid); /* 必须丢弃缓存: EnTrust 刚写了新的托管条目, 缓存还是旧的 ⇒ 会解错条目 */
   dash = await Dashboard(hid, true);
+  const world = dash.subarray(7 * 1024, 8 * 1024);
+  const want = Buffer.from(EmuJsGet(trusteeIdx).GetDongleInfo()).subarray(28, 40);
   const entrust2 = dash.subarray(6 * 1024, 7 * 1024);
   let entry = Buffer.from(entrust2.subarray(180, 292));
   for (let off = 180; off + 112 <= 1024; off += 112) {
@@ -985,9 +998,13 @@ async function RealRunSigned(kind, hid, trusteeIdx, source, tamper) {
     }
   }
   const x = entry.subarray(16, 48);
-  const Y = EmuJsGet(trusteeIdx).EmuDecompressPointSM2(x, (entry[15] & 1) === 1);
+  /* 诊断开关(定位真机 COS 与软件实现的 SM2 ECIES 差异, 默认全关):
+   * RKEY_FLIP_YODD=1 反转 Y 奇偶位; RKEY_REV_X=1 反转 X 字节序 */
+  const xUse = process.env.RKEY_REV_X === "1" ? Buffer.from(x).reverse() : x;
+  const odd = ((entry[15] & 1) === 1) !== (process.env.RKEY_FLIP_YODD === "1");
+  const Y = EmuJsGet(trusteeIdx).EmuDecompressPointSM2(xUse, odd);
   if (!Y || Y.length !== 32) throw Error(`real decrypt Y fail`);
-  const cipher = Buffer.concat([x, Y, entry.subarray(48, 112)]);
+  const cipher = Buffer.concat([xUse, Y, entry.subarray(48, 112)]);
 
   const program = await ParseDongle(source);
   const msg =
@@ -1216,13 +1233,23 @@ async function RealListKeyFiles(hid, type = 3) {
   }
   return out;
 }
-async function RawDashboard(hid) {
-  const r = await spawnExe(["--dashboard", hid, "-"], null);
+async function RawDashboard(hid, admin = true) {
+  const args = ["--dashboard", hid];
+  if (admin) args.push("-");
+  const r = await spawnExe(args, null);
   if (r instanceof Error) throw r;
   const buf = Buffer.from(r.stdout.split(/\r?\n/)[0], "base64");
   if (buf.length !== 8192 + 32 || Buffer.compare(sha256(buf.subarray(0, 8192)), buf.subarray(8192)) !== 0)
     throw Error(`dashboard ${hid}: invalid payload`);
   return buf.subarray(0, 8192);
+}
+/*! 读 dashboard: 先按管理员会话, 失败(例如生产 ukey 的管理员 PIN 非空)再回落非管理员只读 */
+async function RawDashboardSafe(hid) {
+  try {
+    return { dash: await RawDashboard(hid, true), admin: true };
+  } catch (e) {
+    return { dash: await RawDashboard(hid, false), admin: false };
+  }
 }
 /*! 在真机执行预构建 1024B 帧(管理员会话), 返回 {inout, tail} */
 async function RealExecRaw(hid, frame) {
@@ -1989,7 +2016,14 @@ ${nist.map(rowN).join("")}
 async function main() {
   await initialize();
 
-  const argv = process.argv.slice(2);
+  let argv = process.argv.slice(2);
+  /*! 术语别名(用户 2026-09-13): 这一行为俗称 roll / 扔骰子 / sell SoJ(卖乔丹之石) / 赌博
+   *!   roll|dice            ⇒ worldevent roll(用 HEAD 掷一次)
+   *!   gamble|gambling      ⇒ worldevent grind(赌博: 研磨 nonce 直到命中)
+   *!   soj|sell-soj|sellsoj ⇒ worldevent record(把命中的世界事件写进 README + git log) */
+  if (["roll", "dice"].includes(argv[0])) argv = ["worldevent", ...argv];
+  else if (["gamble", "gambling"].includes(argv[0])) argv = ["worldevent", "grind", ...argv.slice(1)];
+  else if (["soj", "sell-soj", "sellsoj"].includes(argv[0])) argv = ["worldevent", "record", ...argv.slice(1)];
   const cmd = argv[0];
   const firstDevice = async () => {
     const list = await List();
@@ -1997,6 +2031,674 @@ async function main() {
     return process.env.RKEY_HID || list[0].id;
   };
 
+  if (cmd === "realinit") {
+    /* 真机 bootstrap 初始化: 用 Initialize.dongle 建立/重置世界(会清空 factory 区, 之后需重新注入数据)
+     * realinit <hid> [categoryHex]; 默认类别 0x864b40af */
+    const hid = argv[1];
+    if (!hid) throw Error("usage: realinit <hid> [categoryHex]");
+    const wantCat = argv[2] !== undefined ? parseInt(argv[2], 16) : 0x864b40af;
+    const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+    const r = await RealBootstrapExec(hid, initSrc, { rLANG_CATEGORY: wantCat });
+    console.log("realinit: inout head", r.inout.subarray(0, 16).toString("hex"));
+    const d = (await RawDashboardSafe(hid)).dash;
+    console.log("realinit: world magic", d.subarray(7 * 1024, 7 * 1024 + 4).toString("hex"),
+                "category", d.subarray(7 * 1024 + 4, 7 * 1024 + 8).toString("hex"));
+    console.log("realinit: 托管 id (SM2ECDSA pub)", d.subarray(7 * 1024 + 20, 7 * 1024 + 84).toString("hex"));
+    return 0;
+  }
+  if (cmd === "real2ukey") {
+    /* 真机两把 ukey 托管闭环: target 上 EnTrust 托管给 trustee, trustee 解密条目并对目标
+     * ADMIN 脚本摘要签名, 再把签名帧送回 target 执行.
+     * real2ukey <trusteeHid> <targetHid> <file.dongle>; RKEY_TAMPER=1 为负例(篡改签名, 期望被拒)
+     * 前置: trustee 已 realinit 建世界; target 已建世界(EnTrust 需 admin 权限脚本) */
+    const trusteeHid = argv[1];
+    const targetHid = argv[2];
+    const file = argv[3];
+    if (!trusteeHid || !targetHid || !file) throw Error("usage: real2ukey <trusteeHid> <targetHid> <file.dongle>");
+    const list = await List();
+    const tInfo = list.find((d) => d.id === trusteeHid);
+    if (!tInfo) throw Error("trustee not found: " + trusteeHid);
+    if (!list.find((d) => d.id === targetHid)) throw Error("target not found: " + targetHid);
+
+    /* 1) 受托方 SM2ECDSA 公钥 = 托管 id */
+    const tDash = await RawDashboard(trusteeHid);
+    const tPub = Buffer.from(tDash.subarray(7 * 1024 + 20, 7 * 1024 + 84));
+    if (!tPub.some((b) => b !== 0 && b !== 0xff)) throw Error("trustee has no SM2ECDSA pubkey");
+    const tHid12 = Buffer.from(Buffer.from(tInfo.info, "base64").subarray(28, 40));
+    console.log("trustee hid :", tHid12.toString("hex"));
+    console.log("trustee pub :", tPub.subarray(0, 8).toString("hex"), "...");
+
+    /* 2) 在 target 上 EnTrust: 槽 0 = trustee, 其余槽必须全 0 */
+    const entrustSrc = fs.readFileSync(path.join(__dirname, "Tests", "EnTrust.dongle"), "utf8");
+    const overrides = { rLANG_EnTRUST_NONCE: crypto.randomBytes(32) };
+    const entry80 = Buffer.alloc(80);
+    tHid12.copy(entry80, 0);
+    sm3(tPub).subarray(0, 3).copy(entry80, 12); // kid = SM3(托管公钥)[0..3]
+    tPub.copy(entry80, 16);
+    for (let i = 0; i < 5; ++i) overrides["rLANG_EnTRUST_" + i] = i === 0 ? entry80 : Buffer.alloc(80);
+    console.log("EnTrust on target ...");
+    await RealBootstrapExec(targetHid, entrustSrc, overrides);
+
+    /* 3) 取 target 上属于该受托方的托管条目 */
+    const tgtDash = await RawDashboard(targetHid);
+    let entry112 = null;
+    for (let i = 0; i < 5; ++i) {
+      const off = 6 * 1024 + 180 + i * 112;
+      const e = tgtDash.subarray(off, off + 112);
+      if (Buffer.compare(e.subarray(0, 12), tHid12) === 0) {
+        entry112 = Buffer.from(e);
+        console.log("escrow slot :", i);
+      }
+    }
+    if (!entry112) throw Error("no escrow entry for trustee in target dashboard");
+    console.log("entry112    :", entry112.toString("hex"));
+
+    /* 4) 目标 ADMIN 脚本摘要 */
+    const source = fs.readFileSync(file, "utf8");
+    const program = await ParseDongle(source);
+    const digest = sm3(BuildDataSegment(program, {}).subarray(0, 1024 - 256 - 64));
+    console.log("digest      :", digest.toString("hex"));
+
+    /* 5) 受托方 bootstrap: 解托管条目取 C1x, 再对摘要签名 */
+    const signSrc = fs.readFileSync(path.join(__dirname, "Tests", "_EnTrustTrusteeSign.dongle"), "utf8");
+    const r = await RealBootstrapExec(trusteeHid, signSrc, { rLANG_ENTRY: entry112, rLANG_DIGEST: digest });
+    const sign64 = Buffer.from(r.inout.subarray(0, 64));
+    console.log("sign64      :", sign64.toString("hex"));
+
+    if (process.env.RKEY_TAMPER === "1") {
+      sign64[sign64.length - 1] ^= 1;
+      console.log("sign64 TAMPERED");
+    }
+
+    /* 6) 在 target 上执行 ADMIN 帧(签名无效时应被拒) */
+    const frame = FrameAdmin(program, tgtDash, sign64);
+    const inout = await RealExecFrame(targetHid, frame);
+    console.log("ADMIN frame OK. inout[0,16):", inout.subarray(0, 16).toString("hex"));
+    for (const o of program.output || []) {
+      console.log(`output ${o.name} [${o.offset},${o.offset + o.size}):`,
+                  inout.subarray(o.offset, o.offset + o.size).toString("hex"));
+    }
+    return 0;
+  }
+  if (cmd === "realinfo") {
+    /* 诊断: 非管理员(NORMAL/ATOMC)帧会比对"当前 dongle_info"与 dashboard 里保存的副本
+     * (Interface/execute.cc:102-118, 不一致直接 -EBADF) —— 管理员帧跳过该检查.
+     * realinfo [hid] 打印 40B live info 与 WorldPublic+504 的副本并给出是否一致 */
+    const hid = argv[1] || (await firstDevice());
+    const list = await List();
+    const entry = list.find((d) => d.id === hid);
+    if (!entry) throw Error("dongle not found: " + hid);
+    const live = Buffer.from(entry.info, "base64");
+    const safe = await RawDashboardSafe(hid);
+    const dash = safe.dash;
+    console.log("read mode  :", safe.admin ? "管理员会话" : "非管理员只读(生产 ukey 管理员 PIN 非空时会走这里)");
+    const saved = Buffer.from(dash.subarray(7 * 1024 + 504, 7 * 1024 + 504 + 40));
+    console.log("hid        :", hid);
+    console.log("live  info :", live.toString("hex"));
+    console.log("saved info :", saved.toString("hex"));
+    console.log("world magic:", dash.subarray(7 * 1024, 7 * 1024 + 4).toString("hex"),
+                "category", dash.subarray(7 * 1024 + 4, 7 * 1024 + 8).toString("hex"));
+    console.log("MATCH      :", Buffer.compare(live, saved) === 0);
+    for (let i = 0; i < 40; ++i) {
+      if (live[i] !== saved[i]) console.log(`  diff @${i}: live=${live[i].toString(16)} saved=${saved[i].toString(16)}`);
+    }
+    return 0;
+  }
+  if (cmd === "dashdump") {
+    /* 把真机 dashboard 8192B 原样存文件(备份/诊断): dashdump <hid> <outfile> */
+    const hid = argv[1];
+    const out = argv[2];
+    if (!hid || !out) throw Error("usage: dashdump <hid> <outfile>");
+    const safe = await RawDashboardSafe(hid);
+    const d = safe.dash;
+    fs.writeFileSync(out, d);
+    console.log(`dashdump: ${out} ${d.length}B sha256=${sha256(d).toString("hex")} mode=${safe.admin ? "admin" : "read-only"}`);
+    return 0;
+  }
+  if (cmd === "realnotice") {
+    /* 管理员会话整体回贴"前 4096B dashboard 内容"(宿主 CLI --notice 写 dashboard[0,4096), admin):
+     * realnotice <hid> <infile>; 取 infile 前 4096B(不足补 0)+ SHA256 发送.
+     * 用途: 重建世界(会清空 dashboard)后恢复注入的测试数据(如 RSA 私钥 blob / m)。 */
+    const hid = argv[1];
+    const file = argv[2];
+    if (!hid || !file) throw Error("usage: realnotice <hid> <infile4k>");
+    const buf = Buffer.alloc(4096);
+    fs.readFileSync(file).subarray(0, 4096).copy(buf);
+    const r = await spawnExe(["--notice", hid, "-"], Buffer.concat([buf, sha256(buf)]).toString("base64"));
+    if (r instanceof Error) throw r;
+    console.log("realnotice: posted 4096B to dashboard[0,4096)");
+    return 0;
+  }
+  if (cmd === "listfile") {
+    /* 列真机文件属性: listfile <type> [hid]; type 1=DATA 2=PRIKEY_RSA 3=PRIKEY_ECCSM2 4=KEY 5=EXE
+     * 16B 条目: FILEID u16|Reserve u16|m_Type u16|m_Size u16|m_Count i32|priv u8|decOnRAM u8|reset u8 */
+    const type = parseInt(argv[1], 10);
+    if (!type) throw Error("usage: listfile <type> [hid]");
+    const hid = argv[2] || (await firstDevice());
+    const list = await RealListKeyFiles(hid, type);
+    console.log(`listfile type=${type} hid=${hid} files=${list.length}`);
+    for (const f of list) {
+      console.log(`  id=${f.file} type=${f.type} size=${f.size} count=${f.count}` +
+                  ` priv=${f.priv} decOnRAM=${f.decOnRAM} reset=${f.reset}`);
+    }
+    return 0;
+  }
+  if (cmd === "xentrust") {
+    /* 交叉实现探针: 让**模拟器**按真机的 SM2ECDSA 公钥生成托管条目, 再让**真机**解密它.
+     * xentrust <devHid> [emuIdx]  => 报告 "模拟器加密 → 真机解密" 是否可行;
+     * 与 realadmin(真机加密 → 模拟器解密) 合起来即可判定两个 SM2 ECIES 实现的兼容方向.
+     * 原理: 真机 SM2 ECIES 走 COS(rockey.cc sm2_encrypt/sm2_decrypt), 模拟器走本仓 TASSL 软件实现
+     * (emulator.cc), 二者各自自洽但未必互通. */
+    const devHid = argv[1];
+    const emuIdx = argv[2] !== undefined ? parseInt(argv[2], 10) : 0;
+    if (!devHid) throw Error("usage: xentrust <devHid> [emuIdx]");
+    const list = await List();
+    const devInfo = list.find((d) => d.id === devHid);
+    if (!devInfo) throw Error("dongle not found: " + devHid);
+    const devDash = await RawDashboard(devHid);
+    const pub = Buffer.from(devDash.subarray(7 * 1024 + 20, 7 * 1024 + 84));
+    if (!pub.some((b) => b !== 0)) throw Error("device has no SM2ECDSA pubkey");
+    const devHid12 = Buffer.from(Buffer.from(devInfo.info, "base64").subarray(28, 40));
+
+    /* 1) 模拟器上 EnTrust: 槽0 = 真机公钥(模拟器用软件 SM2 加密目标的 ECIES 私钥) */
+    if (!EmuJsDashboard(emuIdx).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0)) {
+      const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+      console.log(`xentrust: emu[${emuIdx}] 无世界, 先 Initialize ...`);
+      await EmuJsRun(emuIdx, initSrc, true);
+    }
+    const entry80 = Buffer.alloc(80);
+    devHid12.copy(entry80, 0);
+    sm3(pub).subarray(0, 3).copy(entry80, 12);
+    pub.copy(entry80, 16);
+    const entrustSrc = fs.readFileSync(path.join(__dirname, "Tests", "EnTrust.dongle"), "utf8");
+    const overrides = { rLANG_EnTRUST_NONCE: crypto.randomBytes(32) };
+    for (let i = 0; i < 5; ++i) overrides["rLANG_EnTRUST_" + i] = i === 0 ? entry80 : Buffer.alloc(80);
+    console.log(`xentrust: emu[${emuIdx}] EnTrust -> device SM2ECDSA pub ${pub.subarray(0, 8).toString("hex")}...`);
+    await EmuJsRun(emuIdx, entrustSrc, true, overrides);
+
+    /* 2) 取模拟器落盘的 112B 条目 */
+    const emuDash = EmuJsDashboard(emuIdx);
+    const swEntry = Buffer.from(emuDash.subarray(6 * 1024 + 180, 6 * 1024 + 180 + 112));
+    if (!swEntry.some((b) => b !== 0)) throw Error("emulator escrow entry is empty");
+    console.log("xentrust: 软件实现生成的条目 :", swEntry.toString("hex"));
+
+    /* 3) 真机受托方侧解密+签名(脚本内部: 解压 Y -> SM2Decrypt -> ExSM2Sign) */
+    const signSrc = fs.readFileSync(path.join(__dirname, "Tests", "_EnTrustTrusteeSign.dongle"), "utf8");
+    let rc = 0;
+    try {
+      const digest = crypto.randomBytes(32);
+      const r = await RealBootstrapExec(devHid, signSrc, {
+        rLANG_ENTRY: swEntry,
+        rLANG_DIGEST: digest,
+      });
+      const sig = Buffer.from(r.inout.subarray(0, 64));
+      console.log("xentrust: 真机签名输出(前16B):", sig.subarray(0, 16).toString("hex"));
+      /* 强判据: 用模拟器(软件)侧对应私钥的 ECIES 公钥验签 —— 只有当真机**确实解出正确私钥**才应通过 */
+      const eciesPub = Buffer.from(EmuJsDashboard(emuIdx).subarray(7 * 1024 + 408, 7 * 1024 + 408 + 64));
+      const ok = EmuJsGet(emuIdx).SM2Verify(eciesPub, digest, sig);
+      console.log("xentrust: 以软件侧 ECIES 公钥验签 :", ok ? "true" : "false");
+      if (!ok) {
+        console.log("xentrust: FAIL — 真机未解出正确的 ECIES 私钥(签名为垃圾或验签失败)");
+        rc = 1;
+      } else if (!sig.some((b) => b !== 0)) {
+        console.log("xentrust: FAIL — 真机侧输出全 0");
+        rc = 1;
+      } else {
+        console.log("xentrust: PASS — 真机(COS)正确解开软件实现的 SM2 ECIES 密文(验签通过)");
+      }
+    } catch (err) {
+      console.log("xentrust: FAIL — 真机(COS)无法处理软件实现的 SM2 ECIES 密文:", String(err.message).slice(0, 120));
+      rc = 1;
+    }
+    return rc;
+  }
+  if (cmd === "realmix") {
+    /* 真机→软件 的 SM2 ECIES 布局矩阵探针: realmix <devHid> [emuIdx]
+     * 在真机上为该模拟器建立托管条目, 然后对 {C2/C3 顺序} × {X 字节序} × {Y 奇偶} 组合逐个尝试软件解密,
+     * 并用"解出的私钥签名 → 以软件侧 ECIES 公钥验签"作为强判据, 从而定出真机落盘的真实布局。 */
+    const devHid = argv[1];
+    const emuIdx = argv[2] !== undefined ? parseInt(argv[2], 10) : 0;
+    if (!devHid) throw Error("usage: realmix <devHid> [emuIdx]");
+    if (!EmuJsDashboard(emuIdx).subarray(7 * 1024 + 20, 7 * 1024 + 84).some((b) => b !== 0)) {
+      const initSrc = fs.readFileSync(path.join(__dirname, "Tests", "Initialize.dongle"), "utf8");
+      await EmuJsRun(emuIdx, initSrc, true);
+    }
+    /* 1) 真机 EnTrust 给该模拟器(会覆盖槽位, 之后用 real2ukey 恢复真受托方) */
+    await RealEnTrustToEmu(devHid, emuIdx);
+    const dash = await RawDashboard(devHid);
+    const want = Buffer.from(EmuJsGet(emuIdx).GetDongleInfo()).subarray(28, 40);
+    let entry = null;
+    for (let off = 180; off + 112 <= 1024; off += 112) {
+      const e = dash.subarray(6 * 1024 + off, 6 * 1024 + off + 112);
+      if (Buffer.compare(e.subarray(0, 12), want) === 0) entry = Buffer.from(e);
+    }
+    if (!entry) throw Error("realmix: 真机上没有该模拟器的托管条目");
+    console.log("realmix: entry =", entry.toString("hex"));
+
+    const xRaw = entry.subarray(16, 48);
+    const b1 = entry.subarray(48, 80);   /* 打印用: 前 32B 块 */
+    const b2 = entry.subarray(80, 112);  /* 打印用: 后 32B 块 */
+    const eciesPub = Buffer.from(EmuJsDashboard(emuIdx).subarray(7 * 1024 + 408, 7 * 1024 + 408 + 64));
+    const emu = EmuJsGet(emuIdx);
+    const digest = crypto.randomBytes(32);
+    const orderNames = ["C2||C3", "C3||C2"];
+    let pass = 0;
+    for (const revX of [false, true]) {
+      const x = revX ? Buffer.from(xRaw).reverse() : Buffer.from(xRaw);
+      for (const flip of [false, true]) {
+        const odd = ((entry[15] & 1) === 1) !== flip;
+        let Y = null;
+        try {
+          Y = emu.EmuDecompressPointSM2(x, odd);
+        } catch (err) {
+          continue;
+        }
+        if (!Y || Y.length !== 32) continue;
+        for (const order of [0, 1]) {
+          const tail = order === 0 ? Buffer.concat([b1, b2]) : Buffer.concat([b2, b1]);
+          const cipher = Buffer.concat([x, Y, tail]);
+          for (const id of [1, 4]) {
+            let priv = null;
+            try {
+              priv = emu.SM2Decrypt(id, cipher);
+            } catch (err) {
+              continue;
+            }
+            if (!priv || !priv.length) continue;
+            if (priv.length > 32) priv = Buffer.from(priv.subarray(0, 32));
+            let verified = false;
+            try {
+              verified = emu.SM2Verify(eciesPub, digest, emu.SM2Sign(priv, digest));
+            } catch (err) {
+              verified = false;
+            }
+            console.log(`realmix: revX=${revX} flipYodd=${flip} order=${orderNames[order]} id=${id}` +
+                        ` => 解出 ${priv.length}B, 验签=${verified}`);
+            if (verified) {
+              console.log("realmix: *** 命中 *** 组合 = " +
+                          `revX=${revX} flipYodd=${flip} order=${orderNames[order]} id=${id}`);
+              ++pass;
+            }
+          }
+        }
+      }
+    }
+    console.log(pass ? `realmix: ${pass} 个组合可用` : "realmix: 所有组合都失败");
+    return pass ? 0 : 1;
+  }
+  if (cmd === "worldevent") {
+    /* 以"提交历史 hash"为 nonce 的确定性 MRND, 用于触发 base/Web/cipher/jsCipher.ts 的
+     * Annihilus "完美 (NaN) 世界事件" 彩蛋.
+     *
+     * 约定(2026-09-13, 用户给出判据; 全部可复现):
+     *   H     = SHA256(nonce) 的前 4 个 32-bit BE 字 (nonce = 提交的完整 hash, 或 "<hash>#<i>")
+     *   Magic = (H[0] * 256 + H[1]) & ((1 << kBits) - 1)     // 这件"世界事件"的 Magic_ 值
+     *   MRND  = (v) => splitmix32(H[2] ^ H[3] ^ v*0x9E3779B1) % v   // 无状态 ⇒ 同一 nonce 必复现
+     *   Perfect() === NaN  <=>  Magic === 42  且  MRND(726) === 725(完美词缀的唯一马厩值)
+     *
+     * 子命令:
+     *   worldevent [<commitish>] [kBits] [reserve]  以该提交(缺省 HEAD)为 nonce 造事件并跑真 Perfect()
+     *   worldevent status                           打印当前提交的判据状态(不遍历历史)
+     *   worldevent audit [kBits] [reserve]          遍历 git log --all 审计; 世界事件 > 1 次 ⇒ 退出码非 0
+     *   worldevent record [<commitish>] [kBits] [noreserve]  把世界事件写进 README.md + git log(尽可能多的地方留痕)
+     *   worldevent sweep                            对 kBits 8..18 各审计一次
+     *   worldevent grind [maxTrials] [kBits] [reserve]  以 "<HEAD>#<i>" 研磨 nonce, 直到 Magic === 42
+     * 派生与通知实现在 Web/Agent/Tests/js/jsWorldEvent.js(与浏览器 jsLibrary.js 的 CipherLoader() 共用)。 */
+    const cp = require("child_process");
+    const gitLogAll = () =>
+      cp.execSync("git log --all --format=%H", { cwd: ROOT, maxBuffer: 1 << 28 })
+        .toString().trim().split(/\r?\n/).filter(Boolean);
+    const resolve = (ref) => cp.execSync(`git rev-parse ${ref}`, { cwd: ROOT }).toString().trim();
+    const brief = (h) => cp.execSync(`git log -1 --format="%h %ci %s" ${h}`, { cwd: ROOT }).toString().trim();
+    /* 派生/通知统一在 Web/Agent/Tests/js/jsWorldEvent.js 里实现(与 jsLibrary.js 的
+     * CipherLoader() 共用同一套 nonce 派生), 这里只做命令行编排。 */
+    const Make = (nonce, kBits = 18, reserve = false) => jsWorldEvent.FromNonce(nonce, kBits, reserve);
+    /* 世界线分裂结果 + E0/E10 与 K0..K3 硬分叉规则 */
+    const ReportSplit = (sp) => {
+      console.log(`世界线分裂: limit=${sp.names.limit}`);
+      console.log(`世界线分裂: atomic=${sp.names.atomic}`);
+      if (sp.refused) {
+        console.log(`世界线分裂: 拒绝 —— ${sp.refused}`);
+      } else {
+        console.log(`世界线分裂: 已建 ${sp.created.length} 条(起点 ${sp.start})` +
+                    (sp.existed.length ? `, 已存在 ${sp.existed.length} 条` : "") + (sp.error ? ` 错误=${sp.error}` : ""));
+      }
+      console.log("世界线分裂: 此时应插入 **E0 / E10 之一**(mkey/E0-*、mkey/E10-*)—— 必须 CI 确认");
+      for (const keys of [["K0", "K1"], ["K0", "K1", "K2"], ["K0", "K1", "K2", "K3"]]) {
+        const h = jsWorldEvent.HardFork(keys);
+        console.log(`世界线分裂: 插入 ${keys.join("+")} ⇒ 份额 ${h.shares || "-"}(${h.covered}/6)` +
+                    ` ⇒ ${h.hard ? "硬分叉" : "不足以分叉"}, ATOMIC=${h.atomic}`);
+      }
+      /* "3/4 把 K ⇒ 硬分叉" 的穷举验证: 任取 3 把都应覆盖 6/6 且恰产生 1 个 ATOMIC */
+      const all3 = [["K0", "K1", "K2"], ["K0", "K1", "K3"], ["K0", "K2", "K3"], ["K1", "K2", "K3"]];
+      const bad = all3.filter((ks) => 1 !== jsWorldEvent.HardFork(ks).atomic);
+      console.log(`世界线分裂: 任意 3/4 把 K(${all3.length} 种组合) ⇒ 硬分叉=全部成立=${0 === bad.length}, ` +
+                  `ATOMIC 恰一个=${0 === bad.length}${bad.length ? " 反例=" + JSON.stringify(bad) : ""}`);
+      return sp;
+    };
+    const Show = async (m) => {
+      const suite = await jsWorld.CipherLoader(undefined, m.MRND);
+      const ev = suite.Annihilus_(m.magic);
+      const p = ev.Perfect();
+      console.log(`nonce=${m.nonce}`);
+      console.log(`  Magic_=${m.magic}  kBits=${m.kBits}  reserve=${m.reserve}  Perfect()=${p}  NaN=${Number.isNaN(p)}`);
+      if (Number.isNaN(p)) jsWorldEvent.Notify(m);
+      console.log(ev.message.replace(/^\s*\n/, "").trimEnd());
+      return Number.isNaN(p);
+    };
+
+    let sub = argv[1] || "";
+    /* 术语别名(用户 2026-09-13): roll(扔骰子) ⇒ 用 HEAD 掷一次; gamble(赌博) ⇒ grind 挣一次;
+     * soj / sell-soj(卖乔丹之石) ⇒ 把命中的世界事件写进 README.md + git log */
+    let a = argv;
+    if ("roll" === sub || "dice" === sub || "roll-head" === sub) {
+      a = [argv[0], "HEAD"].concat(argv.slice(2));
+      sub = "";
+    } else if ("gamble" === sub || "gambling" === sub) {
+      sub = "grind";
+    } else if ("soj" === sub || "sell-soj" === sub || "sellsoj" === sub) {
+      sub = "record";
+    }
+    if (sub === "status") {
+      const st = jsWorldEvent.Status();
+      console.log(`worldevent status: ${st.describe}`);
+      if (st.trigger) jsWorldEvent.Notify(st);
+      return 0;
+    }
+    if (sub === "audit" || sub === "sweep") {
+      const hist = gitLogAll();
+      const reserve = "reserve" === a[3] || process.env.RKEY_RESERVE === "1";
+      const widths = sub === "sweep"
+        ? [...Array(11).keys()].map((i) => i + 8)
+        : [a[2] !== undefined ? parseInt(a[2], 10) : jsWorldEvent.kBitsDefault];
+      console.log(`提交总数 (git log --all): ${hist.length}; reserve=${reserve}; kBits=${widths.join(",")}`);
+      let worst = 0;
+      for (const k of widths) {
+        const au = jsWorldEvent.Audit(hist, k, reserve);
+        worst = Math.max(worst, au.perfect);
+        console.log(`kBits=${String(k).padStart(2)}  Magic==42:${String(au.magic).padStart(3)}  完美:${au.perfect}  ` +
+                    `${au.perfect <= 1 ? "OK(<=1)" : "!! >1"}`);
+        for (const h of au.hits) {
+          console.log(`      ↳ 世界事件(判据命中/roll): ${brief(h)}`);
+          const built = jsWorldEvent.FromNonce(h, k, reserve);
+          jsWorldEvent.Notify(built); /* 四通道 console + .bin/worldevent.log + README.md */
+          if (process.env.RKEY_WORLDEVENT_GIT === "1") jsWorldEvent.Record(built); /* 追加一条 git log 记录 */
+          /* 完美事件 ⇒ 世界线分裂(必须 CI 确认: RKEY_WORLDEVENT_CI=1) */
+          if (built.perfect && "1" === (process.env.RKEY_WORLDEVENT_CI || "")) ReportSplit(jsWorldEvent.Split(built));
+        }
+      }
+      if (worst > 1) {
+        console.error(`worldevent: 历史触发 ${worst} 次完美事件 ⇒ 违反 "<= 1 次"`);
+        return 1;
+      }
+      return 0;
+    }
+    if (sub === "record") {
+      /* 把(指定提交的)世界事件写进尽可能多的地方: 四通道 console + .bin/worldevent.log + README.md + git log */
+      const ref = a[2] || "HEAD";
+      const kBits = a[3] !== undefined ? parseInt(a[3], 10) : jsWorldEvent.kBitsDefault;
+      const reserve = "noreserve" !== a[4];
+      const built = jsWorldEvent.FromNonce(resolve(ref), kBits, reserve);
+      jsWorldEvent.Notify(built);
+      const r = jsWorldEvent.Record(built);
+      console.log(`worldevent record(soj): nonce=${built.nonce} Magic_=${built.magic} 世界事件=${built.trigger} 完美=${built.perfect}` +
+                  ` 已写 README=${r.wrote.readme} 日志=${r.wrote.log} git=${r.committed}${r.skipped ? " (已有记录)" : ""}`);
+      return 0;
+    }
+    if (sub === "split") {
+      /* 完美世界事件 ⇒ 世界线分裂: 两个主世界分支 world_(limit|atomic)_(YYYY_M_D)_(hash)
+       * 必须 CI 确认(RKEY_WORLDEVENT_CI=1); 此时插入 E0/E10 之一继续;
+       * 插入当代 3/4 把 K0/K1/K2/K3 ⇒ 硬分叉, 必然产生恰好一个 ATOMIC 世界。 */
+      const ref = a[2] || "HEAD";
+      const kBits = a[3] !== undefined ? parseInt(a[3], 10) : jsWorldEvent.kBitsDefault;
+      const reserve = "noreserve" !== a[4];
+      const built = jsWorldEvent.FromNonce(resolve(ref), kBits, reserve);
+      ReportSplit(jsWorldEvent.Split(built));
+      return 0;
+    }
+    if (sub === "sacrifice") {
+      /* 献祭 3/4 把 K0/K1/K2/K3(必须 CI 确认): 被插入的 3 把失效, 剩下的那把只读
+       * ⇒ 对之后所有修改只能读, **不能由 K${X} 签名提交代码**; 同时是硬分叉 ⇒ 恰好一个 ATOMIC。 */
+      const keys = a.slice(2).filter((x) => /^K[0-3]$/i.test(String(x)));
+      const built = jsWorldEvent.FromNonce(resolve((a[6] || "HEAD")), jsWorldEvent.kBitsDefault, true);
+      const sp = jsWorldEvent.Split(built); /* 完美事件的世界线(若尚未分裂) */
+      const sc = jsWorldEvent.Sacrifice(keys, {
+        built: built,
+        event: { nonce: built.nonce, magic: built.magic, kBits: built.kBits, perfect: built.perfect },
+        worlds: [sp.names.limit, sp.names.atomic],
+      });
+      console.log(`献祭: 插入=${sc.inserted.join("+") || "无"} CI=${sc.ci} dryRun=${sc.dryRun}`);
+      console.log(`献祭: 规则 = ${sc.rule || sc.refused || "-"}`);
+      console.log(`献祭: ${sc.burned.length} 把失效 ⇒ [${sc.burned.join(",")}]; 剩下只读 ⇒ ${sc.readonly}` +
+                  `(可读=${true}, 可签名提交=${false})`);
+      console.log(`献祭: 份额 ${sc.fork.shares || "-"}(${sc.fork.covered}/6) ⇒ 硬分叉=${sc.fork.hard}, ATOMIC=${sc.fork.atomic}`);
+      if (sc.written) console.log(`献祭: 已写入 ${sc.written}`);
+      return sc.refused ? 1 : 0;
+    }
+    if (sub === "cansign") {
+      /* K 签名守卫: cansign <K0..K3> ⇒ 0=可签名, 1=禁止(已献祭/只读) */
+      const key = String(a[2] || "").toUpperCase();
+      const r = jsWorldEvent.CanSign(key);
+      console.log(`cansign ${r.key}: canSign=${r.canSign} canRead=${r.canRead} —— ${r.reason}`);
+      if (!r.canSign) console.log(`cansign ${r.key}: 禁止由 ${r.key} 签名提交代码(献祭后果, 见 mkey/SACRIFICE-K.json)`);
+      return r.canSign ? 0 : 1;
+    }
+    if (sub === "grind") {
+      const max = a[2] !== undefined ? parseInt(a[2], 10) : 500000;
+      const kBits = a[3] !== undefined ? parseInt(a[3], 10) : 18;
+      const reserve = "reserve" === a[4];
+      const base = resolve("HEAD");
+      let i = 0;
+      let m = null;
+      for (; i < max; ++i) {
+        m = Make(`${base}#${i}`, kBits, reserve);
+        if (42 === m.magic) break;
+      }
+      if (!m || 42 !== m.magic) throw Error(`grind: ${max} 次内未找到 Magic==42 的 nonce`);
+      console.log(`grind(gamble): 第 ${i + 1} 次命中 Magic==42 (期望 ~${1 << kBits} 次, kBits=${kBits})`);
+      await Show(m);
+      return 0;
+    }
+    const ref = sub || "HEAD";
+    const hash = resolve(ref);
+    const kBits = a[2] !== undefined ? parseInt(a[2], 10) : 18;
+    const reserve = "reserve" === a[3];
+    console.log(`nonce 来源: ${ref} => ${hash} (kBits=${kBits}, reserve=${reserve})`);
+    console.log(`  ${brief(hash)}`);
+    await Show(Make(hash, kBits, reserve));
+    return 0;
+  }
+  if (cmd === "lostukey") {
+    /*! E0 遗失 / 拾到者签署仪式: E0(mkey/E0-00000000-f66a164b4c024842)大概率在**敦煌**遗失;
+     *! 拾到 ukey 者需对下列 **UTF-8** 文本做 Ed25519(SHA512(SHA512(Buffer.from(text)))) 并在 **git log**
+     *! 中展示; **每种类型的第一次**暂时创建一个 **ATOMIC**。文本表见 jsWorldEvent.FINDER_TEXTS。
+     *! 子命令: lostukey sign(签名+记录+建 ATOMIC+marker 提交) / verify(CI 用, 逐条验签) / show(只打印) */
+    const sub = argv[1] || "show";
+    const recRel = "mkey/E0-00000000-f66a164b4c024842/FINDER-SIGNATURES.json";
+    const recPath = path.join(ROOT, recRel);
+    const cipher = globalThis.jsCipher;
+    if (!cipher) throw Error("lostukey: jsCipher 未初始化");
+    const cp = require("child_process");
+
+    if (sub === "sign") {
+      const rec = jsWorldEvent.FinderSign(cipher, { seed: process.env.RKEY_FINDER_SEED });
+      const at = jsWorldEvent.FinderAtomic(rec, { start: "HEAD" });
+      rec.atomic = at.names;
+      rec.atomicCreated = at.created;
+      rec.at = new Date().toISOString();
+      rec.rule = "Ed25519(SHA512(SHA512(utf8(text)))); 每种类型第一次暂时创建一个 ATOMIC";
+      fs.mkdirSync(path.dirname(recPath), { recursive: true });
+      fs.writeFileSync(recPath, JSON.stringify(rec, null, 2) + "\n");
+      const lines = rec.items.map((x) => `${x.type} ${x.text}  sig=${x.signature}  digest=${x.digest}`);
+      for (const l of lines) console.log(`lostukey ${l}`);
+      console.log(`lostukey pubkey=${rec.pubkey}(stand-in; RKEY_FINDER_SEED 可换成真拾到者密钥) 全部自检=${rec.ok}`);
+      console.log(`lostukey ATOMIC(每类型第一次, 暂时)=${rec.atomic.join(", ")}`);
+      console.log(`lostukey 记录已写入 ${recRel}`);
+      const body = [
+        `E0-LOST(敦煌): 拾到者签署 ${rec.items.length} 条 — Ed25519(SHA512(SHA512(utf8)))`,
+        "",
+        ...rec.items.map((x) => `${x.type}: ${x.text}  sig=${x.signature}`),
+        "",
+        `pubkey(stand-in)=${rec.pubkey}`,
+        `ATOMIC(每类型第一次, 暂时)=${rec.atomic.join(", ")}`,
+        `record=${recRel}`,
+      ].join("\n");
+      try {
+        cp.execFileSync("git", ["add", recRel], { cwd: ROOT, stdio: "ignore" });
+        cp.execFileSync("git", ["commit", "--no-gpg-sign", "-m", body], { cwd: ROOT, stdio: "ignore" });
+        console.log("lostukey 已写入 git log(见 `git log -1`)");
+      } catch (e) {
+        console.log(`lostukey 未能写入 git log: ${String((e && e.message) || e)}`);
+      }
+      return rec.ok ? 0 : 1;
+    }
+    if (sub === "verify" || sub === "show") {
+      if (!fs.existsSync(recPath)) throw Error(`lostukey: 缺少记录 ${recRel}(先跑 lostukey sign)`);
+      const rec = JSON.parse(fs.readFileSync(recPath, "utf8"));
+      for (const it of rec.items) {
+        console.log(`lostukey ${it.type} | ${it.text} | utf8=${it.utf8} | digest=${it.digest} | sig=${it.signature} | verify=${it.verify}`);
+      }
+      if (sub === "show") return 0;
+      const v = jsWorldEvent.FinderVerify(cipher, rec);
+      const at = jsWorldEvent.FinderAtomic(rec, { dryRun: true });
+      console.log(`lostukey verify: pubkey=${v.pubkey} 匹配=${v.pubkeyMatch} 逐条失败=${v.bad.length}` +
+                  ` ⇒ ${v.ok ? "OK(全部验签通过)" : "FAIL"}`);
+      console.log(`lostukey verify: 每类型第一次的 ATOMIC(暂时)=${at.names.join(", ")}`);
+      return v.ok ? 0 : 1;
+    }
+    throw Error(`lostukey: 未知子命令 ${sub}(用 sign|verify|show)`);
+  }
+  if (cmd === "succession") {
+    /*! 下一任 K 的编号裁定: 以每把 ukey 的 dongle_info 为 nonce 做 **Infinity roll**(非完美 ⇒ Perfect()=Infinity),
+     *! 综合 digest 落在 [0, N!) 上选出一种排列 ⇒ 指派 K0..K(N-1); **N! 种状态全部列出**(N=4 ⇒ 24 种)便于确认。
+     *! 用法: succession [hid...] [--absent=<名字>] [--write]
+     *!   - 缺省自动枚举真机(带重试); --absent 追加一个"不参与枚举"的身份(例如 K4: 下一世界的 MASTER.SECRET 载体);
+     *!   - --write ⇒ 写入 mkey/SUCCESSION-K.json(否则只打印)。 */
+    const absent = argv.filter((x) => /^--absent=/.test(x)).map((x) => x.slice(9));
+    /* --nonce=<hid>=<40B hex>: 显式指定身份(用于已拔除/未枚举的 ukey, 例如只留有 HID 记录的 K') */
+    const given = argv.filter((x) => /^--nonce=/.test(x)).map((x) => {
+      const s = x.slice(8);
+      const i = s.indexOf("=");
+      return { id: s.slice(0, i), nonce: s.slice(i + 1) };
+    });
+    const slotsArg = argv.find((x) => /^--slots=/.test(x));
+    const slots = slotsArg ? slotsArg.slice(8).split(",").map((s) => s.trim()).filter(Boolean) : null;
+    const write = argv.includes("--write");
+    if ("verify" === argv[1]) {
+      /* 校验 mkey/SUCCESSION-K.json: 重算 Infinity roll % 24、检查 N! 状态齐备且唯一、排列一致 */
+      const recRel = "mkey/SUCCESSION-K.json";
+      const rec = JSON.parse(fs.readFileSync(path.join(ROOT, recRel), "utf8"));
+      const v = jsWorldEvent.SuccessionVerify(rec);
+      console.log(`succession verify: 状态数=${v.total} rank匹配=${v.rankMatch} digest匹配=${v.digestMatch}` +
+                  ` 齐备=${v.statesComplete} 唯一=${v.statesUnique}` +
+                  ` Infinity=${v.infinities} 排列匹配=${v.orderMatch} ⇒ ${v.ok ? "OK" : "FAIL"}`);
+      for (const d of rec.designate || []) console.log(`succession verify: ${d.K} = ${d.id}`);
+      return v.ok ? 0 : 1;
+    }
+    const hids = argv.slice(1).filter((x) => /^[0-9a-f]{8}-[0-9a-f]{12}$/i.test(x));
+    let list = [];
+    for (let i = 0; !given.length && i < 12; ++i) {
+      const l = await List();
+      if (l.length > list.length) list = l;
+      if (hids.length && hids.every((h) => l.some((d) => d.id === h))) break;
+      if (!hids.length && list.length >= 3) break;
+    }
+    const use = hids.length ? list.filter((d) => hids.includes(d.id)) : list;
+    const identities = given.length
+      ? given
+      : use.map((d) => ({ id: d.id, nonce: Buffer.from(d.info, "base64").toString("hex") }));
+    if (!given.length) for (const a of absent) identities.push({ id: a, nonce: `ABSENT:${a}` });
+    const r = jsWorldEvent.Succession(identities);
+    console.log(`succession: 身份数 N=${r.N} ⇒ 状态数 P(N,N)=${r.total}(roll 需为 Infinity)`);
+    for (const it of r.items) {
+      console.log(`succession: ${it.absent ? "(未枚举)" : it.id} nonce=${it.nonce} magic=${it.magic} roll=${it.roll}`);
+    }
+    console.log(`succession: 综合 digest=${r.digest}`);
+    console.log(`succession: rank=${r.rank}/${r.total} ⇒ 顺序=${r.chosen.order.join(",")} 状态指纹=${r.chosen.state.slice(0, 32)}…`);
+    for (const d of r.designate) {
+      const name = slots && slots[d.K.slice(1)] !== undefined ? slots[d.K.slice(1)] : d.K;
+      console.log(`succession: ${name} = ${d.absent ? "(未枚举)" : d.id}`);
+    }
+    console.log(`succession: 全部 Infinity roll = ${r.allInfinity}`);
+    if (write) {
+      const recRel = "mkey/SUCCESSION-K.json";
+      const rec = { at: new Date().toISOString(), rule: "Infinity roll + rank=digest%N!; N! 种状态确认编号", ...r };
+      fs.writeFileSync(path.join(ROOT, recRel), JSON.stringify(rec, null, 2) + "\n");
+      console.log(`succession: 已写入 ${recRel}(${r.total} 种状态)`);
+    }
+    return 0;
+  }
+  if (cmd === "heartbeat") {
+    /*! 心跳/时间基准测量: 反复采样设备的 realtime/expiretime/tickcount(真机 realtime 走 SDK 的设备调用,
+     *! tick 在宿主实现里是宿主计数), 并以**本机时间**为参考统计误差与准确性:
+     *!   err_i = 设备 realtime*1000 - 宿主中值时刻(ms); 统计 mean/min/max/σ、RTT 抖动、漂移 ppm。
+     *! 注意 realtime 分辨率是 **1 秒** ⇒ 单次量化误差 ±500ms。
+     *! 用法: heartbeat <hid> [样本数=6] [间隔ms=1000] */
+    const hid = argv[1] || (await firstDevice());
+    const n = argv[2] !== undefined ? parseInt(argv[2], 10) : 6;
+    const gap = argv[3] !== undefined ? parseInt(argv[3], 10) : 1000;
+    const samples = [];
+    for (let i = 0; i < n; ++i) {
+      const t0 = Date.now();
+      const r = await spawnExe(["--clock", hid, "-"], null, undefined, { RLANG_PRECISE_CLOCK: "1" });
+      const t1 = Date.now();
+      if (r instanceof Error) throw r;
+      const line = (r.stdout.split(/\r?\n/).find((l) => /^clock /.test(l)) || "").trim();
+      const g = (k) => {
+        const m = line.match(new RegExp(`${k}=(-?\\d+)`));
+        return m ? Number(m[1]) : null;
+      };
+      const rt = g("rt");
+      const midNs = g("mid");
+      const monoNs = g("mono");
+      const mid = (t0 + t1) / 2;
+      /* 同进程参考: mid(单调时钟 ns, 自启动) 只能与 rt 的增量比较; 绝对偏差另用宿主墙钟(Date.now) */
+      samples.push({
+        i: i,
+        rt: rt,
+        exp: g("exp"),
+        tick: g("tick"),
+        host: g("hosttick"),
+        mid: null !== midNs ? midNs : null,
+        precise: g("precise"),
+        fifo: g("fifo"),
+        rtt: t1 - t0,
+        errCross: rt * 1000 - mid,
+        rel: 0,
+      });
+      if (i + 1 < n) await new Promise((res) => setTimeout(res, gap));
+    }
+    if (null !== samples[0].mid) {
+      const base = samples[0].rt * 1000 - samples[0].mid / 1e6;
+      for (const s of samples) s.rel = s.rt * 1000 - s.mid / 1e6 - base;
+    }
+    for (const s of samples) {
+      console.log(`heartbeat #${String(s.i).padStart(2)}: rt=${s.rt} tick=${s.tick} exp=${s.exp} rtt=${s.rtt}ms` +
+                  ` precise=${s.precise} fifo=${s.fifo} 相对误差(同进程)=${s.rel.toFixed(1)}ms 绝对偏差(跨进程)=${s.errCross.toFixed(1)}ms`);
+    }
+    const rels = samples.map((s) => s.rel);
+    const errsCross = samples.map((s) => s.errCross);
+    const stat = (a) => {
+      const mean = a.reduce((x, y) => x + y, 0) / a.length;
+      return { mean: mean, sd: Math.sqrt(a.reduce((x, y) => x + (y - mean) ** 2, 0) / a.length), min: Math.min(...a), max: Math.max(...a) };
+    };
+    const st = stat(rels);
+    const stc = stat(errsCross);
+    const rtts = samples.map((s) => s.rtt);
+    /* 速率: 同进程单调时钟(mono)是自启动的 ⇒ 只能与 rt 的**增量**比; 绝对偏差用跨进程的宿主墙钟 */
+    const first = samples[0];
+    const last = samples[samples.length - 1];
+    const dDevMs = last.rt * 1000 - first.rt * 1000;
+    const dHostMs = null !== last.mid ? (last.mid - first.mid) / 1e6 : 0;
+    const ratePpm = dHostMs > 0 ? ((dDevMs - dHostMs) / dHostMs) * 1e6 : null;
+    console.log(`heartbeat: 窗口 dt(设备)=${(dDevMs / 1000).toFixed(0)}s dt(宿主单调)=${(dHostMs / 1000).toFixed(3)}s` +
+                ` 样本=${n} 间隔=${gap}ms precise=${first.precise} fifo=${first.fifo}`);
+    console.log(`heartbeat: 速率误差 ≈ ${ratePpm === null ? "n/a" : ratePpm.toFixed(0)} ppm(设备 rt 1s 分辨率 ⇒ 单点量化 ±500ms)`);
+    console.log(`heartbeat: 相对误差(同进程) σ=${st.sd.toFixed(1)}ms [${st.min.toFixed(1)}, ${st.max.toFixed(1)}] 幅度≈锯齿`,);
+    console.log(`heartbeat: 绝对偏差(设备 RTC - 宿主墙钟) mean=${stc.mean.toFixed(0)}ms σ=${stc.sd.toFixed(1)}ms [${stc.min.toFixed(0)}, ${stc.max.toFixed(0)}]`);
+    console.log(`heartbeat: RTT min=${Math.min(...rtts)}ms max=${Math.max(...rtts)}ms; tick==hosttick ⇒ 宿主计数(非设备心跳)`);
+    return 0;
+  }
   if (cmd === "list") {
     const list = await List();
     console.log(JSON.stringify(list, null, 2));
@@ -2354,7 +3056,7 @@ async function main() {
     return r.verify && !tamper ? 0 : 1;
   }
   console.log(
-    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|mkey [kStart]|skey [issuerIdx] [clientIdx]|badmin [hid] [burn]|badminburn [hid]|emuadmin [idx]|realadmin|reallimit <file> [hid] [trusteeIdx]|collect <out> [count]|nistreport <bin> [html]`,
+    `usage: __Testing_dongle.cjs list|dashboard|run <file> [hid]|suite <dir> [hid]|emu|diag-rsa|diag-gen|jsemu <file> [idx]|jsuite|jscheck [idx]|entrust <targetIdx> <trusteeIdx...>|adminrun <target> <trustee> <file>|randtest [count] [html]|sm2self [idx]|xchg <aIdx> <bIdx>|mkey [kStart]|skey [issuerIdx] [clientIdx]|badmin [hid] [burn]|badminburn [hid]|emuadmin [idx]|realadmin|reallimit <file> [hid] [trusteeIdx]|realinit <hid> [catHex]|realinfo [hid]|dashdump <hid> <out>|realnotice <hid> <in4k>|listfile <type> [hid]|worldevent [<commitish>] [kBits] [reserve]|worldevent status|worldevent audit [kBits] [reserve]|worldevent record [<commitish>] [kBits] [noreserve]|worldevent sweep|worldevent split [<commitish>] [kBits] [reserve]|worldevent grind [max] [kBits] [reserve]|roll [kBits] [reserve]|gamble [max] [kBits] [reserve]|soj [<commitish>] [kBits] [noreserve]|lostukey sign|verify|show|real2ukey <trusteeHid> <targetHid> <file>|collect <out> [count]|nistreport <bin> [html]`,
   );
   return 2;
 }

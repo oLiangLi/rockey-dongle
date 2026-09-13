@@ -1,0 +1,21 @@
+///
+/// Admin-only data file: USE only (idempotent - no CreateDataFile).
+///
+/// Signs m (dashboard [3200,3584)) with the 3072-bit CRT key stored in data file id=100.
+/// Expected to SUCCEED as an ADMIN frame and to be REFUSED as a NORMAL frame
+/// (ExRSACrtModExp rejects key_file < kUserFileID=1000 for non-admin sessions with -EACCES).
+///
+/// Run (admin, via admin-signed frame):
+///   node Web/Agent/Tests/__Testing_dongle.cjs real2ukey <trusteeHid> <targetHid> \
+///        Web/Agent/Tests/Tests/_RsaCrt3072AdminFileUse.dongle
+/// Run (normal frame - must fail):
+///   node Web/Agent/Tests/__Testing_dongle.cjs run Web/Agent/Tests/Tests/_RsaCrt3072AdminFileUse.dongle <hid>
+///
+/// Output: RsaSignature = m^d mod N at InOutBuf[384,768).
+///
+public 1024;
+
+@ 384 [384] : RsaSignature;
+
+ReadDataFile(0xFFFF, 3200, 0, 384);
+ExRSACrtModExp(100, 0, 0, 384, 3072);

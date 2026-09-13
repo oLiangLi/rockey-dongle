@@ -1,0 +1,9 @@
+///
+/// Dashboard probe: dump the first 16B of the injected key blob area [1024,1040) as a NORMAL frame.
+/// Expect the 'RSAK' magic (LE bytes 52 41 53 4b) when the test blob is present.
+///
+public 1024;
+
+@ 0 [16] : Probe;
+
+ReadDataFile(0xFFFF, 1024, 0, 16);

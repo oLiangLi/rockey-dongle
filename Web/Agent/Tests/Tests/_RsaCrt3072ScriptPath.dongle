@@ -1,0 +1,30 @@
+///
+/// Real-device SCRIPT-PATH test: RSA-3072 CRT private-key operation.
+///
+/// The full private key blob (n/e/d/p/q/dmp1/dmq1/iqmp, 2128B) and the message m are
+/// pre-injected into the dashboard by the host:
+///   __Testing__dongle__ -2 15 6 C00        (testing firmware; prints TASSL reference values)
+/// Then flash the production firmware (script VM) and run this script:
+///   WT_APP_DONGLE=<...>/RockeyTrust.bin __Testing__dongle__ -2 0
+///   RKEY_ADMIN=1 node Web/Agent/Tests/__Testing_dongle.cjs run Web/Agent/Tests/Tests/_RsaCrt3072ScriptPath.dongle
+///
+/// dashboard layout (see ai-doc/rsa3072-crt-2026-09-13.md):
+///   [1024, 3152) full private key blob (magic 'RSAK', bits=3072, flags=1)
+///   [3200, 3584) message m (little-endian, 384B)
+/// Output: RsaSignature = m^d mod N (little-endian 384B) at InOutBuf[640, 1024).
+///
+/// The device must have a world (WorldPublic at dashboard 7KB). If the host frame build fails
+/// with "publicEncrypt: no inverse", that ukey has no world: create one first with a bootstrap
+/// frame running Tests/Initialize.dongle (admin session; it RESETS that ukey's world and keys).
+/// Tested on the repo test ukey on 2026-09-13 (round trip 64.4 s, signature matches the TASSL
+/// reference printed by __Testing__dongle__ -0 15 6 C00).
+/// World switching (prebuilt bootstrap programs): BADMIN_BOOT=Bootstrap-INIT-0x10000.dongle.program
+/// for a Normal world, or the default Bootstrap-Admin-1000.dongle.program for an Admin world:
+///   node Web/Agent/Tests/__Testing_dongle.cjs badmin <hid>
+///
+public 1024;
+
+@ 640 [384] : RsaSignature;
+
+ReadDataFile(0xFFFF, 3200, 256, 384);
+ExRSACrtModExp(0xFFFF, 1024, 256, 640, 3072);

@@ -5,11 +5,16 @@
 
 #ifdef _WIN32
 #include <corecrt_io.h>
+#include <mmsystem.h>
+#include <windows.h>
+#pragma comment(lib, "winmm.lib")
 #elif !defined(__RockeyARM__)
 #include <errno.h>
+#include <sched.h>
 #include <signal.h>
 #include <sys/types.h>
 #include <sys/wait.h>
+#include <time.h>
 #include <unistd.h>
 #endif /* _WIN32 */
 
@@ -18,6 +23,58 @@
 rLANG_DECLARE_MACHINE
 
 namespace dongle {
+
+/*!
+ * 精密时钟 / 实时优先级(测量"心跳误差"用; 由 RLANG_PRECISE_CLOCK=1 开启):
+ *   - Windows: timeBeginPeriod(1) 打开 1ms 多媒体定时器分辨率(缺省粒度约 15.6ms),
+ *              REALTIME_PRIORITY_CLASS + THREAD_PRIORITY_TIME_CRITICAL 以系统最高优先级(FIFO 语义)执行;
+ *   - Linux/WSL: 尝试 sched_setscheduler(SCHED_FIFO, 99) —— 需 root/CAP_SYS_NICE, 失败则如实报告;
+ *   - 无论哪种平台都给出**单调时钟**(Windows=QPC, Linux=CLOCK_MONOTONIC)的纳秒读数,
+ *     这样设备时间读数与宿主参考落在**同一进程**内, 免掉跨进程启动抖动。
+ * 注意: Windows 时钟本身不精确(且受调度影响), 精测应在 RTOS/NONOS 或 Linux 侧进行。
+ */
+static bool s_PreciseClockTried = false;
+static bool s_PreciseClock = false;
+static bool s_Fifo = false;
+
+static void EnablePreciseClock() {
+  if (s_PreciseClockTried)
+    return;
+  s_PreciseClockTried = true;
+  const char* env = getenv("RLANG_PRECISE_CLOCK");
+  if (!env || 0 != strcmp(env, "1"))
+    return;
+#ifdef _WIN32
+  const MMRESULT mm = timeBeginPeriod(1);
+  s_PreciseClock = (TIMERR_NOERROR == mm); /* precise = 1ms 多媒体定时器是否生效 */
+  bool rt = SetPriorityClass(GetCurrentProcess(), REALTIME_PRIORITY_CLASS) &&
+            (REALTIME_PRIORITY_CLASS == GetPriorityClass(GetCurrentProcess()));
+  if (!rt)
+    rt = SetPriorityClass(GetCurrentProcess(), HIGH_PRIORITY_CLASS) &&
+         (HIGH_PRIORITY_CLASS == GetPriorityClass(GetCurrentProcess()));
+  const bool tp = (0 != SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_TIME_CRITICAL));
+  s_Fifo = rt && tp; /* fifo = 是否真的拿到实时/最高优先级(REALTIME 需提权, 否则退 HIGH) */
+#else
+  struct sched_param param;
+  memset(&param, 0, sizeof(param));
+  param.sched_priority = 99;
+  s_PreciseClock = (0 == sched_setscheduler(0, SCHED_FIFO, &param));
+  s_Fifo = s_PreciseClock && (SCHED_FIFO == sched_getscheduler(0));
+#endif
+}
+
+static long long MonoNs() {
+#ifdef _WIN32
+  LARGE_INTEGER f, c;
+  QueryPerformanceFrequency(&f);
+  QueryPerformanceCounter(&c);
+  return (long long)((double)c.QuadPart * 1e9 / (double)f.QuadPart);
+#else
+  struct timespec ts;
+  clock_gettime(CLOCK_MONOTONIC, &ts);
+  return (long long)ts.tv_sec * 1000000000LL + (long long)ts.tv_nsec;
+#endif
+}
 
 static constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SHELL");
 
@@ -484,6 +541,38 @@ int Utilities(int stdout_, const char* type, RockeyARM* dongle, bool adminMode, 
         rlLOGE(TAG, "listfile type %d error %d (len %d)", nFileType, result, dataLen);
       }
     }
+  } else if (0 == strncmp(type, "led", 3)) {
+    ///
+    /// 心跳可视化(人工观察): led|led:blink|led:on|led:off —— 缺省 blink。
+    /// ukey 的 LED 闪烁/常亮/熄灭是设备"活着"的最直接证据;也可用来对照"是否有心跳"。
+    ///
+    const char* led_mode = (':' == type[3]) ? (type + 4) : "blink";
+    const LED_STATE led_state = (0 == strcmp(led_mode, "on"))    ? LED_STATE::kOn
+                                : (0 == strcmp(led_mode, "off")) ? LED_STATE::kOff
+                                                                 : LED_STATE::kBlink;
+    result = dongle->SetLEDState(led_state);
+    rlLOGI(TAG, "dongle->SetLEDState(%s) return %d", led_mode, result);
+  } else if (0 == strcmp(type, "clock")) {
+    ///
+    /// 设备时间基准(心跳)+ 同进程高精度参考: 逐次采样, 用 mono(单调时钟 ns)算误差。
+    /// 真机 realtime 走 SDK 的设备调用; tick 在宿主实现里是宿主计数; exp=0xFFFFFFFF 表示未设到期。
+    /// 设 RLANG_PRECISE_CLOCK=1 打开 1ms 多媒体定时器 + 最高优先级(FIFO 语义), precise/fifo 会如实回报。
+    ///
+    EnablePreciseClock();
+    DWORD realtime = 0, expiretime = 0, ticks = 0;
+    const long long t_begin = MonoNs();
+    const int rc_real = dongle->GetRealTime(&realtime);
+    const int rc_expire = dongle->GetExpireTime(&expiretime);
+    const int rc_tick = dongle->GetTickCount(&ticks);
+    const long long t_end = MonoNs();
+    char clock_line[256];
+    const int clock_len = snprintf(clock_line, sizeof(clock_line),
+                                   "clock rt=%u exp=%u tick=%u hosttick=%lld mono=%lld mid=%lld precise=%d fifo=%d rc=%d/%d/%d\n",
+                                   (unsigned)realtime, (unsigned)expiretime, (unsigned)ticks,
+                                   (long long)rLANG_GetTickCount(), t_end, (t_begin + t_end) / 2,
+                                   s_PreciseClock ? 1 : 0, s_Fifo ? 1 : 0, rc_real, rc_expire, rc_tick);
+    if (clock_len != write(stdout_, clock_line, clock_len))
+      result = -EIO;
   } else if (0 == strcmp(type, "--reset")) {
     ///
     /// 内部使用, 一些之前的uKey没有正常的重置管理员密码为缺省值, 不要在后台中把接口暴露出去 ...

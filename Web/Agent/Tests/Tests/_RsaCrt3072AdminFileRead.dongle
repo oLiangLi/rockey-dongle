@@ -1,0 +1,15 @@
+///
+/// Admin-only data file: raw READ probe (independent of the RSA opcode gate).
+///
+/// Reads the first 1024B of data file id=100 directly. file id < kUserFileID=1000 was created with
+/// read permission = kAdministrator (2), so the device COS licence check must REFUSE this read for a
+/// NORMAL frame - i.e. the file ACL protects the CA key even if a future opcode forgets its own check.
+///
+/// Run (normal frame - must fail):
+///   node Web/Agent/Tests/__Testing_dongle.cjs run Web/Agent/Tests/Tests/_RsaCrt3072AdminFileRead.dongle <hid>
+///
+public 1024;
+
+@ 0 [1024] : FileHead;
+
+ReadDataFile(100, 0, 0, 1024);

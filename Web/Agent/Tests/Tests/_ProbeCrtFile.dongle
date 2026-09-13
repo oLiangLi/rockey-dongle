@@ -1,0 +1,11 @@
+///
+/// Isolated permission probe: call ExRSACrtModExp on the admin-only file (id=100) as the ONLY
+/// statement. m stays all-zero, out is at 384 (out != m as required), so:
+///   permission enforced   -> exit != 0 (-EACCES), no output
+///   permission NOT enforced -> key blob is read and 0^d mod n = 0 -> exit 0 + RsaSignature = 00..
+///
+public 1024;
+
+@ 384 [384] : RsaSignature;
+
+ExRSACrtModExp(100, 0, 0, 384, 3072);

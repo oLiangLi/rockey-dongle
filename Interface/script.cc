@@ -1,4 +1,5 @@
 #include "script.h"
+#include <Interface/modexp.h>
 
 rLANG_DECLARE_MACHINE
 
@@ -207,6 +208,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
   constexpr int kCyclesPubkey = 0x4000;
   constexpr int kCyclesPrikey = kCyclesPubkey << 4;
   constexpr int kCyclesGenkey = kCyclesPrikey << 2;
+  constexpr int kCyclesModExp = kCyclesPrikey << 2; /* 3072 位模幂/CRT: 单次调用成本高 */
 
   Dongle::SecretBuffer<256, uint8_t> buffer;
   struct {
@@ -422,6 +424,112 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
         if (value >= 0) {
           memcpy(iobuf, buffer, szbuf);
           value = static_cast<int>(szbuf);
+        }
+      }
+    }
+  } else if (op == OpCode::kExRSAModExp) {
+    /* 软件 RSA-3072 模幂: N 由数据文件给出(常驻量), 底数/指数/结果在 VM 数据区(小端)。
+     * 结果一般原地覆盖底数(mAddr == outAddr): 3072 位时 m 与指数已占满 768B 数据区。 */
+    cycles_ -= kCyclesModExp;
+
+    if (argc != 6) {
+      zero_ = SIGILL;
+    } else {
+      const int n_file = argv[0];
+      const int32_t n_offset = argv[1];
+      const int32_t bits = argv[5];
+      const int k = bits / 32;
+
+      /*! 注: VM 只在 zero_ != 0 时中止脚本, 仅返回负 value 会让调用方误以为"成功但结果全 0",
+       *! 因此这里的每个错误分支都必须同时置 zero_(与原 OpFuncDataFile 的 -EACCES 约定一致)。 */
+      if (bits < RsaModexp::kMinWords * 32 || bits > RsaModexp::kMaxBits || (bits % 32) != 0) {
+        value = zero_ = -EINVAL;
+      } else if (n_offset < 0 || (n_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
+        value = zero_ = -EACCES;
+      } else if (0 != (argv[2] & 3) || 0 != (argv[3] & 3) || 0 != (argv[4] & 3)) {
+        zero_ = SIGSEGV; /* 大数按 32 位 limb 直接寻址, 要求 4 字节对齐(与 LoadMM/StoreMM 同规) */
+      } else {
+        const int32_t nbytes = k * 4;
+        RsaModexp::limb_t* m = static_cast<RsaModexp::limb_t*>(OpCheckMM(argv[2], nbytes));
+        RsaModexp::limb_t* out = static_cast<RsaModexp::limb_t*>(OpCheckMM(argv[3], nbytes));
+        const uint8_t* ex = static_cast<const uint8_t*>(OpCheckMM(argv[4], nbytes));
+
+        if (m && out && ex) {
+          /* 模数放栈上(3072 位 = 384B); 工作区(t+acc 共 776B)复用 VM 的 buffer_(ExtendBuf) */
+          uint8_t modulus[RsaModexp::kMaxBits / 8];
+          auto& ws = *reinterpret_cast<RsaModexp::Workspace*>(buffer_);
+
+          if (0 != dongle_->ReadDataFile(n_file, static_cast<size_t>(n_offset), modulus, static_cast<size_t>(nbytes))) {
+            value = zero_ = -EIO;
+          } else {
+            RsaModexp modexp;
+            modexp.SetDongle(dongle_);
+            value = modexp.ModExp(out, m, ex, nbytes, reinterpret_cast<const RsaModexp::limb_t*>(modulus), k, ws);
+            if (value < 0)
+              zero_ = value; /* 算法失败(如模数非法)必须中止, 不能留下全 0 结果 */
+          }
+        }
+      }
+    }
+  } else if (op == OpCode::kExRSACrtModExp) {
+    /* CRT 私钥运算: 完整私钥 blob 在数据文件里, 底数/结果在 VM 数据区。
+     * 工作区(968B)复用 buffer_(ExtendBuf); out 兼作 p*q 校验缓冲 ⇒ 必须与 m 分开。 */
+    cycles_ -= kCyclesModExp;
+
+    if (argc != 5) {
+      zero_ = SIGILL;
+    } else {
+      const int key_file = argv[0];
+      const int32_t key_offset = argv[1];
+      const int32_t bits = argv[4];
+
+      if (bits < RsaModexp::kCrtMinBits || bits > RsaModexp::kMaxBits || (bits % 64) != 0) {
+        value = zero_ = -EINVAL;
+      } else if (key_offset < 0 || (key_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
+        value = zero_ = -EACCES; /* 拒绝私钥文件访问必须中止脚本(否则调用方看到 exit 0 + 全 0 输出) */
+      } else if (0 != (argv[2] & 3) || 0 != (argv[3] & 3)) {
+        zero_ = SIGSEGV;
+      } else {
+        const int32_t nbytes = bits / 8;
+        const RsaModexp::limb_t* m = static_cast<const RsaModexp::limb_t*>(OpCheckMM(argv[2], nbytes));
+        RsaModexp::limb_t* out = static_cast<RsaModexp::limb_t*>(OpCheckMM(argv[3], nbytes));
+
+        if (m && out) {
+          auto& ws = *reinterpret_cast<RsaModexp::CrtWorkspace*>(buffer_);
+          RsaModexp modexp;
+          modexp.SetDongle(dongle_);
+          value = modexp.CrtSignFile(*dongle_, key_file, static_cast<uint32_t>(key_offset), m, out, bits, ws);
+          if (value < 0)
+            zero_ = value; /* blob 非法/算法失败: 中止并让 host 看到错误码 */
+        }
+      }
+    }
+  } else if (op == OpCode::kExRSAKeyCheck) {
+    /* 私钥 blob 校验: 不碰底数/结果, 只借用脚本给的 scratch(2*halfWords limb = bits/8 字节) */
+    cycles_ -= kCyclesPubkey;
+
+    if (argc != 4) {
+      zero_ = SIGILL;
+    } else {
+      const int key_file = argv[0];
+      const int32_t key_offset = argv[1];
+      const int32_t bits = argv[3];
+
+      if (bits < RsaModexp::kCrtMinBits || bits > RsaModexp::kMaxBits || (bits % 64) != 0) {
+        value = zero_ = -EINVAL;
+      } else if (key_offset < 0 || (key_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
+        value = zero_ = -EACCES;
+      } else if (0 != (argv[2] & 3)) {
+        zero_ = SIGSEGV;
+      } else {
+        RsaModexp::limb_t* scratch = static_cast<RsaModexp::limb_t*>(OpCheckMM(argv[2], bits / 8));
+        if (scratch) {
+          auto& ws = *reinterpret_cast<RsaModexp::CrtWorkspace*>(buffer_);
+          RsaModexp modexp;
+          modexp.SetDongle(dongle_);
+          value = modexp.KeyCheckFile(*dongle_, key_file, static_cast<uint32_t>(key_offset), bits, ws, scratch);
+          if (value < 0)
+            zero_ = value;
         }
       }
     }

@@ -43,6 +43,14 @@
 2. 由 `MASTER.SECRET`(64B,`SHA512(六边共享 A..F 拼接 192B)`)与 nonce 派生对称密钥:
    `K = KDF(MASTER.SECRET, nonce, label="RSA-ROOT-CA-SEED")`(建议 SM3/ SHA 系列 HKDF-Expand,
    输出 32B,用于 AEAD);
+   ⚠️ **若用设备原语 `ComputeSecretBytes` 实现, 其完整原型是 `KDF(MASTER.SECRET, nonce, kType)`,
+   本方案必须取 `kType != 0`**(2026-09-13 用户约定 + `Interface/master.cc:287-302` 实现):
+   - `kType == 0`:派生时混入 **`LocalChaos` 与**本机 `GetDongleInfo` ⇒ 结果**只在本 ukey 有效**,
+     共享 MASTER.SECRET 的其他 ukey **也复现不出相同结果**;
+   - `kType != 0`:只用世界级常量(`rLANG_WORLD_MAGIC`/`ATOMC`/`COSMO`,且 `type_` 参与哈希)
+     ⇒ 共享 MASTER.SECRET 的所有 ukey **结果一致** —— 这正是"任何持有 MASTER.SECRET 的设备都能复现"
+     所要求的语义;
+   (自定义 HKDF 亦须遵守同一原则: 输入里**不得**混入任何本机私有量。)
 3. 用 AEAD(建议 **ChaCha20-Poly1305** 或 SM4-GCM)加密 256B 种子(plaintext =
    `seed_p || seed_q`,AAD 绑定版本/用途标签/设备类别),得到 `ciphertext||tag`;
 4. 把 `{ 头部(版本/长度/标志), nonce(64B), ciphertext||tag }` **张贴到 dashboard[5K, 6K)**

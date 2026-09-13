@@ -1,0 +1,36 @@
+///
+/// Admin-only data file: CREATE + WRITE + use.
+///
+/// Proves the product shape "CA private key lives in an ADMIN-ONLY data file (id < kUserFileID=1000)".
+/// Must be executed as an ADMIN frame (admin-signed script), because:
+///   CreateDataFile(id<1000)  -> VM_t::OpFuncDataFile sets -EACCES unless valid_permission_ == kAdministrator
+///   WriteDataFile (id<1000)  -> same gate
+/// Idempotency: CreateDataFile fails if the file already exists, so run
+///   _RsaCrt3072AdminFileUse.dongle  for repeat/later runs.
+///
+/// Prereq: dashboard holds the 3072-bit private key blob at [1024,3152) and m at [3200,3584)
+///         (injected by `__Testing__dongle__ -2 0 21 6 C00` with the testing firmware).
+/// Run:    node Web/Agent/Tests/__Testing_dongle.cjs real2ukey <trusteeHid> <targetHid> \
+///             Web/Agent/Tests/Tests/_RsaCrt3072AdminFileCreate.dongle
+///
+/// Output: RsaSignature = m^d mod N (little-endian 384B) at InOutBuf[384,768).
+///
+public 1024;
+
+@ 384 [384] : RsaSignature;
+
+/// 1) create the admin-only data file: id=100 (< 1000), 2128B, read/write permission = 2 (kAdministrator)
+CreateDataFile(100, 2128, 2, 2);
+
+/// 2) copy the 2128B key blob from the dashboard [1024,3152) into the file in 3 chunks
+///    (the VM data area is only 1024B wide, so [0,1024) is reused as the staging buffer)
+ReadDataFile(0xFFFF, 1024, 0, 1024);
+WriteDataFile(100, 0, 0, 1024);
+ReadDataFile(0xFFFF, 2048, 0, 1024);
+WriteDataFile(100, 1024, 0, 1024);
+ReadDataFile(0xFFFF, 3072, 0, 80);
+WriteDataFile(100, 2048, 0, 80);
+
+/// 3) read m from the dashboard and sign it with the key taken FROM THE ADMIN FILE
+ReadDataFile(0xFFFF, 3200, 0, 384);
+ExRSACrtModExp(100, 0, 0, 384, 3072);

@@ -128,6 +128,7 @@ wasm:
 ##
 jsWrapper:
 	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/script/opcode.cjs
+	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/script/commitHash.cjs
 ifeq ("$(R)","1")
 	cd $(wORLD_ROOT) && npm run release
 else

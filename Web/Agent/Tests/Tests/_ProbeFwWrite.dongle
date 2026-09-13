@@ -1,0 +1,14 @@
+///
+/// Permission discriminator: WriteDataFile on the FACTORY data file (0xFFFF) is admin-gated by
+/// ORIGINAL firmware code (Interface/script.cc: WriteDataFile requires kAdministrator for
+/// id < kUserFileID OR id == kFactoryDataFileId). Writing to dashboard[0,16) is the anonymous
+/// user area, so this is safe.
+///   exit 0 + Probe=33333333 -> the frame session HAD kAdministrator
+///   exit != 0               -> the frame session was NORMAL/ANONYMOUS (gate held)
+///
+public 1024;
+
+@ 0 [4] : Probe;
+
+WriteDataFile(0xFFFF, 0, 256, 16);
+StoreI32(0, 0x33333333);

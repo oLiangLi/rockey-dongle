@@ -1,4 +1,5 @@
 #include <Interface/dongle.h>
+#include <Interface/modexp.h>
 #include <Interface/mr.h>
 #include <Interface/x509.h>
 #include <base/base.h>
@@ -57,7 +58,11 @@ enum class kTestingIndex : int {
 
   X509Tests,
 
-  PrimeMRTests
+  PrimeMRTests,
+
+  RsaModexpTests,
+
+  RsaCrtTests
 
 };
 
@@ -2122,9 +2127,14 @@ static int VerifyRsaPrimePair(const uint8_t* pbuf, const uint8_t* qbuf, int bits
   return ok;
 }
 
-/*! 小端字节序 hex 直出(与设备 dashboard 存储顺序一致, 便于外部工具复现同一对素数) */
+/*! 小端字节序 hex 直出(与设备 dashboard 存储顺序一致, 便于外部工具复现/核对);
+ *! 缓冲按 3072 位(=384B ⇒ 768 字符)取, n 超过 384 直接跳过(避免宿主栈保护 __fastfail)。 */
 static void LogLeHex(const char* tag, const char* what, const uint8_t* buf, int n) {
-  char line[2 * 192 + 1];
+  char line[2 * (RsaModexp::kMaxBits / 8) + 1];
+  if (n <= 0 || n > RsaModexp::kMaxBits / 8) {
+    rlLOGE(TAG, "%s %s: 长度 %d 超出日志缓冲", tag, what, n);
+    return;
+  }
   for (int i = 0; i < n; ++i)
     std::snprintf(&line[2 * i], 3, "%02x", buf[i]);
   line[2 * n] = '\0';
@@ -2400,6 +2410,762 @@ int Testing_PrimeMRTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   return result;
 }
 
+/* ------------------------------------------------------------------------- *
+ * RSA-3072 模幂(Interface/modexp.h)的设备内验证
+ *
+ * host 侧生成 3072 位密钥(N=p*q, e=65537, d=e^{-1} mod lcm(p-1,q-1)), 把 N/D/M/E
+ * 以小端字节注入 dashboard[1024, 2560), 由**设备一条指令**做 m^D mod N(可选再
+ * s^E mod N), 结果写回 dashboard[2560, 3328); host 用 TASSL 独立复核(素数、N=p*q
+ * 等由 host 自己保证, 这里验证的是设备端模幂的结果与耗时)。
+ * CLI: __Testing__dongle__ -2 14 <mode> <bits>
+ *   mode 1(缺省)= 设备内签名 + host 复核          mode 2 = 设备内签名 + 设备内验签
+ *   mode 4      = 仅 host 自测(同一份 RsaModexp 与 TASSL 对照, 不触发设备)
+ *   mode 5      = 仅读回 dashboard 事后复核(不触发设备)
+ *   bits: 1024/1536/2048/3072(缺省 3072), CLI 为 hex(3072 = C00)
+ * ------------------------------------------------------------------------- */
+#if !defined(__EMULATOR__)
+constexpr uint32_t kModExpNOffset = 1024; /* 模数 N(小端 bits/8 字节) */
+constexpr uint32_t kModExpDOffset = 1408; /* 私钥指数 d */
+constexpr uint32_t kModExpMOffset = 1792; /* 底数 m */
+constexpr uint32_t kModExpEOffset = 2176; /* 公钥指数 e */
+constexpr uint32_t kModExpSOffset = 2560; /* 设备结果 s = m^d mod n */
+constexpr uint32_t kModExpM2Offset = 2944; /* 设备验签结果 m2 = s^e mod n */
+constexpr uint32_t kModExpStatusOffset = 3328;
+
+/**
+ *! 设备端执行状态: **必须走 dashboard** —— 设备 `Start` 在测试项返回后会把
+ *! `Context->result_[0]/[1]` 覆写成它自己的累加结果(含 NOTIMPL 等负值), host 读那两个
+ *! 字段会得到与本次模幂无关的值(曾因此误判 FAIL 数轮)。
+ */
+struct ModExpStatus {
+  uint32_t magic;      /* kModExpStatusMagic */
+  uint32_t bits;
+  uint32_t sign_rc;    /* ModExp 返回(0 = 成功) */
+  uint32_t verify_rc;  /* mode 2 的 m2 = s^e 返回; 其它模式 = 0xFFFFFFFF */
+  uint32_t heartbeats; /* KickWDG 次数 */
+  uint32_t reserved[3];
+};
+constexpr uint32_t kModExpStatusMagic = 0x4D585053; /* 'MXPS' */
+#endif /* !__EMULATOR__ */
+
+int Testing_RsaModexpTests(Dongle& rockey, void* Context, void* ExtendBuf) {
+  Context_t* ctx = static_cast<Context_t*>(Context);
+  [[maybe_unused]] const int mode = (int)(ctx->argv_[1] & 0xff) ? (int)(ctx->argv_[1] & 0xff) : 1;
+  [[maybe_unused]] int bits = (int)ctx->argv_[2];
+  if (bits != 1024 && bits != 1536 && bits != 2048 && bits != 3072)
+    bits = 3072;
+  [[maybe_unused]] const int k = bits / 32;
+  [[maybe_unused]] const size_t nbytes = static_cast<size_t>(k) * 4;
+
+#if defined(__RockeyARM__)
+  /* ---- 设备端: 全部素材从 dashboard 读, 结果写回 dashboard ---- */
+  RsaModexp::limb_t nbuf[RsaModexp::kMaxWords];
+  RsaModexp::limb_t exbuf[RsaModexp::kMaxWords];
+  RsaModexp::limb_t* base = reinterpret_cast<RsaModexp::limb_t*>(static_cast<uint8_t*>(Context) + 384);
+  auto& ws = *reinterpret_cast<RsaModexp::Workspace*>(ExtendBuf);
+  RsaModexp mx;
+  mx.SetDongle(&rockey);
+
+  ModExpStatus st{};
+  st.magic = kModExpStatusMagic;
+  st.bits = (uint32_t)bits;
+  st.sign_rc = 0xFFFFFFFFu;
+  st.verify_rc = 0xFFFFFFFFu;
+
+  rockey.SetLEDState(LED_STATE::kBlink);
+
+  if (0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpNOffset, nbuf, nbytes) ||
+      0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpMOffset, base, nbytes) ||
+      0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpDOffset, exbuf, nbytes)) {
+    st.sign_rc = 0xFFFFFFFEu; /* dashboard 读回失败 */
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpStatusOffset, &st, sizeof(st));
+    return 1;
+  }
+
+  st.sign_rc = (uint32_t)mx.ModExp(base, base, reinterpret_cast<const uint8_t*>(exbuf), (int)nbytes, nbuf, k, ws);
+  if (0 == (int32_t)st.sign_rc)
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpSOffset, base, nbytes);
+
+  if (mode == 2) {
+    /* 验签: base 已是 s; m2 = s^e mod n */
+    if (0 == rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpEOffset, exbuf, nbytes)) {
+      st.verify_rc = (uint32_t)mx.ModExp(base, base, reinterpret_cast<const uint8_t*>(exbuf), (int)nbytes, nbuf, k, ws);
+      if (0 == (int32_t)st.verify_rc)
+        std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpM2Offset, base, nbytes);
+    }
+  }
+
+  st.heartbeats = mx.Heartbeats();
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpStatusOffset, &st, sizeof(st));
+  rockey.SetLEDState(LED_STATE::kOff);
+  rlLOGI(TAG, "RsaModexp(dev): bits=%d sign_rc=%d verify_rc=%d beats=%u", bits, (int)st.sign_rc, (int)st.verify_rc,
+         (unsigned)st.heartbeats);
+  return 0;
+#elif defined(__EMULATOR__)
+  std::ignore = rockey;
+  std::ignore = ExtendBuf;
+  return 0;
+#else
+  std::ignore = ExtendBuf;
+
+  if (5 == mode) {
+    /*! 只读回: dashboard 上现有的 N/D/E/M/S(上一次设备运行留下的)全部用 TASSL 复核 ——
+     *! 不生成密钥、不写设备, 因此 host 中途被杀/复位后仍能事后判定设备结果。 */
+    RsaModexp::limb_t n5[RsaModexp::kMaxWords], d5[RsaModexp::kMaxWords], e5[RsaModexp::kMaxWords];
+    RsaModexp::limb_t m5[RsaModexp::kMaxWords], s5[RsaModexp::kMaxWords];
+    memset(n5, 0, sizeof(n5));
+    memset(d5, 0, sizeof(d5));
+    memset(e5, 0, sizeof(e5));
+    memset(m5, 0, sizeof(m5));
+    memset(s5, 0, sizeof(s5));
+    const int rn = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpNOffset, n5, nbytes);
+    const int rd = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpDOffset, d5, nbytes);
+    const int re = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpEOffset, e5, nbytes);
+    const int rm = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpMOffset, m5, nbytes);
+    const int rs = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpSOffset, s5, nbytes);
+    rlLOGI(TAG, "RsaModexp(mode5): dashboard 读回 rc N/D/E/M/S=%d/%d/%d/%d/%d (bits=%d)", rn, rd, re, rm, rs, bits);
+
+    BIGNUM* nB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(n5), (int)nbytes, nullptr);
+    BIGNUM* dB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(d5), (int)nbytes, nullptr);
+    BIGNUM* eB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(e5), (int)nbytes, nullptr);
+    BIGNUM* mB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m5), (int)nbytes, nullptr);
+    BIGNUM* sB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s5), (int)nbytes, nullptr);
+    BIGNUM* t1 = BN_new();
+    BIGNUM* t2 = BN_new();
+    BN_CTX* c5 = BN_CTX_new();
+    const int rc_sig = BN_mod_exp(t1, sB, eB, nB, c5); /* s^e */
+    const int rc_ref = BN_mod_exp(t2, mB, dB, nB, c5); /* m^d */
+    const int ok_sig = rc_sig && (0 == BN_cmp(t1, mB));
+    const int ok_ref = rc_ref && (0 == BN_cmp(t2, sB));
+    rlLOGI(TAG, "RsaModexp(mode5): bits N=%d d=%d e=%d; rc_mod_exp s^e=%d m^d=%d; s^e==m:%d m^d==s:%d", BN_num_bits(nB),
+           BN_num_bits(dB), BN_num_bits(eB), rc_sig, rc_ref, ok_sig, ok_ref);
+    rlLOGI(TAG, "RsaModexp(mode5): %s", (ok_sig && ok_ref) ? "PASS" : "FAIL");
+    BN_free(nB);
+    BN_free(dB);
+    BN_free(eB);
+    BN_free(mB);
+    BN_free(sB);
+    BN_free(t1);
+    BN_free(t2);
+    BN_CTX_free(c5);
+    exit((ok_sig && ok_ref) ? 0 : 1);
+  }
+  /* ---- host 端: 生成密钥 → 注入 dashboard → 设备执行 → TASSL 复核 ---- */
+  RsaModexp::limb_t n_le[RsaModexp::kMaxWords], d_le[RsaModexp::kMaxWords];
+  RsaModexp::limb_t e_le[RsaModexp::kMaxWords], m_le[RsaModexp::kMaxWords];
+
+  BIGNUM* p = BN_new();
+  BIGNUM* q = BN_new();
+  BN_generate_prime_ex(p, bits / 2, 0, nullptr, nullptr, nullptr);
+  BN_generate_prime_ex(q, bits / 2, 0, nullptr, nullptr, nullptr);
+  BN_CTX* bc = BN_CTX_new();
+  BIGNUM* N = BN_new();
+  BIGNUM* e = BN_new();
+  BIGNUM* d = BN_new();
+  BIGNUM* pm1 = BN_new();
+  BIGNUM* qm1 = BN_new();
+  BIGNUM* g = BN_new();
+  BIGNUM* lcm = BN_new();
+  BIGNUM* m = BN_new();
+  std::ignore = BN_mul(N, p, q, bc);
+  std::ignore = BN_set_word(e, 65537);
+  std::ignore = BN_sub_word(BN_copy(pm1, p), 1);
+  std::ignore = BN_sub_word(BN_copy(qm1, q), 1);
+  std::ignore = BN_gcd(g, pm1, qm1, bc);
+  std::ignore = BN_mul(lcm, pm1, qm1, bc);
+  std::ignore = BN_div(lcm, nullptr, lcm, g, bc);
+  const int inv_ok = (nullptr != BN_mod_inverse(d, e, lcm, bc));
+  if (!inv_ok)
+    rlLOGE(TAG, "RsaModexp(host): BN_mod_inverse(d) 失败");
+  std::ignore = BN_bn2lebinpad(N, reinterpret_cast<unsigned char*>(n_le), (int)nbytes);
+  std::ignore = BN_bn2lebinpad(d, reinterpret_cast<unsigned char*>(d_le), (int)nbytes);
+  memset(e_le, 0, sizeof(e_le));
+  reinterpret_cast<uint8_t*>(e_le)[0] = 0x01; /* 65537 = 0x010001, 小端 */
+  reinterpret_cast<uint8_t*>(e_le)[2] = 0x01;
+  RAND_bytes(reinterpret_cast<unsigned char*>(m_le), (int)nbytes);
+  std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m_le), (int)nbytes, m);
+  std::ignore = BN_mod(m, m, N, bc); /* m < n */
+  std::ignore = BN_bn2lebinpad(m, reinterpret_cast<unsigned char*>(m_le), (int)nbytes);
+  if (BN_is_zero(m))
+    std::ignore = BN_set_word(m, 2);
+
+  /* ---- host 自测: 同一份 RsaModexp 与 TASSL 对照 ---- */
+  RsaModexp mx;
+  RsaModexp::Workspace ws;
+  RsaModexp::limb_t s_le[RsaModexp::kMaxWords];
+  memcpy(s_le, m_le, nbytes);
+  const int64_t h0 = rLANG_GetTickCount();
+  const int hrc = mx.ModExp(s_le, m_le, reinterpret_cast<const uint8_t*>(d_le), (int)nbytes, n_le, k, ws);
+  const int64_t h1 = rLANG_GetTickCount();
+
+  BIGNUM* s_ref = BN_new();
+  BIGNUM* s_mine = BN_new();
+  std::ignore = BN_mod_exp(s_ref, m, d, N, bc);
+  std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s_le), (int)nbytes, s_mine);
+  int host_mx_ok = (0 == hrc) && (0 == BN_cmp(s_ref, s_mine));
+
+  /*! RSA 自洽性: (m^d)^e == m mod N —— 若 d 不是 e 在 λ(N) 下的逆, s^e==m 必然失败
+   *! (而 "设备 s == TASSL m^d" 仍会通过), 检查顺序上的这一坑必须显式验证。 */
+  {
+    BIGNUM* tmp = BN_new();
+    std::ignore = BN_mod_exp(tmp, s_ref, e, N, bc);
+    const int rsa_ok = (0 == BN_cmp(tmp, m));
+    rlLOGI(TAG, "RsaModexp(host): RSA 自洽 (m^d)^e==m:%d (d=%d bits)", rsa_ok, BN_num_bits(d));
+    host_mx_ok = host_mx_ok && rsa_ok;
+    BN_free(tmp);
+  }
+  rlLOGI(TAG, "RsaModexp(host): ModExp rc=%d in %lld ms, vs TASSL=%s", hrc, (long long)(h1 - h0),
+         host_mx_ok ? "MATCH" : "MISMATCH");
+
+  if (4 == mode) {
+    /* 诊断自检: ① 小指数恒等式(走同一条 ModExp 路径) ② ToMont/FromMont 往返 */
+    RsaModexp::limb_t tb[RsaModexp::kMaxWords], to[RsaModexp::kMaxWords];
+    memset(tb, 0, sizeof(tb));
+    memset(to, 0, sizeof(to));
+    uint8_t texp10[1] = {10};
+    uint8_t texp5[1] = {5};
+    tb[0] = 2;
+    const int trc1 = mx.ModExp(to, tb, texp10, 1, n_le, k, ws);
+    const uint32_t t2_10 = to[0];
+    memset(to, 0, sizeof(to));
+    tb[0] = 3;
+    const int trc2 = mx.ModExp(to, tb, texp5, 1, n_le, k, ws);
+    const uint32_t t3_5 = to[0];
+    memcpy(to, m_le, nbytes);
+    RsaModexp::ToMont(to, n_le, k);
+    RsaModexp::FromMont(to, n_le, k);
+    const int roundtrip = (0 == memcmp(to, m_le, nbytes));
+    rlLOGI(TAG, "RsaModexp(host): identity 2^10=%u(rc=%d) 3^5=%u(rc=%d) ToMont/FromMont roundtrip=%d", t2_10, trc1, t3_5,
+           trc2, roundtrip);
+    rlLOGI(TAG, "RsaModexp(host): key p=%d q=%d N=%d d=%d inv_ok=%d, s_le[0..7]=%02x%02x%02x%02x%02x%02x%02x%02x", BN_num_bits(p),
+           BN_num_bits(q), BN_num_bits(N), BN_num_bits(d), inv_ok, reinterpret_cast<const uint8_t*>(s_le)[0],
+           reinterpret_cast<const uint8_t*>(s_le)[1], reinterpret_cast<const uint8_t*>(s_le)[2],
+           reinterpret_cast<const uint8_t*>(s_le)[3], reinterpret_cast<const uint8_t*>(s_le)[4],
+           reinterpret_cast<const uint8_t*>(s_le)[5], reinterpret_cast<const uint8_t*>(s_le)[6],
+           reinterpret_cast<const uint8_t*>(s_le)[7]);
+
+    /* Montgomery 逐层核对: ToMont(2) 与 MontMul(2R,3R)→6 */
+    {
+      RsaModexp::limb_t m2a[RsaModexp::kMaxWords], m2b[RsaModexp::kMaxWords], m2c[RsaModexp::kMaxWords];
+      memset(m2a, 0, sizeof(m2a));
+      memset(m2b, 0, sizeof(m2b));
+      memset(m2c, 0, sizeof(m2c));
+      m2a[0] = 2;
+      m2b[0] = 3;
+      const uint32_t n0i = RsaModexp::N0Inv(n_le[0]);
+      RsaModexp::ToMont(m2a, n_le, k);
+      RsaModexp::ToMont(m2b, n_le, k);
+      BIGNUM* a2 = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m2a), (int)nbytes, nullptr);
+      BIGNUM* r2 = BN_new();
+      std::ignore = BN_set_word(r2, 2);
+      std::ignore = BN_lshift(r2, r2, 32 * k);
+      std::ignore = BN_mod(r2, r2, N, bc);
+      const int tomont_ok = (0 == BN_cmp(a2, r2));
+      RsaModexp::MontMul(m2c, m2a, m2b, n_le, k, n0i, ws.t);
+      RsaModexp::FromMont(m2c, n_le, k);
+      rlLOGI(TAG, "RsaModexp(host): ToMont(2)==2R:%d, MontMul(2R,3R)->%u (expect 6)", tomont_ok, m2c[0]);
+
+      /* 别名(原地平方): MontMul 结果经局部 t 回写, r==a==b 必须成立 */
+      RsaModexp::limb_t m2d[RsaModexp::kMaxWords];
+      memset(m2d, 0, sizeof(m2d));
+      m2d[0] = 2;
+      RsaModexp::ToMont(m2d, n_le, k);                       /* 2R */
+      RsaModexp::MontMul(m2d, m2d, m2d, n_le, k, n0i, ws.t); /* 原地平方 → 4R */
+      RsaModexp::FromMont(m2d, n_le, k);
+      rlLOGI(TAG, "RsaModexp(host): alias-sq(2R)->%u (expect 4)", m2d[0]);
+      BN_free(a2);
+      BN_free(r2);
+    }
+    /* 随机对拍(TASSL): MontMul 三组 + 随机指数 ModExp 两组(指数 1..64 位, 最高字节
+     * 常带前导 0 → 覆盖"左到右二进制幂的前导 0 比特"这一坑) */
+    {
+      int rnd_err = 0;
+      BIGNUM* ra = BN_new();
+      BIGNUM* rb = BN_new();
+      BIGNUM* rc = BN_new();
+      BIGNUM* rr = BN_new();
+      const uint32_t n0i = RsaModexp::N0Inv(n_le[0]);
+      RsaModexp::limb_t ra_l[RsaModexp::kMaxWords], rb_l[RsaModexp::kMaxWords], rc_l[RsaModexp::kMaxWords];
+
+      for (int t = 0; t < 3; ++t) {
+        RAND_bytes(reinterpret_cast<unsigned char*>(ra_l), (int)nbytes);
+        RAND_bytes(reinterpret_cast<unsigned char*>(rb_l), (int)nbytes);
+        std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(ra_l), (int)nbytes, ra);
+        std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(rb_l), (int)nbytes, rb);
+        std::ignore = BN_mod(ra, ra, N, bc);
+        std::ignore = BN_mod(rb, rb, N, bc);
+        std::ignore = BN_bn2lebinpad(ra, reinterpret_cast<unsigned char*>(ra_l), (int)nbytes);
+        std::ignore = BN_bn2lebinpad(rb, reinterpret_cast<unsigned char*>(rb_l), (int)nbytes);
+        RsaModexp::ToMont(ra_l, n_le, k);
+        RsaModexp::ToMont(rb_l, n_le, k);
+        RsaModexp::MontMul(rc_l, ra_l, rb_l, n_le, k, n0i, ws.t);
+        RsaModexp::FromMont(rc_l, n_le, k);
+        std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(rc_l), (int)nbytes, rc);
+        std::ignore = BN_mod_mul(rr, ra, rb, N, bc);
+        if (0 != BN_cmp(rc, rr))
+          ++rnd_err;
+      }
+
+      for (int t = 0; t < 2; ++t) {
+        uint8_t ex[8];
+        RAND_bytes(ex, sizeof(ex));
+        const int ebytes = 1 + (ex[7] % 8);
+        RAND_bytes(reinterpret_cast<unsigned char*>(ra_l), (int)nbytes);
+        std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(ra_l), (int)nbytes, ra);
+        std::ignore = BN_mod(ra, ra, N, bc);
+        std::ignore = BN_bn2lebinpad(ra, reinterpret_cast<unsigned char*>(ra_l), (int)nbytes);
+        memset(rc_l, 0, sizeof(rc_l));
+        const int mrc = mx.ModExp(rc_l, ra_l, ex, ebytes, n_le, k, ws);
+        std::ignore = BN_lebin2bn(ex, ebytes, rb);
+        std::ignore = BN_mod_exp(rr, ra, rb, N, bc);
+        std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(rc_l), (int)nbytes, rc);
+        if (0 != mrc || 0 != BN_cmp(rc, rr))
+          ++rnd_err;
+      }
+      rlLOGI(TAG, "RsaModexp(host): 随机对拍 MontMul×3 + ModExp×2 err=%d", rnd_err);
+      host_mx_ok = host_mx_ok && (0 == rnd_err);
+
+      /* 复核路径自检: 用与 mode 1 完全相同的检查代码(BN_mod_exp + BN_cmp)验证 host 自己算出的
+       * s_le —— 若这里通过而设备结果不通过, 问题就不在检查代码, 而在数据搬运/设备结果。 */
+      {
+        BIGNUM* chk2 = BN_new();
+        BIGNUM* sv = BN_new();
+        std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s_le), (int)nbytes, sv);
+        const int rc_chk = BN_mod_exp(chk2, sv, e, N, bc);
+        const int chk_ok = rc_chk && (0 == BN_cmp(chk2, m));
+        rlLOGI(TAG, "RsaModexp(host): 复核路径自检 BN_mod_exp rc=%d, s_host^e==m:%d (s=%d/m=%d bits)", rc_chk, chk_ok,
+               BN_num_bits(sv), BN_num_bits(m));
+        host_mx_ok = host_mx_ok && chk_ok;
+        BN_free(chk2);
+        BN_free(sv);
+      }
+      BN_free(ra);
+      BN_free(rb);
+      BN_free(rc);
+      BN_free(rr);
+    }
+    rlLOGI(TAG, "RsaModexp(host): mode4 self-test %s (ModExp vs TASSL=%s)", host_mx_ok ? "PASS" : "FAIL",
+           (0 == hrc && 0 == BN_cmp(s_ref, s_mine)) ? "MATCH" : "MISMATCH");
+    exit(host_mx_ok ? 0 : 1);
+  }
+
+  /* ---- 注入 dashboard(小端) ---- */
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpNOffset, n_le, nbytes);
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpDOffset, d_le, nbytes);
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpMOffset, m_le, nbytes);
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kModExpEOffset, e_le, nbytes);
+
+  BIGNUM* s_dev_bn = BN_new();
+  BIGNUM* m2_bn = BN_new();
+  int sign_ok = 0, ref_ok = 0, verify_ok = 1;
+
+  /* ---- 设备单指令执行 ---- */
+  memset(s_le, 0, sizeof(s_le)); /* 先清零, 便于判断设备是否真的写了结果 */
+  ctx->argv_[1] = (uint32_t)mode;
+  ctx->argv_[2] = (uint32_t)bits;
+  const int64_t d0 = rLANG_GetTickCount();
+  int main_result = 0;
+  const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+  const int64_t d1 = rLANG_GetTickCount();
+
+  /*! 设备状态只认 dashboard 上的 ModExpStatus: 设备 `Start` 会把 Context->result_[0]/[1]
+   *! 覆写成它自己的累加结果(含 NOTIMPL 负值), 读那两个字段会得到无关数值。 */
+  ModExpStatus st{};
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpStatusOffset, &st, sizeof(st));
+  const int st_ok = (st.magic == kModExpStatusMagic) && (0 == st.sign_rc);
+  rlLOGI(TAG, "RsaModexp(host): ExecuteExeFile=%d mainRet=%d in %lld ms (dashboard status magic=%08x bits=%u sign_rc=%d "
+               "verify_rc=%d beats=%u)",
+         exec_result, main_result, (long long)(d1 - d0), st.magic, st.bits, (int)st.sign_rc, (int)st.verify_rc,
+         (unsigned)st.heartbeats);
+  rlLOGI(TAG, "RsaModexp(host): 设备端 %.3f s ≈ %.1f min", (double)(d1 - d0) / 1000.0,
+         (double)(d1 - d0) / 60000.0);
+
+  /* ---- 读回并用 TASSL 复核 ----
+   *! 复核一律用**新建**的 BIGNUM/BN_CTX, 且输入全部取自 dashboard 字节: 复用长寿命
+   *! BN_CTX 在设备长调用之后出现过 BN_mod_exp 结果错误(1024 位正常、3072 位复现, 新建
+   *! 上下文则正确) —— 见 ai-doc/rsa3072-modexp-2026-09-13.md §5, 判定口径以独立复核为准。 */
+  RsaModexp::limb_t s_read[RsaModexp::kMaxWords];
+  memset(s_read, 0, sizeof(s_read));
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpSOffset, s_read, nbytes);
+  std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s_read), (int)nbytes, s_dev_bn);
+  ref_ok = (0 == BN_cmp(s_dev_bn, s_ref)); /* 设备 s 与 TASSL 直接算的 m^d 一致 */
+  rlLOGI(TAG, "RsaModexp(host): 读回 s=%d bits, m=%d bits, N=%d bits, e=%d bits", BN_num_bits(s_dev_bn), BN_num_bits(m),
+         BN_num_bits(N), BN_num_bits(e));
+
+  /*! 独立复核: 全部从 dashboard 的字节重建(不依赖主进程里任何 BIGNUM/BN_CTX 状态),
+   *! 与 mode 5 同口径; 同时报出 dashboard 与主机对象的差异。 */
+  {
+    RsaModexp::limb_t n_db[RsaModexp::kMaxWords], e_db[RsaModexp::kMaxWords];
+    RsaModexp::limb_t m_db[RsaModexp::kMaxWords], s_db[RsaModexp::kMaxWords];
+    memset(n_db, 0, sizeof(n_db));
+    memset(e_db, 0, sizeof(e_db));
+    memset(m_db, 0, sizeof(m_db));
+    memset(s_db, 0, sizeof(s_db));
+    std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpNOffset, n_db, nbytes);
+    std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpEOffset, e_db, nbytes);
+    std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpMOffset, m_db, nbytes);
+    std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpSOffset, s_db, nbytes);
+    BIGNUM* nB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(n_db), (int)nbytes, nullptr);
+    BIGNUM* eB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(e_db), (int)nbytes, nullptr);
+    BIGNUM* mB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m_db), (int)nbytes, nullptr);
+    BIGNUM* sB = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s_db), (int)nbytes, nullptr);
+    BIGNUM* ti = BN_new();
+    BN_CTX* ci = BN_CTX_new();
+    const int rc_i = BN_mod_exp(ti, sB, eB, nB, ci);
+    sign_ok = rc_i && (0 == BN_cmp(ti, mB)); /* s^e == m */
+    rlLOGI(TAG, "RsaModexp(host): 独立复核 s^e==m:%d (rc=%d); 主机对象 vs dashboard: N=%d m=%d e=%d", sign_ok, rc_i,
+           BN_cmp(nB, N), BN_cmp(mB, m), BN_cmp(eB, e));
+    rlLOGI(TAG, "RsaModexp(host): 字节一致 N=%d M=%d E=%d S=%d (m=%d bits, s=%d bits)", 0 == memcmp(n_db, n_le, nbytes),
+           0 == memcmp(m_db, m_le, nbytes), 0 == memcmp(e_db, e_le, nbytes), 0 == memcmp(s_db, s_read, nbytes),
+           BN_num_bits(mB), BN_num_bits(sB));
+    BN_free(nB);
+    BN_free(eB);
+    BN_free(mB);
+    BN_free(sB);
+    BN_free(ti);
+    BN_CTX_free(ci);
+  }
+
+  if (2 == mode) {
+    RsaModexp::limb_t m2_read[RsaModexp::kMaxWords];
+    memset(m2_read, 0, sizeof(m2_read));
+    std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kModExpM2Offset, m2_read, nbytes);
+    std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m2_read), (int)nbytes, m2_bn);
+    verify_ok = (0 == BN_cmp(m2_bn, m)); /* 设备内验签还原 == m */
+    rlLOGI(TAG, "RsaModexp(host): 设备内验签 m2==m:%d (verify_rc=%d)", verify_ok, (int)st.verify_rc);
+  }
+
+  {
+    uint8_t gb[16];
+    memcpy(gb, static_cast<uint8_t*>(Context) + 1024, sizeof(gb));
+    int guard_error = 0;
+    for (size_t i = 0; i < sizeof(gb); ++i)
+      guard_error += (gb[i] != 0xCC);
+    /*! 设备端约定: `Start` 返回 `10086 - 错误数` ⇒ **10086 才是"0 错"**(不是 0) */
+    rlLOGI(TAG, "RsaModexp(host): GuardBytes error=%d, mainRet=%d(10086=0错), dashboard status ok=%d", guard_error,
+           main_result, st_ok);
+    sign_ok = sign_ok && (0 == guard_error) && (0 == exec_result) && (10086 == main_result) && st_ok;
+  }
+  rlLOGI(TAG, "RsaModexp(host): sign(s^e==m)=%d ref(s==m^d)=%d verify=%d => %s", sign_ok, ref_ok, verify_ok,
+         (sign_ok && ref_ok && verify_ok) ? "PASS" : "FAIL");
+
+  BN_free(p);
+  BN_free(q);
+  BN_free(N);
+  BN_free(e);
+  BN_free(d);
+  BN_free(pm1);
+  BN_free(qm1);
+  BN_free(g);
+  BN_free(lcm);
+  BN_free(m);
+  BN_free(s_ref);
+  BN_free(s_mine);
+  BN_free(s_dev_bn);
+  BN_free(m2_bn);
+  BN_CTX_free(bc);
+  exit((sign_ok && ref_ok && verify_ok) ? 0 : 1);
+  return 0;
+#endif /* __RockeyARM__ */
+}
+
+/* ------------------------------------------------------------------------- *
+ * RSA-3072 CRT 私钥运算(完整私钥 blob + 中国剩余定理)
+ *
+ * host 生成 3072 位完整私钥(n/e/d/p/q/dmp1/dmq1/iqmp), 按 RsaModexp::KeyBlob 布局写进
+ * dashboard[kCrtKeyOffset](2128B), 待签名数据 m 写 dashboard[kCrtMOffset]; 设备端**单指令**内
+ * 用 `RsaModexp::CrtSignFile` 做 s = m^d mod N(两次 1536 位半域幂 + 重组), 结果写回
+ * dashboard[kCrtSReOffset]; host 用 TASSL 复核 s == m^d、s^e == m, 并与全宽模幂(≈4.0min)对比耗时。
+ *
+ * CLI: __Testing__dongle__ -2 15 <mode> <bits>
+ *   mode 1(缺省)= 设备内 CRT 签名 + host 复核
+ *   mode 4      = 仅 host 自测(用同一套原语在 host 上跑 CRT 流程, 与 TASSL/全宽模幂对拍)
+ *   mode 5      = 只读回 dashboard 并用 TASSL 事后复核(不触发设备)
+ *   bits: 2048/3072(缺省 3072), CLI 为 hex
+ * ------------------------------------------------------------------------- */
+#if !defined(__EMULATOR__)
+constexpr uint32_t kCrtKeyOffset = 1024; /* 完整私钥 blob */
+constexpr uint32_t kCrtMOffset = 3200;   /* 待签名数据 m */
+constexpr uint32_t kCrtSReOffset = 3584; /* 设备结果 s */
+constexpr uint32_t kCrtStatusOffset = 3968;
+#endif /* !__EMULATOR__ */
+
+/*! 把完整私钥写进 blob(小端, 布局见 RsaModexp::KeyBlob); 仅 host 侧使用(TASSL BIGNUM) */
+#if !defined(__RockeyARM__) && !defined(__EMULATOR__)
+static void BuildKeyBlob(uint8_t* blob, int bits, const BIGNUM* n, const BIGNUM* e, const BIGNUM* d, const BIGNUM* p,
+                         const BIGNUM* q, const BIGNUM* dmp1, const BIGNUM* dmq1, const BIGNUM* iqmp) {
+  RsaModexp::KeyBlobHeader hdr{};
+  hdr.magic = RsaModexp::KeyBlob::kMagic;
+  hdr.bits = static_cast<uint32_t>(bits);
+  hdr.flags = RsaModexp::KeyBlob::kFlagCrt;
+  memcpy(blob, &hdr, sizeof(hdr));
+  const int w = RsaModexp::KeyBlob::FieldSize(bits);
+  const int h = RsaModexp::KeyBlob::HalfSize(bits);
+  std::ignore = BN_bn2lebinpad(n, blob + RsaModexp::KeyBlob::NOffset(bits), w);
+  std::ignore = BN_bn2lebinpad(e, blob + RsaModexp::KeyBlob::EOffset(bits), w);
+  std::ignore = BN_bn2lebinpad(d, blob + RsaModexp::KeyBlob::DOffset(bits), w);
+  std::ignore = BN_bn2lebinpad(p, blob + RsaModexp::KeyBlob::POffset(bits), h);
+  std::ignore = BN_bn2lebinpad(q, blob + RsaModexp::KeyBlob::QOffset(bits), h);
+  std::ignore = BN_bn2lebinpad(dmp1, blob + RsaModexp::KeyBlob::Dmp1Offset(bits), h);
+  std::ignore = BN_bn2lebinpad(dmq1, blob + RsaModexp::KeyBlob::Dmq1Offset(bits), h);
+  std::ignore = BN_bn2lebinpad(iqmp, blob + RsaModexp::KeyBlob::IqmpOffset(bits), h);
+}
+#endif /* !__RockeyARM__ && !__EMULATOR__ */
+
+int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
+  Context_t* ctx = static_cast<Context_t*>(Context);
+  [[maybe_unused]] const int mode = (int)(ctx->argv_[1] & 0xff) ? (int)(ctx->argv_[1] & 0xff) : 1;
+  [[maybe_unused]] int bits = (int)ctx->argv_[2];
+  if (bits != 2048 && bits != 3072)
+    bits = 3072;
+  [[maybe_unused]] const int nbytes = bits / 8;
+
+#if defined(__RockeyARM__)
+  /* ---- 设备端: blob 在 dashboard, m 在 InOutBuf[384..), 结果放 ExtendBuf[0..) ---- */
+  RsaModexp::limb_t* m = reinterpret_cast<RsaModexp::limb_t*>(static_cast<uint8_t*>(Context) + 384);
+  RsaModexp::limb_t* s = reinterpret_cast<RsaModexp::limb_t*>(ExtendBuf);
+  RsaModexp::CrtWorkspace ws; /* 776B 栈: 其余大缓冲都在 InOutBuf/ExtendBuf */
+  RsaModexp mx;
+  mx.SetDongle(&rockey);
+
+  ModExpStatus st{};
+  st.magic = kModExpStatusMagic;
+  st.bits = static_cast<uint32_t>(bits);
+  st.sign_rc = 0xFFFFFFFFu;
+  st.verify_rc = 0xFFFFFFFFu;
+
+  rockey.SetLEDState(LED_STATE::kBlink);
+  if (0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtMOffset, m, static_cast<size_t>(nbytes))) {
+    st.sign_rc = 0xFFFFFFFEu;
+  } else {
+    st.sign_rc = static_cast<uint32_t>(
+        mx.CrtSignFile(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset, m, s, bits, ws));
+    if (0 == static_cast<int32_t>(st.sign_rc))
+      std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtSReOffset, s, static_cast<size_t>(nbytes));
+  }
+  st.heartbeats = mx.Heartbeats();
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtStatusOffset, &st, sizeof(st));
+  rockey.SetLEDState(LED_STATE::kOff);
+  rlLOGI(TAG, "RsaCrt(dev): bits=%d rc=%d beats=%u", bits, (int)st.sign_rc, (unsigned)st.heartbeats);
+  return 0;
+#elif defined(__EMULATOR__)
+  std::ignore = rockey;
+  std::ignore = ExtendBuf;
+  return 0;
+#else
+  std::ignore = ExtendBuf;
+
+  /* ---- 生成完整私钥(TASSL) ---- */
+  BIGNUM* p = BN_new();
+  BIGNUM* q = BN_new();
+  BN_generate_prime_ex(p, bits / 2, 0, nullptr, nullptr, nullptr);
+  BN_generate_prime_ex(q, bits / 2, 0, nullptr, nullptr, nullptr);
+  BN_CTX* bc = BN_CTX_new();
+  BIGNUM* N = BN_new();
+  BIGNUM* e = BN_new();
+  BIGNUM* d = BN_new();
+  BIGNUM* pm1 = BN_new();
+  BIGNUM* qm1 = BN_new();
+  BIGNUM* g = BN_new();
+  BIGNUM* lcm = BN_new();
+  BIGNUM* dmp1 = BN_new();
+  BIGNUM* dmq1 = BN_new();
+  BIGNUM* iqmp = BN_new();
+  BIGNUM* m = BN_new();
+  std::ignore = BN_mul(N, p, q, bc);
+  std::ignore = BN_set_word(e, 65537);
+  std::ignore = BN_sub_word(BN_copy(pm1, p), 1);
+  std::ignore = BN_sub_word(BN_copy(qm1, q), 1);
+  std::ignore = BN_gcd(g, pm1, qm1, bc);
+  std::ignore = BN_mul(lcm, pm1, qm1, bc);
+  std::ignore = BN_div(lcm, nullptr, lcm, g, bc);
+  const int key_ok = (nullptr != BN_mod_inverse(d, e, lcm, bc)) && (nullptr != BN_mod_inverse(iqmp, q, p, bc));
+  std::ignore = BN_mod(dmp1, d, pm1, bc);
+  std::ignore = BN_mod(dmq1, d, qm1, bc);
+
+  RsaModexp::limb_t m_le[RsaModexp::kMaxWords];
+  BIGNUM* s_ref = BN_new();
+  BIGNUM* s_crt = BN_new();
+  BIGNUM* chk = BN_new();
+  uint8_t blob[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+  BuildKeyBlob(blob, bits, N, e, d, p, q, dmp1, dmq1, iqmp);
+  RAND_bytes(reinterpret_cast<unsigned char*>(m_le), nbytes);
+  std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m_le), nbytes, m);
+  std::ignore = BN_mod(m, m, N, bc);
+  std::ignore = BN_bn2lebinpad(m, reinterpret_cast<unsigned char*>(m_le), nbytes);
+  std::ignore = BN_mod_exp(s_ref, m, d, N, bc); /* TASSL 参照: 全宽 m^d */
+
+  if (6 == mode) {
+    /*! 只把完整私钥 blob 与 m 注入 dashboard(供**生产固件 + .dongle 脚本**路径使用), 并把 TASSL
+     *! 参照值以小端 hex 落日志; 不触发设备执行。配合
+     *! `Web/Agent/Tests/Tests/_RsaCrt3072ScriptPath.dongle` 做真机脚本路径验证。 */
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtKeyOffset, blob,
+                                       static_cast<size_t>(RsaModexp::KeyBlob::TotalSize(bits)));
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtMOffset, m_le, static_cast<size_t>(nbytes));
+    RsaModexp::limb_t n_le[RsaModexp::kMaxWords], s_le[RsaModexp::kMaxWords];
+    std::ignore = BN_bn2lebinpad(N, reinterpret_cast<unsigned char*>(n_le), nbytes);
+    std::ignore = BN_bn2lebinpad(s_ref, reinterpret_cast<unsigned char*>(s_le), nbytes);
+    LogLeHex("mode6", "script-path N", reinterpret_cast<const uint8_t*>(n_le), nbytes);
+    LogLeHex("mode6", "script-path m", reinterpret_cast<const uint8_t*>(m_le), nbytes);
+    LogLeHex("mode6", "script-path s(TASSL)", reinterpret_cast<const uint8_t*>(s_le), nbytes);
+    rlLOGI(TAG,
+           "RsaCrt(host): mode6 dashboard 已注入 blob[%u..%u) 与 m[%u..%u), .dongle 脚本用 "
+           "ExRSACrtModExp(0xFFFF, %u, 256, 640, %d)",
+           kCrtKeyOffset, kCrtKeyOffset + RsaModexp::KeyBlob::TotalSize(bits), kCrtMOffset, kCrtMOffset + nbytes,
+           kCrtKeyOffset, bits);
+    exit(0);
+  }
+
+  if (4 == mode) {
+    /*! host 自测: 用与 CrtSignFile 相同的原语步骤跑一遍 CRT(键材料在内存里), 与 TASSL
+     *! 的全宽 m^d 以及本实现的 ModExp 对拍。 */
+    const int k = bits / 32;
+    const int hw = k / 2;
+    const int hb = bits / 16;
+    RsaModexp::limb_t p_l[RsaModexp::kHalfWords], q_l[RsaModexp::kHalfWords];
+    RsaModexp::limb_t dp_l[RsaModexp::kHalfWords], dq_l[RsaModexp::kHalfWords];
+    RsaModexp::limb_t iq_l[RsaModexp::kHalfWords], c_l[RsaModexp::kHalfWords];
+    RsaModexp::limb_t s1[RsaModexp::kHalfWords], s2[RsaModexp::kHalfWords];
+    RsaModexp::limb_t out[RsaModexp::kMaxWords];
+    RsaModexp::limb_t n_l[RsaModexp::kMaxWords], d_l[RsaModexp::kMaxWords];
+    memset(p_l, 0, sizeof(p_l));
+    memset(q_l, 0, sizeof(q_l));
+    memset(dp_l, 0, sizeof(dp_l));
+    memset(dq_l, 0, sizeof(dq_l));
+    memset(iq_l, 0, sizeof(iq_l));
+    memset(out, 0, sizeof(out));
+    std::ignore = BN_bn2lebinpad(p, reinterpret_cast<unsigned char*>(p_l), hb);
+    std::ignore = BN_bn2lebinpad(q, reinterpret_cast<unsigned char*>(q_l), hb);
+    std::ignore = BN_bn2lebinpad(dmp1, reinterpret_cast<unsigned char*>(dp_l), hb);
+    std::ignore = BN_bn2lebinpad(dmq1, reinterpret_cast<unsigned char*>(dq_l), hb);
+    std::ignore = BN_bn2lebinpad(iqmp, reinterpret_cast<unsigned char*>(iq_l), hb);
+    std::ignore = BN_bn2lebinpad(N, reinterpret_cast<unsigned char*>(n_l), nbytes);
+    std::ignore = BN_bn2lebinpad(d, reinterpret_cast<unsigned char*>(d_l), nbytes);
+
+    RsaModexp::CrtWorkspace ws;
+    RsaModexp mx;
+    RsaModexp::Workspace full_ws;
+    RsaModexp::limb_t s_full[RsaModexp::kMaxWords];
+    memset(s_full, 0, sizeof(s_full));
+
+    RsaModexp::ModReduce(c_l, m_le, k, p_l, hw);
+    int rc1 = mx.HalfModExp(s1, c_l, reinterpret_cast<const uint8_t*>(dp_l), hb, p_l, hw, ws.t);
+    RsaModexp::ModReduce(c_l, m_le, k, q_l, hw);
+    int rc2 = mx.HalfModExp(s2, c_l, reinterpret_cast<const uint8_t*>(dq_l), hb, q_l, hw, ws.t);
+    memcpy(c_l, iq_l, hb); /* iqmp 可变成员 */
+    RsaModexp::CrtCombine(out, s1, s2, p_l, q_l, c_l, hw, s1, ws.t);
+    const int full_rc = mx.ModExp(s_full, m_le, reinterpret_cast<const uint8_t*>(d_l), nbytes, n_l, k, full_ws);
+
+    std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(out), nbytes, s_crt);
+    BIGNUM* s_full_bn = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s_full), nbytes, nullptr);
+    const int crt_ok = (0 == rc1) && (0 == rc2) && (0 == BN_cmp(s_crt, s_ref));
+    const int full_ok = (0 == full_rc) && (0 == BN_cmp(s_full_bn, s_ref));
+    BN_free(s_full_bn);
+    /* 复核: s^e == m */
+    std::ignore = BN_mod_exp(chk, s_crt, e, N, bc);
+    const int sig_ok = (0 == BN_cmp(chk, m));
+    rlLOGI(TAG, "RsaCrt(host): key_ok=%d; CRT(half rc=%d/%d)%s vs TASSL, full ModExp=%s, s^e==m:%d", key_ok, rc1, rc2,
+           crt_ok ? " MATCH" : " MISMATCH", full_ok ? "MATCH" : "MISMATCH", sig_ok);
+    const int ok = key_ok && crt_ok && full_ok && sig_ok;
+    rlLOGI(TAG, "RsaCrt(host): mode4 self-test %s", ok ? "PASS" : "FAIL");
+    exit(ok ? 0 : 1);
+  }
+
+  if (5 == mode) {
+    /*! 只读回: dashboard 上的 blob/m/s 用 TASSL 事后复核(不写设备) */
+    uint8_t blob5[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+    RsaModexp::limb_t m5[RsaModexp::kMaxWords], s5[RsaModexp::kMaxWords];
+    memset(blob5, 0, sizeof(blob5));
+    memset(m5, 0, sizeof(m5));
+    memset(s5, 0, sizeof(s5));
+    const int r1 = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtKeyOffset, blob5, sizeof(blob5));
+    const int r2 = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtMOffset, m5, nbytes);
+    const int r3 = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtSReOffset, s5, nbytes);
+    BIGNUM* N5 = BN_lebin2bn(blob5 + RsaModexp::KeyBlob::NOffset(bits), nbytes, nullptr);
+    BIGNUM* d5 = BN_lebin2bn(blob5 + RsaModexp::KeyBlob::DOffset(bits), nbytes, nullptr);
+    BIGNUM* e5 = BN_lebin2bn(blob5 + RsaModexp::KeyBlob::EOffset(bits), nbytes, nullptr);
+    BIGNUM* m5b = BN_lebin2bn(reinterpret_cast<const unsigned char*>(m5), nbytes, nullptr);
+    BIGNUM* s5b = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s5), nbytes, nullptr);
+    BIGNUM* t1 = BN_new();
+    BIGNUM* t2 = BN_new();
+    BN_CTX* c5 = BN_CTX_new();
+    const int ok_ref = BN_mod_exp(t1, m5b, d5, N5, c5) && (0 == BN_cmp(t1, s5b)); /* s == m^d */
+    const int ok_sig = BN_mod_exp(t2, s5b, e5, N5, c5) && (0 == BN_cmp(t2, m5b)); /* s^e == m */
+    rlLOGI(TAG, "RsaCrt(mode5): 读回 rc=%d/%d/%d, s==m^d:%d, s^e==m:%d => %s", r1, r2, r3, ok_ref, ok_sig,
+           (ok_ref && ok_sig) ? "PASS" : "FAIL");
+    BN_free(N5);
+    BN_free(d5);
+    BN_free(e5);
+    BN_free(m5b);
+    BN_free(s5b);
+    BN_free(t1);
+    BN_free(t2);
+    BN_CTX_free(c5);
+    exit((ok_ref && ok_sig) ? 0 : 1);
+  }
+
+  /* ---- 注入 dashboard 并让设备单指令跑 CRT ---- */
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtKeyOffset, blob,
+                                     static_cast<size_t>(RsaModexp::KeyBlob::TotalSize(bits)));
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtMOffset, m_le, static_cast<size_t>(nbytes));
+  ModExpStatus zero_st{};
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtStatusOffset, &zero_st, sizeof(zero_st));
+
+  ctx->argv_[1] = static_cast<uint32_t>(mode);
+  ctx->argv_[2] = static_cast<uint32_t>(bits);
+  const int64_t t0 = rLANG_GetTickCount();
+  int main_result = 0;
+  const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+  const int64_t t1 = rLANG_GetTickCount();
+
+  ModExpStatus st{};
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtStatusOffset, &st, sizeof(st));
+  RsaModexp::limb_t s_dev[RsaModexp::kMaxWords];
+  memset(s_dev, 0, sizeof(s_dev));
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtSReOffset, s_dev, static_cast<size_t>(nbytes));
+  std::ignore = BN_lebin2bn(reinterpret_cast<const unsigned char*>(s_dev), nbytes, s_crt);
+  std::ignore = BN_mod_exp(chk, s_crt, e, N, bc);
+
+  const int ref_ok = (0 == BN_cmp(s_crt, s_ref)); /* s == TASSL m^d */
+  const int sig_ok = (0 == BN_cmp(chk, m));       /* s^e == m */
+  const int st_ok = (st.magic == kModExpStatusMagic) && (0 == st.sign_rc) && (st.bits == static_cast<uint32_t>(bits));
+  int guard_error = 0;
+  {
+    uint8_t gb[16];
+    memcpy(gb, static_cast<uint8_t*>(Context) + 1024, sizeof(gb));
+    for (size_t i = 0; i < sizeof(gb); ++i)
+      guard_error += (gb[i] != 0xCC);
+  }
+  rlLOGI(TAG, "RsaCrt(host): ExecuteExeFile=%d mainRet=%d in %lld ms (dashboard rc=%d bits=%u beats=%u)", exec_result,
+         main_result, (long long)(t1 - t0), (int)st.sign_rc, st.bits, (unsigned)st.heartbeats);
+  rlLOGI(TAG, "RsaCrt(host): 设备端 %.3f s ≈ %.2f min; s==m^d:%d s^e==m:%d status_ok:%d guard_err:%d", (double)(t1 - t0) / 1000.0,
+         (double)(t1 - t0) / 60000.0, ref_ok, sig_ok, st_ok, guard_error);
+  const int ok = key_ok && ref_ok && sig_ok && st_ok && (0 == guard_error) && (0 == exec_result) &&
+                 (10086 == main_result);
+  rlLOGI(TAG, "RsaCrt(host): %s", ok ? "PASS" : "FAIL");
+
+  BN_free(p);
+  BN_free(q);
+  BN_free(N);
+  BN_free(e);
+  BN_free(d);
+  BN_free(pm1);
+  BN_free(qm1);
+  BN_free(g);
+  BN_free(lcm);
+  BN_free(dmp1);
+  BN_free(dmq1);
+  BN_free(iqmp);
+  BN_free(m);
+  BN_free(s_ref);
+  BN_free(s_crt);
+  BN_free(chk);
+  BN_CTX_free(bc);
+  exit(ok ? 0 : 1);
+  return 0;
+#endif /* __RockeyARM__ */
+}
+
 int Start(void* InOutBuf, void* ExtendBuf) {
   const int kSizeGuardBytes = 16;
   Context_t* Context = (Context_t*)InOutBuf;
@@ -2593,6 +3359,8 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(PKeyCountDownTest);
   DONGLE_RUN_TESTING(X509Tests);
   DONGLE_RUN_TESTING(PrimeMRTests);
+  DONGLE_RUN_TESTING(RsaModexpTests);
+  DONGLE_RUN_TESTING(RsaCrtTests);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
@@ -2633,6 +3401,13 @@ rLANG_DECLARE_END
 int main(int argc, char* argv[]) {
   using namespace machine;
   using namespace machine::dongle;
+
+  /*! Windows 下日志经 WriteConsoleW(stderr) 输出, 一旦被重定向/管道捕获就会丢失
+   *! ⇒ 允许 WT_RKEY_LOG=<path> 把日志落到文件(纯 host 便利, 不影响设备端)。 */
+  if (const char* log_path = getenv("WT_RKEY_LOG")) {
+    if (FILE* fp = fopen(log_path, "w"))
+      rlLoggingOutputFile(fp);
+  }
 #ifdef _MSC_VER
   if (argc >= 2 && 0 == strcmp("-d", argv[1])) {
     while (!::IsDebuggerPresent()) {

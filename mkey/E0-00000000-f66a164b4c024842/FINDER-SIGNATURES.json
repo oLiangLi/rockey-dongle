@@ -1,0 +1,53 @@
+{
+  "seedSource": "default/RKEY_FINDER_SEED",
+  "pubkey": "31c07d1f80326821fa207a6925accd44977827dd9c4b4f762bbdb5dbe55c239d",
+  "items": [
+    {
+      "type": "Type1",
+      "text": "爸爸对不起",
+      "utf8": "e788b8e788b8e5afb9e4b88de8b5b7",
+      "digest": "d552d9836b767a86e210bc4f0f5c062d3775626e816d76d38e9722cfd04bbbfcea4cbc64f4dec8164c5abb18038083c488473cc17bd412ec88ca14020de1ea7a",
+      "signature": "7c0a8da40d481214297ec931548f84780dff0bad248a177626f32328efd2643926bc2e0ac52809f8ca95b2806a5b43f77e92342a8814858029f00aa99fca0403",
+      "verify": true
+    },
+    {
+      "type": "Type2",
+      "text": "妈妈我害怕",
+      "utf8": "e5a688e5a688e68891e5aeb3e68095",
+      "digest": "d11b37d9e45ca35446847c778f4ad3ae517d9da40ca9f0bdff33b9d71a4ee5d39a90a4c8579e90d558368e7420c77e0447b3fe1c400985f71c521f0ae9617cd2",
+      "signature": "d1c616a4259811d81470762298dafc135ad8e87cf850bef5c0e61d1a3d6949a247353d002b0c48f4dad0ce654cf0f6c76a10453bfaa91035a3cb96a5914bf70c",
+      "verify": true
+    },
+    {
+      "type": "Type3",
+      "text": "佩佩你已经长大了, 需要努力了",
+      "utf8": "e4bda9e4bda9e4bda0e5b7b2e7bb8fe995bfe5a4a7e4ba862c20e99c80e8a681e58aaae58a9be4ba86",
+      "digest": "c535965a4c561f1ec53e698ee446465a8b39a145560cda0ff448bc06ce43716d74c2ba704afa440317ca64bf3cdd3e5564fa900edc15b4e696ce92eac03f38d7",
+      "signature": "fabc106d07505ad6b907825dec35f2b7e07e626c719b51980217046ca33624702e596ac2223ad5aa7f2c1db8054485fb9cd70948d7ee05dc0ce79d8a6a0cd20b",
+      "verify": true
+    },
+    {
+      "type": "Type4",
+      "text": "沅沅,想我没有",
+      "utf8": "e6b285e6b2852ce683b3e68891e6b2a1e69c89",
+      "digest": "c40e38ea8cfa1fa90b975586b7159207de88ff8c429b50952f373379b403122ae535e19f2636fa2c58173a7cc75a571a56b65001f4edb4ae0b7de65b9511ab3d",
+      "signature": "60c60c43b6b3004dccc183303d87baa80c254ce2498e1315b9e1ae8b982c272e5b8999495ca2fcbe6ff42b38c11200d455df706e8a756aa5d69752bf92d3810e",
+      "verify": true
+    }
+  ],
+  "ok": true,
+  "atomic": [
+    "world_atomic_2026_9_14_finder_Type1",
+    "world_atomic_2026_9_14_finder_Type2",
+    "world_atomic_2026_9_14_finder_Type3",
+    "world_atomic_2026_9_14_finder_Type4"
+  ],
+  "atomicCreated": [
+    "world_atomic_2026_9_14_finder_Type1",
+    "world_atomic_2026_9_14_finder_Type2",
+    "world_atomic_2026_9_14_finder_Type3",
+    "world_atomic_2026_9_14_finder_Type4"
+  ],
+  "at": "2026-09-13T20:16:02.835Z",
+  "rule": "Ed25519(SHA512(SHA512(utf8(text)))); 每种类型第一次暂时创建一个 ATOMIC"
+}

@@ -1,0 +1,12 @@
+///
+/// Step 1 of the self-contained permission experiment: free a data-file slot and re-create a
+/// USER file (id >= kUserFileID) in the same session. Success proves that space/slot exhaustion
+/// cannot explain a later failure on an admin-only id.
+///
+public 1024;
+
+@ 0 [4] : Probe;
+
+DeleteDataFile(1002);
+CreateDataFile(1002, 64, 2, 2);
+StoreI32(0, 0x11111111);

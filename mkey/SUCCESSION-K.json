@@ -1,0 +1,341 @@
+{
+  "at": "2026-09-13T20:34:56.247Z",
+  "rule": "Infinity roll(非完美 ⇒ Perfect()=Infinity) 综合 digest % 24 ⇒ 排列; 24 种状态全部列出以便确认编号",
+  "N": 4,
+  "total": 24,
+  "kBits": 18,
+  "items": [
+    {
+      "index": 0,
+      "id": "00000000-2c9a5b4bec00193f",
+      "inputIndex": 2,
+      "nonce": "22020000000000002608061744550000ffffffffffffffffffffffff000000002c9a5b4bec00193f",
+      "absent": false,
+      "magic": 112291,
+      "roll": "Infinity",
+      "infinity": true
+    },
+    {
+      "index": 1,
+      "id": "00000000-381a5653df0a303f",
+      "inputIndex": 1,
+      "nonce": "22020000000000002608061856440000ffffffffffffffffffffffff00000000381a5653df0a303f",
+      "absent": false,
+      "magic": 250506,
+      "roll": "Infinity",
+      "infinity": true
+    },
+    {
+      "index": 2,
+      "id": "00000000-381a5653e00a313f",
+      "inputIndex": 3,
+      "nonce": "22020000000000002608061856440000ffffffffffffffffffffffff00000000381a5653e00a313f",
+      "absent": false,
+      "magic": 90781,
+      "roll": "Infinity",
+      "infinity": true
+    },
+    {
+      "index": 3,
+      "id": "00000000-381a5653e10a323f",
+      "inputIndex": 0,
+      "nonce": "22020000000000002608061856440000ffffffffffffffffffffffff00000000381a5653e10a323f",
+      "absent": false,
+      "magic": 26411,
+      "roll": "Infinity",
+      "infinity": true
+    }
+  ],
+  "digest": "16f1990e259fa3178672dd66d19a1168a1ae2ae745f44593b6dd5d21079d5674",
+  "rank": 22,
+  "chosen": {
+    "rank": 22,
+    "order": [
+      3,
+      2,
+      0,
+      1
+    ],
+    "state": "3be92c535a413b54f589a0625f4c353082f61443efb51c8d80c1d3e6978c2a53"
+  },
+  "states": [
+    {
+      "rank": 0,
+      "order": [
+        0,
+        1,
+        2,
+        3
+      ],
+      "state": "6dec848a1bc04fe45722cc2c1442fad95ea4e34fa3e03263444595970778c1aa"
+    },
+    {
+      "rank": 1,
+      "order": [
+        0,
+        1,
+        3,
+        2
+      ],
+      "state": "0197b06470832e981976d194761edac6658b4e3b338e3d1275ad0cbbb0f6d4fe"
+    },
+    {
+      "rank": 2,
+      "order": [
+        0,
+        2,
+        1,
+        3
+      ],
+      "state": "c2b45f2dc761bc733235398510f1297daa3d6e9a88a8bc4babe14f3028e8eaba"
+    },
+    {
+      "rank": 3,
+      "order": [
+        0,
+        2,
+        3,
+        1
+      ],
+      "state": "57d972a5bad9369c5a24cf5151d2778c6c912ad5e093029eea761b073ab43c11"
+    },
+    {
+      "rank": 4,
+      "order": [
+        0,
+        3,
+        1,
+        2
+      ],
+      "state": "83ad2765b28379a4a27554c67a87ea92cc12c873016103c42148a2dc36a2df41"
+    },
+    {
+      "rank": 5,
+      "order": [
+        0,
+        3,
+        2,
+        1
+      ],
+      "state": "c05102ee820d001ec8a55f1a306ff3f8e123b2d4d09ade0e01127a9a5cb469c8"
+    },
+    {
+      "rank": 6,
+      "order": [
+        1,
+        0,
+        2,
+        3
+      ],
+      "state": "1352b9400f83de06f117049878d5b3e823233bacdaa73fb3b8c844eafb44e84c"
+    },
+    {
+      "rank": 7,
+      "order": [
+        1,
+        0,
+        3,
+        2
+      ],
+      "state": "d0d67145d44582f5a91bf1ed211f4e21ede90637214f24e197a5a4cd4e865f0e"
+    },
+    {
+      "rank": 8,
+      "order": [
+        1,
+        2,
+        0,
+        3
+      ],
+      "state": "ffd9450809329d8981e9c3bdfce2dd36f4531815d063a9772356a61988401593"
+    },
+    {
+      "rank": 9,
+      "order": [
+        1,
+        2,
+        3,
+        0
+      ],
+      "state": "3e6a59a9cf7d1e1cf80cf7e6867453b060101180dcdef9964394e04a240c36ba"
+    },
+    {
+      "rank": 10,
+      "order": [
+        1,
+        3,
+        0,
+        2
+      ],
+      "state": "3718944fff35290e7b801fbf1016ce413e2ff7b73124b25c59f9669e267a9292"
+    },
+    {
+      "rank": 11,
+      "order": [
+        1,
+        3,
+        2,
+        0
+      ],
+      "state": "da362146423c36834e4e5624780e659a85969afb572b393d63abb6e6b744d53c"
+    },
+    {
+      "rank": 12,
+      "order": [
+        2,
+        0,
+        1,
+        3
+      ],
+      "state": "2f2904e1ef9904ddfe3d2e80bd9f0744a1ca1c1a71705af4c7d6ffa1e5a118d1"
+    },
+    {
+      "rank": 13,
+      "order": [
+        2,
+        0,
+        3,
+        1
+      ],
+      "state": "79ee4cfd881dc4867eb49f7ec5ce315deabee7af8fac6e641ce3ba5dc278e560"
+    },
+    {
+      "rank": 14,
+      "order": [
+        2,
+        1,
+        0,
+        3
+      ],
+      "state": "0b412f204395c0280d53600f349cfd845588eb39d49bb4e99ad8a0a0d5c9cc3e"
+    },
+    {
+      "rank": 15,
+      "order": [
+        2,
+        1,
+        3,
+        0
+      ],
+      "state": "7a2fd1020e98cb589771dc571e993e1a105316d69eadfc40d9921d80f47497d1"
+    },
+    {
+      "rank": 16,
+      "order": [
+        2,
+        3,
+        0,
+        1
+      ],
+      "state": "698060ae5dbe27eb01e7eed734b2f826611d42d32123c5884d9cc2e602c0eebc"
+    },
+    {
+      "rank": 17,
+      "order": [
+        2,
+        3,
+        1,
+        0
+      ],
+      "state": "4082545b71c8527f547b857e96cb360a4e6ffaf7aea75c88335361efac073ef1"
+    },
+    {
+      "rank": 18,
+      "order": [
+        3,
+        0,
+        1,
+        2
+      ],
+      "state": "683778e6605ded0015afd17d20253a8d8a05c01b3f7a66eb540bace8c4a3ccc3"
+    },
+    {
+      "rank": 19,
+      "order": [
+        3,
+        0,
+        2,
+        1
+      ],
+      "state": "7530e0d5ab5a78d14cc347eacdaa034e1c689db2bacc6aee1bce4521753ef6cd"
+    },
+    {
+      "rank": 20,
+      "order": [
+        3,
+        1,
+        0,
+        2
+      ],
+      "state": "c0fe24dbbf1486d94fbff4512eebae9152456a28cb7e1df12bf0aea40e5d9adf"
+    },
+    {
+      "rank": 21,
+      "order": [
+        3,
+        1,
+        2,
+        0
+      ],
+      "state": "c81fe45c501ccf62029291b64a39143a5a8ded04ab5af82fddaf2325f0241541"
+    },
+    {
+      "rank": 22,
+      "order": [
+        3,
+        2,
+        0,
+        1
+      ],
+      "state": "3be92c535a413b54f589a0625f4c353082f61443efb51c8d80c1d3e6978c2a53"
+    },
+    {
+      "rank": 23,
+      "order": [
+        3,
+        2,
+        1,
+        0
+      ],
+      "state": "a7580e058bd56d96c19226ff9dc0aaf5201c5c08aa2515d89cd2af9490892d5f"
+    }
+  ],
+  "allInfinity": true,
+  "designate": [
+    {
+      "K": "K0'",
+      "id": "00000000-381a5653e10a323f",
+      "nonce": "22020000000000002608061856440000ffffffffffffffffffffffff00000000381a5653e10a323f",
+      "absent": false
+    },
+    {
+      "K": "K1'",
+      "id": "00000000-381a5653e00a313f",
+      "nonce": "22020000000000002608061856440000ffffffffffffffffffffffff00000000381a5653e00a313f",
+      "absent": false
+    },
+    {
+      "K": "K2'",
+      "id": "00000000-2c9a5b4bec00193f",
+      "nonce": "22020000000000002608061744550000ffffffffffffffffffffffff000000002c9a5b4bec00193f",
+      "absent": false
+    },
+    {
+      "K": "K3'",
+      "id": "00000000-381a5653df0a303f",
+      "nonce": "22020000000000002608061856440000ffffffffffffffffffffffff00000000381a5653df0a303f",
+      "absent": false
+    }
+  ],
+  "note": "下一任 K0'/K1'/K2'/K3' 的 HID 记录与 Infinity roll % 24 裁定(用户 2026-09-14: 只记录 HID; 这些 ukey 均未初始化)",
+  "k4": {
+    "note": "我们的 ROOT CA(K4)不在四把之中 —— 即那把不参与枚举的 ukey; 出现后单独记录 HID"
+  },
+  "hids": [
+    "00000000-2c9a5b4bec00193f",
+    "00000000-381a5653df0a303f",
+    "00000000-381a5653e00a313f",
+    "00000000-381a5653e10a323f"
+  ],
+  "hidNote": "四把 ukey 目前都未初始化(type=0x00000000, pid/uid=0xffffffff, 无世界/无密钥文件), 故只记 HID"
+}

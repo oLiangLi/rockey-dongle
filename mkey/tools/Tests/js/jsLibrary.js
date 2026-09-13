@@ -56,7 +56,11 @@ var jsCheckEnTrust;
 const jsScriptBundled = jsWorld.jsScriptBundled;
 
 window.onload = async function () {
-  jsCipher = await jsWorld.CipherLoader();
+  /* 以"提交 hash"为 nonce 的确定性 MRND(jsWorldEvent.js): 发生世界事件(不限完美)时会在
+   * stdout/stderr 四通道、.bin/worldevent.log、README.md 与 git log 留痕;
+   * 拿不到 nonce(无 jsCommitHash.js)时返回 undefined ⇒ CipherLoader 用自带随机 */
+  const jsWorldEventMRND = jsWorldEvent.MRNDForCurrentCommit();
+  jsCipher = await jsWorld.CipherLoader(undefined, jsWorldEventMRND);
 
   const jsCryptoFactory = (globalThis.jsCryptoFactory =
     await jsWorld.CryptoLoader(jsCipher));
@@ -691,6 +695,11 @@ window.onload = async function () {
   };
 
   async function EmuTests() {
+    /* 世界事件看门狗: 以"当前提交 hash"为 nonce 的判据状态(命中时加载期已四通道打印并留痕) */
+    if (globalThis.jsWorldEvent) {
+      console.log(`WorldEvent Tests OK (${jsWorldEvent.Status().describe})`);
+    }
+
     ///
     /// TODO: LiangLI, More Tests, 当前只用于保护 RockeyARM::(kKeyIdGlobalSM2ECIES[加密密钥/管理员签名密钥] == 4), 暂时只测试 SM2 相关操作 ...
     ///
