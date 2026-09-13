@@ -1142,7 +1142,7 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ⑤**环境注记(只影响本会话工具链, 非仓库缺陷)**: PATH 上的 `gpg` = `C:\cygwin64\bin\gpg.exe` **不可执行**(`Program 'gpg.exe' failed to run` / Cygwin `CreateFileMapping ... Win32 error 5`);
   可用者为 Git 自带 `C:\Program Files\Git\usr\bin\gpg.exe`(**2.4.8**)。⚠ **陷阱**: `gpg.program` 未设时 `%G?` 会**全部报 `N`**(实测: 无可用 gpg 时 298 条全 `N`;指定可用 gpg 后 76 G/221 N/1 E)
   ⇒ **`N` 在 gpg 缺失时不可信, 不能当作"未签名"的证据**。本会话内一律 `git -c "gpg.program=C:\Program Files\Git\usr\bin\gpg.exe" ...`;用户决定**不改 `.git/config`**(其自身环境签名正常)。
-- 2026-09-14 **四条 CI 门控落地(用户指定): 新增 `Build/tools/LIMIT/ci/gates.cjs` 的 G1..G4 并接入 `run-ci.cjs`**(子模块 `Build` 分支 `evolution`, 提交 `dc4f329`; 本轮含**反向验证**):
+- 2026-09-14 **四条 CI 门控落地(用户指定): 新增 `Build/tools/LIMIT/ci/gates.cjs` 的 G1..G4 并接入 `run-ci.cjs`**(子模块 `Build` 分支 `doc/2026-9-14/evolution`(2026-09-14 由 `evolution` 改名), 提交 `dc4f329`; 本轮含**反向验证**):
   ①**G1 gpg 密钥状态** —— 本机钥匙串必须恰为用户清单的两把主钥: `9F7E6E5B…97876293`(rsa3072) 与 `B9C754FC…5E51D027`(ed25519); 校验 uid、算法/长度、主钥用途含 SC、**未过期**(实测到期 2028-03-30 / 2029-03-31)、存在私钥与未过期的 `[E]` 子钥。
   ②**G2 明文无被禁 trailer 字面量** —— 扫**跟踪文件**(`git grep -i -I`: 本仓 + Build 子模块)与**提交信息**(本仓 `--all`, 8 条在册历史白名单内; Build 子模块全量);`base` 子模块属上游, 不纳入(其改动不受本仓控制)。
   **字面量由片段拼出**(`["co","authored","by"].join("-")`)—— 否则门控会把自己扫出来。
@@ -1155,3 +1155,10 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ⑥**反向验证(故障注入后可自证, 全部通过)**: 空钥匙串(`GNUPGHOME=空目录`)⇒ **G1/G3 变红**(rc=1, G3 逐条列出 E); 注入含字面量的 canary 文件 ⇒ **G2 变红并报出文件名**; 抹掉署名换成占位 ⇒ **G4 变红**(报"出现 0 次"+"占位残留"); 还原后四条复绿。
   **完整 `run-ci.cjs` 复跑: 14 项 PASS + `failed=0`(rc=0)**。
   ⑦**署名范围**: 本轮门控提交**不加** `Assisted-by` —— 按 2026-09-11 约定(仅本仓 ukey 侧, 且每个 squash 只出现一次);用户的"代码里一次 + git log 里一次"已由父仓提交 `82f4180` 满足, 不重复计。
+- 2026-09-14 **两个 submodule 的 `evolution` 分支改名为 `doc/2026-9-14/evolution`(用户指令; 本地 + 云端)**:
+  ①**前置检查(无错误才执行)**: `Build` 与 `base` 均满足 —— 父仓 pin == 本地 `evolution` == `main` == `origin/evolution` == `origin/main`(`Build` `dc4f329` / `base` `14a921b`);
+  `main..evolution` 与 `evolution..main` **各 0 提交**(无未合并改动), 工作区干净, 远端可达。
+  ②**执行**: 各 submodule 以 `evolution` 为基点新建 `doc/2026-9-14/evolution` 并 `push -u`(云端 = 各自唯一远端, 内网镜像 `home.rlang.xyz:30009/rlang.xyz/{build,base}.git`), 再删除 `evolution`(**本地 `branch -d` + 云端 `push --delete`**), 最后 `fetch --prune`。
+  ③**无残留引用核验**: `.gitmodules` **不含 `branch=`**(pin 按 SHA ⇒ 改名不可能影响 `git submodule update`); `git config submodule.*` 只有 `active`/`url`; 两个 submodule 的跟踪文件 **0 处**提到分支名; ref 只剩 `refs/heads/doc/2026-9-14/evolution` 及其 remote-tracking。
+  ④**注意**: 每个 submodule **只有一个远端**(内网镜像)——`.gitmodules` 里的 GitHub 地址(`github.com/oLiangLi/{build,base}`)**未配成 remote** ⇒ 若要让 GitHub 也出现该分支, 需先加远端; 父仓的 `origin`/`github`/`gitee` 三个远端与本次无关(父仓本就没有 `evolution` 分支)。
+  ⑤**文档影响**: 本文件与 `ai-doc/` 中对 `evolution` 的**历史叙述**(换基、上游回流、`14a921b`/`a9eb747`/`db0ebfc` 的落点)**保持原样**——记录的是当时事实, 不回填; 仅本条与今日门控条目里的分支名同步为新名。
