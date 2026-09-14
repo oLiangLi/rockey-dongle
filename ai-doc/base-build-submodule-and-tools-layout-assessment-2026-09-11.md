@@ -140,7 +140,7 @@
 
 **验证**:
 
-- `make jsWrapper`:`Build/tools/LIMIT/script/opcode.cjs` 新路径生效并成功生成
+- `make jsWrapper`:`tools/rockey/LIMIT/script/opcode.cjs` 新路径生效并成功生成
   `Web/Script/lib/opcode.ts`(`[opcode] opcode.ts: 已生成 OpCode=154, AllFunc=95`);该目标随后在
   `npm run release`(`tsc`)处失败,**与本改动无关** —— 是 WSL 内已安装的 TypeScript 对
   `downlevelIteration` / `moduleResolution=node10` 的 TS7 弃用报错(TS5101/TS5107),不改 tsconfig 无法通过。

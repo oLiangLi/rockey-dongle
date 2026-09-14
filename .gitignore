@@ -40,19 +40,19 @@ log
 /out
 
 
-## ? Interface/script.h ??(? Build/tools/LIMIT/script/opcode.cjs / make jsWrapper)
+## ? Interface/script.h ??(? tools/rockey/LIMIT/script/opcode.cjs / make jsWrapper)
 /Web/Script/lib/opcode.ts
 
 ## 随机数质量分析数据采集
 /ai-doc/randdata/*.bin
 
-## CI/hooks(验证体系, 需入库): 取消对以下目录的忽略(根锚定)
+## CI/hooks(验证体系, 需入库)与 submodule 入口的取消忽略(根锚定)
+## 注: 上面第 30 行的 `build` 规则在 Windows(core.ignorecase)下会牵连 `Build/`
+##     ⇒ 必须显式放行 submodule 入口, 否则 gitlink 入不了库。
+## 世界专属工具已于 2026-09-14 迁到本仓 tools/rockey/, 不匹配任何忽略规则, 无需 un-ignore。
 !/.githooks/
 !/.githooks/**
 !/Build/
-!/Build/tools/
-!/Build/tools/LIMIT/ci/
-!/Build/tools/LIMIT/ci/**
 
 ## git submodule 配置(必须入库; .* 规则会忽略它)
 !/.gitmodules

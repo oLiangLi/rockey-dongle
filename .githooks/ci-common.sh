@@ -7,8 +7,9 @@ cd "$repo" || exit 0
 [ -x "$(command -v node)" ] || { echo "[ci-hook] node 不可用, 跳过"; exit 0; }
 
 ## 子模块未初始化时给出可操作提示(base/Build 已改为 submodule)
-if [ ! -f "$repo/Build/tools/LIMIT/ci/run-ci.cjs" ]; then
-  echo "[ci-hook] 子模块未初始化(Build/tools/LIMIT/ci/run-ci.cjs 缺失) — 请先执行: git submodule update --init"
+## 判据用共享构建仓的入口文件 Build/Main.mk —— CI 工具本身已于 2026-09-14 迁入本仓 tools/rockey/LIMIT/ci/
+if [ ! -f "$repo/Build/Main.mk" ]; then
+  echo "[ci-hook] 子模块未初始化(Build/Main.mk 缺失) — 请先执行: git submodule update --init"
   exit 0
 fi
 [ "${CI_SKIP_RUN:-0}" = "1" ] && { echo "[ci-hook] CI_SKIP_RUN=1 跳过"; exit 0; }
@@ -18,7 +19,7 @@ head="$(git rev-parse HEAD 2>/dev/null)"
 [ "$(cat "$last" 2>/dev/null)" = "$head" ] && { echo "[ci-hook] $head 已跑过, 跳过"; exit 0; }
 
 echo "[ci-hook] post-merge/post-commit: 自动 CI 快速回归 @ $head ..."
-node Build/tools/LIMIT/ci/run-ci.cjs
+node tools/rockey/LIMIT/ci/run-ci.cjs
 rc=$?
 echo "$head" > "$last"
 if [ "$rc" -ne 0 ]; then

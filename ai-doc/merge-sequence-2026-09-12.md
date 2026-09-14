@@ -57,12 +57,12 @@ make test-optmatrix       # 见下"已知例外": 本次在 WSL 跑
 | `make test-optmatrix` | ✗ 既有 harness 问题(见下) | **rc=0,-O0/-O1/-O2/-O3 全 PASS** |
 
 **已知例外(预先存在,与本次改动无关)**:`make test-optmatrix` 在 Windows 上四档全部"构建失败" ——
-共享仓 `Build/tools/LIMIT/ci/optmatrix.cjs` 里 `cf = "-DNDEBUG " + opt` **含空格**,Windows 分支走 `shell: true` 时未加引号,
+`tools/rockey/LIMIT/ci/optmatrix.cjs`(迁移前位于共享仓 `Build/tools/LIMIT/ci/`)里 `cf = "-DNDEBUG " + opt` **含空格**,Windows 分支走 `shell: true` 时未加引号,
 make 于是收到独立的 `-O0` token 并把它当成 `-O`(output-sync)⇒ 报 `不明输出同步类型`;不带 shell 的等价命令 rc=0。
 **处理方式(本次采用 ②,已完成 ✓)**:②矩阵门禁在 WSL 侧跑 —— WSL 树先 `git fetch <Windows 检出>` + `git merge --ff-only` 到分支 tip,再 `make test-optmatrix` **rc=0,-O0/-O1/-O2/-O3 全 PASS**(同树另跑 `ci`/`dongle`/`rockey-stack-check` 亦全绿)。
 ①修 harness(给 `X4C_RELEASE_CFLAGS`/`X4C_RELEASE_CXXFLAGS` 在 `isWin` 时加引号,提交共享 build 仓并更新 pin)留待以后。
 
-**全新克隆冒烟:已完成 ✓** —— `git clone`(本地路径)+ `git checkout feat/AGINX/upstream-base-shims` + `git submodule update --init` **rc=0**,两个子模块精确落在 pin(`base 14a921b` / `Build db0ebfc`),`base/src` 6 文件、`Build/tools/LIMIT/{ci,sbin}` 就位,`make -n dongle|ci|test-optmatrix|jsWrapper` 全 rc=0;`.gitmodules` 保持 GitHub HTTPS URL(经 `insteadOf` 走内网镜像)。
+**全新克隆冒烟:已完成 ✓** —— `git clone`(本地路径)+ `git checkout feat/AGINX/upstream-base-shims` + `git submodule update --init` **rc=0**,两个子模块精确落在 pin(`base 14a921b` / `Build db0ebfc`),`base/src` 6 文件、`tools/rockey/LIMIT/{ci,sbin}` 就位,`make -n dongle|ci|test-optmatrix|jsWrapper` 全 rc=0;`.gitmodules` 保持 GitHub HTTPS URL(经 `insteadOf` 走内网镜像)。
 
 ## 3. 步骤 3 —— squash 合并
 

@@ -75,7 +75,7 @@ wORLD_DONGLE ?= $(wORLD_DEFAULT_DONGLE)
 ##
 ## 调用栈深度静态检查(退出码 0=无违规 10=超预算) ...
 stack-check: dongle
-	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/stack-check/stack-check.cjs
+	@$(X4C_NODE) $(wORLD_ROOT)/tools/rockey/LIMIT/stack-check/stack-check.cjs
 
 ##
 ## rockey_dongle(设备 App, 含 Testing_* 项)的调用栈深度静态检查 —— 与 stack-check 同一工具,
@@ -84,7 +84,7 @@ stack-check: dongle
 ## 需先 make dongle(本目标自动依赖)。
 ##
 rockey-stack-check: dongle
-	@$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/stack-check/stack-check.cjs --budget=$(if $(BUDGET),$(BUDGET),2032) $(wORLD_ROOT)/.bin/.obj/arm-RockeyARM-native-release/rockey-dongle.map
+	@$(X4C_NODE) $(wORLD_ROOT)/tools/rockey/LIMIT/stack-check/stack-check.cjs --budget=$(if $(BUDGET),$(BUDGET),2032) $(wORLD_ROOT)/.bin/.obj/arm-RockeyARM-native-release/rockey-dongle.map
 
 ##
 ##
@@ -127,8 +127,8 @@ wasm:
 ##   R=1 → npm run release; 否则 → npm run build
 ##
 jsWrapper:
-	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/script/opcode.cjs
-	$(X4C_NODE) $(wORLD_ROOT)/Build/tools/LIMIT/script/commitHash.cjs
+	$(X4C_NODE) $(wORLD_ROOT)/tools/rockey/LIMIT/script/opcode.cjs
+	$(X4C_NODE) $(wORLD_ROOT)/tools/rockey/LIMIT/script/commitHash.cjs
 ifeq ("$(R)","1")
 	cd $(wORLD_ROOT) && npm run release
 else
@@ -171,11 +171,11 @@ typescript0: wasm
 	@$(TSC)
 
 ##
-## 统一 CI 入口(见 Build/tools/LIMIT/ci/run-ci.cjs): 进程内 JS 模拟器回归
+## 统一 CI 入口(见 tools/rockey/LIMIT/ci/run-ci.cjs): 进程内 JS 模拟器回归
 ## 前置: make wasm && make jsWrapper(生成 Web/Agent/Tests/js 封装); CI_STRICT=1 严格
 ##
 ci:
-	$(X4C_NODE) Build/tools/LIMIT/ci/run-ci.cjs
+	$(X4C_NODE) tools/rockey/LIMIT/ci/run-ci.cjs
 test: ci
 
 ##
@@ -196,7 +196,7 @@ install-hooks:
 ## 精简子集: OPTMATRIX_OPTS="-O0 -O3"; 跳过: CI_SKIP_HEAVY=1; 并行度: JOBS=N
 ##
 test-optmatrix:
-	$(X4C_NODE) Build/tools/LIMIT/ci/optmatrix.cjs
+	$(X4C_NODE) tools/rockey/LIMIT/ci/optmatrix.cjs
 
 ##
 ## 网页端 CI(需本机 Chrome): 加载 Web/Agent/Tests 页面, 点击 EmuCreate→EmuTests
@@ -204,7 +204,7 @@ test-optmatrix:
 ## 缺省 headless(无界面); WEB_HEADED=1 以有界面窗口运行; CHROME 可指定浏览器路径。
 ##
 test-web:
-	$(X4C_NODE) Build/tools/LIMIT/ci/web-emutests.cjs
+	$(X4C_NODE) tools/rockey/LIMIT/ci/web-emutests.cjs
 
 ##
 ##

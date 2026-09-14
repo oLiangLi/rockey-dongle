@@ -24,7 +24,7 @@
 | `Build/Main.mk` | 6 | 5 | 构建系统版本号与 `-O1/-O2`(已决定取上游;`-O2` 在 C-02 修复后通过矩阵验证 ✓) |
 | `Build/config/arm-none-eabi.conf` | 9 | 3 | fork 独有 = **我们故意移走**的 `-DrLANG_CONFIG_ENABLE_LIMIT_WORLD`(现由 `MCU/RockeyARM/rockey_predef.h` 提供 ✓) |
 | `Build/core/{common,build-binary,build-executable,build-shared-library}.mk` | 17/4/2/2 | 7/1/1/1 | 注释 + `rLANG_COMMON_STRICT_*` / `X4C_UNWIND_TABLE_CFLAGS` 空缺省(设备由 `project.local.mk` 覆盖为「无 unwind 表」✓) |
-| `Build/tools/README.md`、`Build/tools/LIMIT/README.md` | 2 / 0 | 3 / 10 | 文档差异,即本轮 `tools/ci → tools/LIMIT/ci` 迁移的产物 ✓ |
+| `Build/tools/README.md`、`tools/rockey/LIMIT/README.md` | 2 / 0 | 3 / 10 | 文档差异,即本轮 `tools/ci → tools/LIMIT/ci` 迁移的产物 ✓ |
 | `Build/tools/script/{grammar.actions,wasm2string}.cjs` | 108 / 16 | 108 / 16 | **两侧行数相同 ⇒ 纯换行(CRLF/LF)差异** ✓(无逻辑改动) |
 
 ## 2. 清单级交叉核对

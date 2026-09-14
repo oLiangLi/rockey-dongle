@@ -26,7 +26,7 @@
 |---|---|---|---|
 | H-01 | DRBG 熵反馈用余数 size(64 倍数→SHA512("")) | ✅ | 三处统一共享 `Interface/TRNG.cc`,`SHA512(size_total)`;NIST 8.45MB 10/10 PASS(统计面) |
 | H-02 | >128B 无硬件熵注入 | ✅ | TRNG.cc 按 64B 块逐块 HwARandBytes⊕ChaCha |
-| H-03 | 栈预算 2032B 逼近/超限 | ✅ | 方案1(W16)+2(Helper ctx)+3(noinline)实施,违规路径 32→0,稳态 1784/2032B;`Build/tools/stack-check` 入库 |
+| H-03 | 栈预算 2032B 逼近/超限 | ✅ | 方案1(W16)+2(Helper ctx)+3(noinline)实施,违规路径 32→0,稳态 1784/2032B;`tools/rockey/LIMIT/stack-check` 入库 |
 | H-04 | 启动桩无 BX/BLX 跳转 | 🔒 | 用户确认:MCU 环境 .text 不可读,Cortex-M0 无 BLX 寄存器指令,依赖 app_entry 位置成立 |
 | H-05 | ChaChaPoly Open 先解密后认证 | ✅ | 常量时间 tag 比较 + 失败清零 + *size_ 成功才更新 |
 | H-06 | X25519 全零输出未检/非规范 u | ✅ | 返回 int + 常量时间全零检查;u=0 返回 -EFAULT;RFC 向量过 |
