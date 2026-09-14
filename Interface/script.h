@@ -84,6 +84,7 @@ struct VM_t {
   int OpFuncBasic(uint16_t op, int argc, int32_t argv[]);
   int OpFuncDataFile(uint16_t op, int argc, int32_t argv[]);
   int OpFuncRSA(uint16_t op, int argc, int32_t argv[]);
+  int OpFuncRsaKeyGen(int argc, int32_t argv[]); /* 独立入口: 调用链会走到 1536 位 MR, 需要小栈帧 */
   int OpFuncP256(uint16_t op, int argc, int32_t argv[]);
   int OpFuncSM2(uint16_t op, int argc, int32_t argv[]);
   int OpFuncDigest(uint16_t op, int argc, int32_t argv[]);
@@ -482,6 +483,24 @@ enum class OpCode : uint16_t {
    *! q*iqmp ≡ 1 (mod p)、dmp1 < p-1、dmq1 < q-1; 0 = 通过。scratchAddr 需 bits/8 字节。
    */
   kExRSAKeyCheck = 0x152,  // argc : 4, value = ExRSAKeyCheck(keyFile, keyOffset, scratchAddr, bits)
+
+  /**
+   *! 设备内生成 RSA 私钥(2048/3072)并把**完整私钥**写成 RsaModexp::KeyBlob('RSAK') 落进数据文件:
+   *! 生成完可直接接 ExRSAKeyCheck / ExRSACrtModExp —— 全程不经过 host, 私钥不出设备。
+   *! 【耗时(真机实测)】1536 位素因子(RSA-3072)整对 ≈52 分钟(期望 ≈84 分钟, 长尾 2-3 小时);
+   *!                  2048 位(1024 位素因子)≈6 分钟量级。期间 LED 由心跳驱动闪烁, 不写 dashboard。
+   *! 【种子】argv[2] 指向 **bits/8 字节**的种子块 = seed_p || seed_q(各 bits/16 字节, 小端),
+   *!        调用方用 KDF(MASTER.SECRET, nonce, kType != 0) 派生 ⇒ 同一种子必得同一把私钥
+   *!        (设备内算法与 tools/rockey/LIMIT/sbin/rsa-prime-repro.cjs 逐位对齐)。
+   *!        本指令**只读**种子区, 不写脚本数据区(结果全部落 keyFile)。
+   *! 【落盘】[keyOffset, keyOffset + KeyBlob::TotalSize(bits)): 3072 位 2128B / 2048 位 1424B;
+   *!        字段按 KeyBlob 布局, header(magic 'RSAK')**最后写** ⇒ 半成品可按 magic 识别。
+   *! 【失败】返回负值并置 zero_ 中止脚本(-EINVAL 参数 / -EIO 读写 / -ERANGE 探测超限)。
+   *! 【权限】keyFile < kUserFileID(1000) 需要管理员权限。
+   *! 【资源】工作区 = VM 的 buffer_(ExtendBuf 1KB, 峰值 968B); 本指令会走到 1536 位 Miller-Rabin
+   *!        (本工程最深栈路径之一) ⇒ 栈说明见 Interface/keygen.h。
+   */
+  kExRSAGenKey = 0x153,    // argc : 4...5, value = ExRSAGenKey(keyFile, keyOffset, seedAddr, bits, rounds)
 
   /**
    *!

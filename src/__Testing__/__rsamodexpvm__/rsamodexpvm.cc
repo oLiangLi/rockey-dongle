@@ -1,7 +1,9 @@
 #include <Interface/dongle.h>
+#include <Interface/keygen.h>
 #include <Interface/modexp.h>
 #include <Interface/script.h>
 #include <base/base.h>
+#include <time.h>
 
 rLANG_DECLARE_MACHINE
 
@@ -293,6 +295,277 @@ int CheckCrt(Dongle& rockey, script::VM_t& vm, Buffers& b, const RsaKey& key, in
   return error;
 }
 
+/* ============================ ExRSAGenKey(设备内生成 RSA 私钥) ============================ */
+
+constexpr uint16_t kOpGenKey = static_cast<uint16_t>(OpCode::kExRSAGenKey);
+constexpr uint32_t kGenKeyOffset = 1024; /* 生成结果 blob(与 CRT 用例的 0 / 4096 错开, 且本用例在其后跑) */
+constexpr int32_t kGenSeedAddr = 0;      /* 种子块 = VM 数据区 [0, bits/8) */
+
+/*! 数据文件里读回的完整私钥(各字段各自成 BIGNUM) */
+struct GenKeyBlob {
+  BIGNUM* n = nullptr;
+  BIGNUM* e = nullptr;
+  BIGNUM* d = nullptr;
+  BIGNUM* p = nullptr;
+  BIGNUM* q = nullptr;
+  BIGNUM* dmp1 = nullptr;
+  BIGNUM* dmq1 = nullptr;
+  BIGNUM* iqmp = nullptr;
+  ~GenKeyBlob() {
+    BN_free(n);
+    BN_free(e);
+    BN_free(d);
+    BN_free(p);
+    BN_free(q);
+    BN_free(dmp1);
+    BN_free(dmq1);
+    BN_free(iqmp);
+  }
+};
+
+/*! 读回 KeyBlob: 校验 header(magic/bits/flags)后按布局切字段; raw 需 TotalSize(bits) 字节 */
+bool LoadGenBlob(Dongle& rockey, uint32_t offset, int bits, GenKeyBlob& key, uint8_t* raw) {
+  if (0 != rockey.ReadDataFile(kFileId, offset, raw, static_cast<size_t>(RsaModexp::KeyBlob::TotalSize(bits))))
+    return false;
+  const RsaModexp::KeyBlobHeader* hdr = reinterpret_cast<const RsaModexp::KeyBlobHeader*>(raw);
+  if (hdr->magic != RsaModexp::KeyBlob::kMagic || hdr->bits != static_cast<uint32_t>(bits) ||
+      0 == (hdr->flags & RsaModexp::KeyBlob::kFlagCrt)) {
+    rlLOGE(TAG, "GenKey: blob header 非法(magic=%08x bits=%u flags=%u)", hdr->magic, hdr->bits, hdr->flags);
+    return false;
+  }
+  const int w = RsaModexp::KeyBlob::FieldSize(bits);
+  const int h = RsaModexp::KeyBlob::HalfSize(bits);
+  key.n = BN_lebin2bn(raw + RsaModexp::KeyBlob::NOffset(bits), w, nullptr);
+  key.e = BN_lebin2bn(raw + RsaModexp::KeyBlob::EOffset(bits), w, nullptr);
+  key.d = BN_lebin2bn(raw + RsaModexp::KeyBlob::DOffset(bits), w, nullptr);
+  key.p = BN_lebin2bn(raw + RsaModexp::KeyBlob::POffset(bits), h, nullptr);
+  key.q = BN_lebin2bn(raw + RsaModexp::KeyBlob::QOffset(bits), h, nullptr);
+  key.dmp1 = BN_lebin2bn(raw + RsaModexp::KeyBlob::Dmp1Offset(bits), h, nullptr);
+  key.dmq1 = BN_lebin2bn(raw + RsaModexp::KeyBlob::Dmq1Offset(bits), h, nullptr);
+  key.iqmp = BN_lebin2bn(raw + RsaModexp::KeyBlob::IqmpOffset(bits), h, nullptr);
+  return nullptr != key.n && nullptr != key.e && nullptr != key.d && nullptr != key.p && nullptr != key.q &&
+         nullptr != key.dmp1 && nullptr != key.dmq1 && nullptr != key.iqmp;
+}
+
+/*! 用 TASSL 独立复核设备内生成的私钥: 素数性 / n=p*q / e*d≡1 (mod lcm) / CRT 参数 / iqmp */
+int VerifyGenBlob(const GenKeyBlob& k, int bits, const char* what) {
+  int error = 0;
+  BN_CTX* const bc = BN_CTX_new();
+  BIGNUM* const t = BN_new();
+  BIGNUM* const pm1 = BN_new();
+  BIGNUM* const qm1 = BN_new();
+  BIGNUM* const g = BN_new();
+  BIGNUM* const lcm = BN_new();
+
+  if (BN_num_bits(k.n) != bits) {
+    rlLOGE(TAG, "%s: bits(n)=%d != %d", what, BN_num_bits(k.n), bits);
+    ++error;
+  }
+  if (1 != BN_is_prime_ex(k.p, 64, bc, nullptr) || 1 != BN_is_prime_ex(k.q, 64, bc, nullptr)) {
+    rlLOGE(TAG, "%s: p/q 未通过 64 轮素性检验", what);
+    ++error;
+  }
+  if (0 == BN_cmp(k.p, k.q)) {
+    rlLOGE(TAG, "%s: p == q", what);
+    ++error;
+  }
+  BN_mul(t, k.p, k.q, bc); /* n == p*q */
+  if (0 != BN_cmp(t, k.n)) {
+    rlLOGE(TAG, "%s: n != p*q", what);
+    ++error;
+  }
+  BN_set_word(t, RsaKeyGen::kE); /* e == 65537 */
+  if (0 != BN_cmp(t, k.e)) {
+    rlLOGE(TAG, "%s: e != 65537", what);
+    ++error;
+  }
+  BN_sub_word(BN_copy(pm1, k.p), 1);
+  BN_sub_word(BN_copy(qm1, k.q), 1);
+  BN_gcd(g, pm1, qm1, bc);
+  BN_mul(lcm, pm1, qm1, bc);
+  BN_div(lcm, nullptr, lcm, g, bc);
+  BN_mod_mul(t, k.e, k.d, lcm, bc); /* e*d ≡ 1 (mod lcm(p-1,q-1)) */
+  if (!BN_is_one(t)) {
+    rlLOGE(TAG, "%s: e*d != 1 (mod lcm)", what);
+    ++error;
+  }
+  BN_mod(t, k.d, pm1, bc); /* dmp1 == d mod (p-1) */
+  if (0 != BN_cmp(t, k.dmp1)) {
+    rlLOGE(TAG, "%s: dmp1 != d mod (p-1)", what);
+    ++error;
+  }
+  BN_mod(t, k.d, qm1, bc); /* dmq1 == d mod (q-1) */
+  if (0 != BN_cmp(t, k.dmq1)) {
+    rlLOGE(TAG, "%s: dmq1 != d mod (q-1)", what);
+    ++error;
+  }
+  BN_mod_inverse(t, k.q, k.p, bc); /* iqmp == q^{-1} mod p */
+  if (0 != BN_cmp(t, k.iqmp)) {
+    rlLOGE(TAG, "%s: iqmp != q^{-1} mod p", what);
+    ++error;
+  }
+
+  BN_free(lcm);
+  BN_free(g);
+  BN_free(qm1);
+  BN_free(pm1);
+  BN_free(t);
+  BN_CTX_free(bc);
+  return error;
+}
+
+/*! 调一次 ExRSAGenKey(种子已在 b.data[0, bits/8)) */
+int RunGenKey(script::VM_t& vm, int bits, int rounds, bool expect_ok) {
+  int32_t argv[5] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kGenSeedAddr, bits, rounds};
+  vm.zero_ = 0;
+  const int rc = vm.OpFuncRsaKeyGen(5, argv);
+  const bool ok = (0 == rc && 0 == vm.zero_);
+  if (ok != expect_ok) {
+    rlLOGE(TAG, "GenKey(bits=%d): rc=%d zero_=%d, 期望 %s", bits, rc, vm.zero_, expect_ok ? "成功" : "失败");
+    return 1;
+  }
+  return 0;
+}
+
+/*! 生成 + 复核 + 确定性 + 与 ExRSAKeyCheck / ExRSACrtModExp 串联; 返回错误数 */
+int CheckGenKey(Dongle& rockey, script::VM_t& vm, Buffers& b) {
+  int error = 0;
+  const int bits = 3072;
+  const int hb = bits / 16; /* 每个素数的种子字节数 */
+
+  /* 固定种子(device 侧算法与 rsa-prime-repro.cjs 逐位对齐 ⇒ 同种子必得同一 p/q) */
+  for (int i = 0; i < hb; ++i) {
+    b.data[i] = static_cast<uint8_t>(0x11 + i * 7);
+    b.data[hb + i] = static_cast<uint8_t>(0x51 + i * 5);
+  }
+  uint8_t seed_copy[384]; /* 后面的 CRT 用例会往数据区写 m/结果(与种子区重叠), 比对前要还原 */
+  memcpy(seed_copy, b.data, sizeof(seed_copy));
+
+  const clock_t t0 = clock();
+  error += RunGenKey(vm, bits, MillerRabinContext::kMaxRounds, true);
+  const double secs = static_cast<double>(clock() - t0) / CLOCKS_PER_SEC;
+  rlLOGI(TAG, "GenKey(3072, %d 轮): %.1fs", MillerRabinContext::kMaxRounds, secs);
+  if (0 != error)
+    return error;
+
+  uint8_t raw1[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+  GenKeyBlob key;
+  if (!LoadGenBlob(rockey, kGenKeyOffset, bits, key, raw1)) {
+    rlLOGE(TAG, "GenKey: blob 读回失败");
+    return error + 1;
+  }
+  error += VerifyGenBlob(key, bits, "GenKey(3072)");
+
+  /* 生成出来的 blob 必须能被 ExRSAKeyCheck 接受 */
+  {
+    int32_t argv[4] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kChkScratchAddr, bits};
+    vm.zero_ = 0;
+    const int rc = vm.OpFuncRSA(kOpKeyCheck, 4, argv);
+    if (0 != rc || 0 != vm.zero_) {
+      rlLOGE(TAG, "GenKey: ExRSAKeyCheck(生成的 blob) 返回 %d(zero_=%d)", rc, vm.zero_);
+      ++error;
+    } else {
+      rlLOGI(TAG, "GenKey: ExRSAKeyCheck 接受生成的 blob ✓");
+    }
+  }
+
+  /* 用生成的私钥做一次 CRT 私钥运算, 与 TASSL 全宽 m^d mod n 对拍 */
+  {
+    const size_t nbytes = static_cast<size_t>(bits) / 8;
+    BIGNUM* mv = BN_new();
+    BN_CTX* bc = BN_CTX_new();
+    RAND_bytes(b.data + kMAddr, static_cast<int>(nbytes));
+    BN_lebin2bn(b.data + kMAddr, static_cast<int>(nbytes), mv);
+    BN_mod(mv, mv, key.n, bc);
+    std::ignore = BN_bn2lebinpad(mv, b.data + kMAddr, static_cast<int>(nbytes));
+
+    memset(b.data + kCrtOutAddr, 0, nbytes);
+    int32_t argv[5] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kMAddr, kCrtOutAddr, bits};
+    vm.zero_ = 0;
+    const int rc = vm.OpFuncRSA(kOpCrtModExp, 5, argv);
+    BIGNUM* got = BN_lebin2bn(b.data + kCrtOutAddr, static_cast<int>(nbytes), nullptr);
+    BIGNUM* ref = BN_new();
+    std::ignore = BN_mod_exp(ref, mv, key.d, key.n, bc);
+    if (0 != rc || 0 != vm.zero_ || 0 != BN_cmp(got, ref)) {
+      rlLOGE(TAG, "GenKey: 生成的私钥 CRT 签名与 TASSL 不一致(rc=%d zero_=%d cmp=%d)", rc, vm.zero_, BN_cmp(got, ref));
+      ++error;
+    } else {
+      rlLOGI(TAG, "GenKey: CRT 签名 == TASSL m^d mod n ✓");
+    }
+    BN_free(ref);
+    BN_free(got);
+    BN_free(mv);
+    BN_CTX_free(bc);
+  }
+
+  /* 确定性: 同一种子再生成一次(同一偏移覆盖), 整块 blob 必须逐字节相同 */
+  {
+    uint8_t raw2[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+    memcpy(b.data, seed_copy, sizeof(seed_copy)); /* 还原上一次 CRT 用例覆盖掉的种子 */
+    error += RunGenKey(vm, bits, MillerRabinContext::kMaxRounds, true);
+    if (0 != rockey.ReadDataFile(kFileId, kGenKeyOffset, raw2, sizeof(raw2))) {
+      rlLOGE(TAG, "GenKey: 第二次生成读回失败");
+      ++error;
+    } else if (0 != memcmp(raw1, raw2, sizeof(raw2))) {
+      rlLOGE(TAG, "GenKey: 同一种子两次生成结果不一致(!)");
+      ++error;
+    } else {
+      rlLOGI(TAG, "GenKey: 同一种子 ⇒ 逐字节相同的私钥 ✓");
+    }
+  }
+
+  /* 2048 位(1024 位素因子): 更短的路径也要能生成 + 复核 */
+  {
+    const int bits2 = 2048;
+    const int hb2 = bits2 / 16;
+    for (int i = 0; i < hb2; ++i) {
+      b.data[i] = static_cast<uint8_t>(0x21 + i * 3);
+      b.data[hb2 + i] = static_cast<uint8_t>(0x91 + i * 11);
+    }
+    error += RunGenKey(vm, bits2, MillerRabinContext::kMaxRounds, true);
+    uint8_t raw[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+    GenKeyBlob key2;
+    if (LoadGenBlob(rockey, kGenKeyOffset, bits2, key2, raw))
+      error += VerifyGenBlob(key2, bits2, "GenKey(2048)");
+    else
+      ++error;
+  }
+
+  /* 参数/权限/越界分支 */
+  {
+    int32_t argv_argc[3] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kGenSeedAddr};
+    vm.zero_ = 0;
+    std::ignore = vm.OpFuncRsaKeyGen(3, argv_argc);
+    if (0 == vm.zero_) {
+      rlLOGE(TAG, "GenKey: argc=3 未被拒绝");
+      ++error;
+    }
+
+    error += RunGenKey(vm, 1024, 16, false); /* 素因子 512 位 < 能力下限 */
+
+    const PERMISSION saved = vm.valid_permission_;
+    vm.valid_permission_ = PERMISSION::kAnonymous;
+    int32_t argv_perm[4] = {100, static_cast<int32_t>(kGenKeyOffset), kGenSeedAddr, bits};
+    vm.zero_ = 0;
+    std::ignore = vm.OpFuncRsaKeyGen(4, argv_perm);
+    if (0 == vm.zero_) {
+      rlLOGE(TAG, "GenKey: 非管理员写 keyFile<1000 未被拒绝");
+      ++error;
+    }
+    vm.valid_permission_ = saved;
+
+    int32_t argv_oor[4] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), 700, bits}; /* 700+384 > 1024 */
+    vm.zero_ = 0;
+    std::ignore = vm.OpFuncRsaKeyGen(4, argv_oor);
+    if (0 == vm.zero_) {
+      rlLOGE(TAG, "GenKey: 越界种子地址未被拒绝");
+      ++error;
+    }
+  }
+
+  return error;
+}
+
 int RunCase(Dongle& rockey, bool& ok_out) {
   int error = 0;
   ok_out = true;
@@ -403,6 +676,12 @@ int RunCase(Dongle& rockey, bool& ok_out) {
     } else {
       rlLOGI(TAG, "CRT 结果 == 全宽 ExRSAModExp 结果");
     }
+  }
+
+  /* 6) ExRSAGenKey: 设备内生成 RSA 私钥(n/e/d/p/q/dmp1/dmq1/iqmp)并与 TASSL 对拍 */
+  {
+    rlLOGI(TAG, "=== ExRSAGenKey 用例(设备内生成完整私钥) ===");
+    error += CheckGenKey(rockey, vm, b);
   }
 
   ok_out = (0 == error);

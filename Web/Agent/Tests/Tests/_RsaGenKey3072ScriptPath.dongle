@@ -1,0 +1,28 @@
+///
+/// Real-device SCRIPT-PATH sample: RSA-3072 private key GENERATION inside the ukey.
+///
+/// ExRSAGenKey(keyFile, keyOffset, seedAddr, bits[, rounds]) 生成完整私钥 n/e/d/p/q/dmp1/dmq1/iqmp
+/// 并按 RsaModexp::KeyBlob('RSAK', 2128B) 落到 [keyOffset, keyOffset+2128) —— 生成完可直接
+/// ExRSAKeyCheck 复核、再用 ExRSACrtModExp 签发, 全程私钥不出设备。
+///
+/// 种子: 这里由主机预先注入 dashboard(factory dataFile 0xFFFF)[4096, 4480) = seed_p || seed_q
+/// (各 192B, 小端)。生产形态下种子由 host 用 KDF(MASTER.SECRET, nonce, kType != 0) 派生
+/// (见 ai-doc/rsa-root-ca-generation-2026-09-11.md); 本指令**只读**该 384B 区域。
+/// 同一粒种子必然得到同一把私钥 —— 可用 tools/rockey/LIMIT/sbin/rsa-prime-repro.cjs 离线复核 p/q。
+///
+/// 运行(模拟器/真机都走同一条脚本路径):
+///   RKEY_ADMIN=1 node Web/Agent/Tests/__Testing_dongle.cjs run Web/Agent/Tests/Tests/_RsaGenKey3072ScriptPath.dongle
+///   (模拟器: 把 run 换成 jsemu <file> <idx>)
+///
+/// ⚠ 耗时(真机实测): 1536 位素因子整对 ≈52 分钟(期望 ≈84 分钟, 长尾 2-3 小时), 期间 LED 闪烁;
+///   host 进程必须一直活着(host 一死, 设备侧 item 会在约 7 分钟内结束) —— 用后台任务 + 日志轮询,
+///   详见 ai-doc/rsa3072-device-generation-2026-09-11.md 与 ukey-longrun-and-rsa3072-2026-09-11.md。
+///
+public 1024;
+
+@ 0 [384] : SeedBlock;   // 384B: seed_p(192) || seed_q(192), 小端
+@ 384 [384] : KeyChkScratch; // ExRSAKeyCheck 的 p*q 乘积缓冲(384B)
+
+ReadDataFile(0xFFFF, 4096, 0, 384);        // 主机注入的种子 → 数据区 [0, 384)
+ExRSAGenKey(0xFFFF, 1024, 0, 3072);        // 设备内生成 → 完整私钥 blob 落 dashboard[1024, 3152)
+ExRSAKeyCheck(0xFFFF, 1024, 384, 3072);    // 复核 magic/bits/flags、p*q==n、q*iqmp≡1 (mod p)

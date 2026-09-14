@@ -1,4 +1,5 @@
 #include "script.h"
+#include <Interface/keygen.h>
 #include <Interface/modexp.h>
 
 rLANG_DECLARE_MACHINE
@@ -198,6 +199,44 @@ int VM_t::OpFuncDataFile(uint16_t op, int argc, int32_t argv[]) {
     }
   } else {
     zero_ = SIGILL;
+  }
+
+  return value;
+}
+
+/**
+ *! ExRSAGenKey(keyFile, keyOffset, seedAddr, bits[, rounds]) —— 设备内生成 RSA 私钥并写 KeyBlob。
+ *!
+ *! 单独一个入口(而不是并进 OpFuncRSA)的理由: 本指令会走到 1536 位 Miller-Rabin, 那是本工程最深的
+ *! 栈路径; OpFuncRSA 的帧本身就有 712B(buffer/pubk 结构), 叠上去会顶穿 2032B 的设备栈。
+ */
+int VM_t::OpFuncRsaKeyGen(int argc, int32_t argv[]) {
+  int value = 0;
+  constexpr int kCyclesGenkey = 0x100000; /* 与硬件 kGenerateRSA 同档 */
+
+  cycles_ -= kCyclesGenkey;
+
+  if (argc < 4) {
+    zero_ = SIGILL;
+  } else {
+    const int key_file = argv[0];
+    const int32_t key_offset = argv[1];
+    const int32_t bits = argv[3];
+    const int rounds = (argc >= 5) ? argv[4] : 0;
+
+    if (bits != RsaKeyGen::kMinBits && bits != RsaKeyGen::kMaxBits) {
+      value = zero_ = -EINVAL;
+    } else if (key_offset < 0 || (key_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
+      value = zero_ = -EACCES; /* 私钥落盘位置必须受管理员保护(与 Ex* RSA 家族同规) */
+    } else {
+      const uint8_t* seed = static_cast<const uint8_t*>(OpCheckMM(argv[2], RsaKeyGen::SeedSize(bits)));
+      if (seed) {
+        RsaKeyGen::Arena& arena = *reinterpret_cast<RsaKeyGen::Arena*>(buffer_);
+        value = RsaKeyGen::Generate(*dongle_, key_file, static_cast<uint32_t>(key_offset), seed, bits, rounds, arena);
+        if (value < 0)
+          zero_ = value; /* 失败必须中止脚本: 否则调用方会把"未写完的 blob"当成"已生成" */
+      }
+    }
   }
 
   return value;
@@ -1655,7 +1694,13 @@ int VM_t::Execute() {
               }
             } else /* 0x140, 0x160 */ {
               if (op < 0x160) {
-                value = OpFuncRSA(op, argc_, argv_);
+                /*! 0x153(设备内生成 RSA 私钥)会走到 1536 位 Miller-Rabin —— 本工程最深的栈路径,
+                 *! 因此走独立的小栈帧入口, 不借用 OpFuncRSA 的 712B 帧(见 Interface/keygen.h)。 */
+                if (op == OpCode::kExRSAGenKey) {
+                  value = OpFuncRsaKeyGen(argc_, argv_);
+                } else {
+                  value = OpFuncRSA(op, argc_, argv_);
+                }
               } else {
                 value = OpFuncP256(op, argc_, argv_);
               }

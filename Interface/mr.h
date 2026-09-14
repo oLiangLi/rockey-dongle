@@ -22,7 +22,14 @@ class MillerRabinContext {
       memset(v, 0, sizeof(v));
       n = 0;
     }
-    limb_t v[kCountWords * 2]{}; /* a*b */
+    /**
+     *! 容量 = 模数上限(kCountWords)+ 2 limb 逃生位: 本类的所有运算(MontMul 的 CIOS 临时区、
+     *! ToMont/FromMont 的进位、addSmall 的进位)都**不超过模数宽度**, 乘积一律落在 MontMul 的
+     *! 局部 t[] 里, 从不写进 BN; 溢出的 2 个 limb 只作进位兜底(addSmall/FromMont 最多 +1 limb)。
+     *! 之所以要对齐到这么小: 密钥生成(RsaKeyGen)要把 MR 上下文 + 候选 BN 一起塞进 1KB 的
+     *! ExtendBuf, 见 Interface/keygen.h。
+     */
+    limb_t v[kCountWords + 2]{};
     int n = 0;
   };
 
@@ -34,7 +41,8 @@ class MillerRabinContext {
   /**
    *! RSA 素数搜索(设备内单指令完成整个密钥生成的基础): 调用方已把 bits/8 字节的
    *! 种子(设备 TRNG 或由 MASTER.SECRET 派生的字节)填进 c.v; 这里只保证候选是
-   *! 严格 bits 位的奇数(最高位、最低位置 1), 之后每次 +2 直到通过 Miller-Rabin。
+   *! 严格 bits 位的奇数(最高两位置 1 —— 兼顾严格位宽与 p*q 恰为 2*bits 位, 见 .cc),
+   *! 之后每次 +2 直到通过 Miller-Rabin。
    *! 返回 1 = 命中素数, 0 = 超过 maxProbes 或候选越界(调用方按失败处理);
    *! probes 回传实际探测次数(期望值 ≈ ln(2^bits)/2)。
    */
@@ -203,7 +211,7 @@ class MillerRabinContext {
   }
   void pow2Set(BN& a, int bit) { /* a += 2^bit */
     const int limb = bit / 32, off = bit % 32;
-    if (limb < 0 || limb >= kCountWords * 2)
+    if (limb < 0 || limb >= kCountWords + 2)
       return;
     if (limb >= a.n) {
       for (int i = a.n; i <= limb; ++i)

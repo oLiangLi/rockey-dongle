@@ -244,12 +244,15 @@ rLANG_NOINLINE void MillerRabinContext::subEq(BN& a, const BN& b) {
   trim(a);
 }
 
-/*! 候选定型: c.v 已由调用方用种子/TRNG 填满 bits/8 字节, 这里保证它是严格 bits 位的奇数 */
+/*! 候选定型: c.v 已由调用方用种子/TRNG 填满 bits/8 字节, 这里保证它是严格 bits 位的奇数。
+ *! 最高**两**位都置 1(与 OpenSSL BN_generate_prime_ex 同规): 于是 p、q 都 >= 1.5*2^(bits-1),
+ *! p*q > 2^(2*bits-1) ⇒ n 恰好是 2*bits 位 —— ROOT CA 的证书校验按位宽卡"至少 3072 位",
+ *! 只置最高位时 n 有一半概率只有 3071 位。 */
 rLANG_NOINLINE void MillerRabinContext::SeedCandidate(BN& c, int bits) {
   const int words = bits / 32;
   c.n = words;
   c.v[0] |= 1u;               /* 最低位: 奇数 */
-  c.v[words - 1] |= 1u << 31; /* 最高位: 恰 bits 位 */
+  c.v[words - 1] |= 0xC0000000u; /* 最高两位: 严格 bits 位 + 保证模数位宽 */
   trim(c);
 }
 

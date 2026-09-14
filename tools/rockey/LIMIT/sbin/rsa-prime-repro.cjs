@@ -4,7 +4,9 @@
  * ROOT CA 方案的核心承诺: **同一种子 ⇒ 同一对素数**(任何持有 MASTER.SECRET 的一方可复现)。
  *
  * 算法与 Interface/mr.{h,cc} 逐位对齐:
- *   1) 种子(bits/8 字节小端) 定型: bit0 |= 1(奇数), bit(bits-1) |= 1(严格 bits 位);
+ *   1) 种子(bits/8 字节小端) 定型: bit0 |= 1(奇数), bit(bits-1) 与 bit(bits-2) |= 1
+ *      (严格 bits 位 + 保证 p*q 恰为 2*bits 位 —— 与 Interface/mr.cc 的 SeedCandidate 同规;
+ *       2026-09-14 之前只置最高位, 那时 n 有一半概率是 2*bits-1 位);
  *   2) 每次候选先小素数试除(d = 3..999 的所有奇数, 命中即合数);
  *   3) 存活者做 Miller-Rabin, 基依次取 [2,3,5,7,11,13,17,19,23,29,31,37,41,43,47,53], 最多 rounds 个;
  *   4) 否则候选 +2 继续; 计数 probes。
@@ -99,7 +101,7 @@ function isPrimeLikeDevice(n, rounds) {
 
 /** 与设备 FindPrime 一致: 候选定型后 +2 搜索; 返回 { prime, probes } */
 function findPrimeFromSeed(seedBig, bits, rounds, maxProbes = 1000000) {
-  let cand = seedBig | 1n | (1n << BigInt(bits - 1));
+  let cand = seedBig | 1n | (3n << BigInt(bits - 2)); /* 最高两位置 1: 与设备 SeedCandidate 同规 */
   const limit = 1n << BigInt(bits);
   for (let probes = 0; probes <= maxProbes; ++probes) {
     if (isPrimeLikeDevice(cand, rounds)) return { prime: cand, probes };
