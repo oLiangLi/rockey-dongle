@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/script.h>
 #include <base/base.h>
 #include <tuple>
@@ -24,6 +24,7 @@ rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
+#if !defined(__RockeyARM__)
 /*!
  * 精密时钟 / 实时优先级(测量"心跳误差"用; 由 RLANG_PRECISE_CLOCK=1 开启):
  *   - Windows: timeBeginPeriod(1) 打开 1ms 多媒体定时器分辨率(缺省粒度约 15.6ms),
@@ -75,6 +76,7 @@ static long long MonoNs() {
   return (long long)ts.tv_sec * 1000000000LL + (long long)ts.tv_nsec;
 #endif
 }
+#endif /* __RockeyARM__ */
 
 static constexpr uint32_t TAG = rLANG_DECLARE_MAGIC_Xs("SHELL");
 

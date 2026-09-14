@@ -1162,3 +1162,13 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ③**无残留引用核验**: `.gitmodules` **不含 `branch=`**(pin 按 SHA ⇒ 改名不可能影响 `git submodule update`); `git config submodule.*` 只有 `active`/`url`; 两个 submodule 的跟踪文件 **0 处**提到分支名; ref 只剩 `refs/heads/doc/2026-9-14/evolution` 及其 remote-tracking。
   ④**注意**: 每个 submodule **只有一个远端**(内网镜像)——`.gitmodules` 里的 GitHub 地址(`github.com/oLiangLi/{build,base}`)**未配成 remote** ⇒ 若要让 GitHub 也出现该分支, 需先加远端; 父仓的 `origin`/`github`/`gitee` 三个远端与本次无关(父仓本就没有 `evolution` 分支)。
   ⑤**文档影响**: 本文件与 `ai-doc/` 中对 `evolution` 的**历史叙述**(换基、上游回流、`14a921b`/`a9eb747`/`db0ebfc` 的落点)**保持原样**——记录的是当时事实, 不回填; 仅本条与今日门控条目里的分支名同步为新名。
+- 2026-09-14 **文档边界 + "世界事件"说明归并(用户指令)**:
+  ①**`README.md` 归用户自行修改, AI 不再改动(即使有错误)** —— 本会话此前对 README 的编辑(命名空间署名、ROOT CA=K3' 等)自此视为历史;该节已由用户同日自行精简掉, 因此上一条 ② 里引用的 `README.md:117/119` 两处矛盾标注**随之作废**(不再跟踪)。
+  ②**世界事件说明归并到新增的 `ai-doc/world-events.md`**: 用户要求"只在 ai-doc 里留一个简单说明", 且**不提下一任 K0'/K1'/K2'/K3'**(那发生在未来) —— 新文件涵盖判据(提交 hash 为 nonce / `Magic=(H0*256+H1)&((1<<kBits)-1)` / kBits 缺省 18 / `Magic==42` / reserve ⇒ `Perfect()===NaN`)、术语(roll / sell SoJ / 赌博)、四通道留痕与 git log marker 提交、命令族(`roll|gamble|soj|worldevent status|audit|sweep|split|sacrifice|cansign`)、CI 第 9 项看门狗、世界线分裂、献祭硬分叉;已核对**全文 0 处**出现 `K0'..K3'`;按本仓约定写 **UTF-8 with BOM**。
+  ③**自愈事实(读 `Web/Agent/Tests/js/jsWorldEvent.js:158` 确认)**: README 缺少 `## 世界事件 (World Events)` 标记时, 写手会**自动补一个最小章节**再追加条目 ⇒ README 精简不影响留痕, 也无需继续在 README 里维护说明正文。
+  ④**未归并项(待用户定)**: 被删的 README 段落里还含 **E0 遗失(敦煌)/拾到者签署仪式** 的说明 —— 现仅存于 `mkey/E0-*/FINDER-SIGNATURES.json` + CI 第 10 项 + git log;是否需要一份 ai-doc 说明待定。
+- 2026-09-14 **处置落定(用户): 恢复 `mkey/SUCCESSION-K.json`, 并把"K4"更正为误写**:
+  ①此前工作区曾**暂存该文件的删除**;实测那会让 CI 第 11 项 `succession` 因 `ENOENT` 变红(`failed=1 rc=1`, 其余 13 项 + 门控全 PASS)。**用户决定恢复** ⇒ 已 `git checkout HEAD -- mkey/SUCCESSION-K.json` 还原(那笔暂存删除随之撤销)。
+  ②**语义更正(用户 2026-09-14)**: **`K4` 是 `K3'` 的误写, 不存在 K4 这把设备**(早先"0-based/1-based 计数口径混用"的推断不再作为结论, 以"误写"为准) ⇒ 该文件中原 `"k4"` 对象**改名为 `"rootCA"`**(`sameAs: "K3'"`、`hid: 00000000-381a5653df0a303f`, 并注明系误写);原先"不在四把之中 / 不参与真机枚举 / 出现后单独记录 HID"的说法**随之作废**。
+  已核对**无任何代码解析 `k4`/`rootCA` 字段**(纯文档字段)⇒ 改名安全, 且以 CI 回归确认。
+  ③**回归**: `succession verify` **OK**(状态数 24、rank/digest 匹配、齐备且唯一、四个 roll 全 Infinity、排列一致, rc=0);完整 `run-ci.cjs` **14 项 + 门控 G1..G4 全 PASS, `failed=0`(rc=0)**。

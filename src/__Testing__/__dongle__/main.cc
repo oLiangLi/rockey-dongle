@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/modexp.h>
 #include <Interface/mr.h>
 #include <Interface/x509.h>
@@ -3315,7 +3315,19 @@ int Start(void* InOutBuf, void* ExtendBuf) {
 
   rockey.SetLEDState(LED_STATE::kBlink);
 
+#if !defined(__RockeyARM__)
+  for(int i = 0; i < 10; ++i) {
+    DWORD ticks = 0;
+    if(0 != rockey.GetRealTime(&Context->realTime_))
+      break;
+    if (0 != rockey.GetTickCount(&ticks))
+      break;
+    rlLOGI(TAG, "rockey.GetRealTime %d, rockey.GetTickCount %d", (int)Context->realTime_, (int)ticks);
+    rLANG_Sleep(1000);
+  }
+#else /* __RockeyARM__ */
   rockey.GetRealTime(&Context->realTime_);
+#endif /* __RockeyARM__ */
   rockey.GetExpireTime(&Context->expireTime_);
   rockey.GetTickCount(&Context->ticks_);
   rockey.GetDongleInfo(&Context->dongle_info_);
