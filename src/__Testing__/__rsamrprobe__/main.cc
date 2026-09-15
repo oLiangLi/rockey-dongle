@@ -45,6 +45,7 @@ int RsaprProbeMain(int argc, char* argv[]) {
   std::setvbuf(stdout, nullptr, _IONBF, 0); /* 关缓冲: 卡死时也能看到最后阶段 */
   bool admin = false;
   bool info_only = false; /* -info: 只枚举打印设备信息(不 Open/不下载/不执行) */
+  bool flash_only = false; /* -flash: Open+VerifyPIN+UpdateExeFile 后退出(不执行) */
   bool cos_mode = false;
   bool delay_mode = false;
   uint32_t delay_iters = 0; /* -delay N: 设备端负载迭代数 */
@@ -55,6 +56,12 @@ int RsaprProbeMain(int argc, char* argv[]) {
   int ai = 1;
   if (ai < argc && 0 == strcmp("-info", argv[ai])) {
     info_only = true; /* 只枚举: 打印 ver_/type_/pid_/uid_ 后退出(对任何设备都安全) */
+    ++ai;
+  }
+  if (ai < argc && 0 == strcmp("-flash", argv[ai])) {
+    flash_only = true; /* 只做 Open+VerifyPIN(admin)+UpdateExeFile(WT_APP_DONGLE) 后退出:
+                        * **不调 ExecuteExeFile** —— 未初始化设备(槽 1 空)执行会挂死, 而刷写
+                        * 失败只是返回 F0000008/F0000006, 因此可安全用来判定"能否刷我们的 app"。 */
     ++ai;
   }
   if (ai < argc && 0 == strcmp("-2", argv[ai])) {
@@ -153,6 +160,10 @@ int RsaprProbeMain(int argc, char* argv[]) {
   if (!rockey.Ready()) {
     std::printf("[rsamrprobe] rockey not ready\n");
     return 1;
+  }
+  if (flash_only) {
+    std::printf("[rsamrprobe] -flash: 刷写流程结束(未执行), 不触碰槽 1 的执行\n");
+    return 0;
   }
 
   /* ---- 运行窗口标定: 设备端跑 N 次固定计算, host 量墙钟; 失败=超出窗口 ---- */

@@ -1229,3 +1229,29 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ④**改动文件**: `Interface/emulator.cc`(两处 lambda 遮蔽修复)、`src/__Testing__/__dongle__/main.cc`(HeartbeatTests +
   `HeartbeatLoop` 共用循环); `make dongle`(栈 `超预算 0 条`, `.bss` 仍 `0x10`)、`make rockey-stack-check`、
   `make windows X4C_USING_CLANG=0`、`make foobar X4C_USING_CLANG=0` 全 rc=0。
+- 2026-09-15 **真机成绩单(标准版 dev[0] `f56a125b71094c42`) + 时钟锁初始化与两机型对比(用户授权)**:
+  ①**2048@16 验收 PASS**: 设备内 `1,530,156ms(≈25.5min)`, `gen_rc=0`; TASSL 复核 prime_p/q=1、gcd(e,p−1)=1、
+    distinct=1、bits(n)=2048、e=010001、e·d≡1 mod lcm、dmp1/dmq1/iqmp=1 ⇒ `PASS(error=0)`。
+    (@16 轮 25.5min vs @4 轮 25.2min ⇒ 轮数几乎不影响总耗时, 瓶颈在素数搜索。)
+  ②**心跳候选代价(标准版, iters=2000)**: GetTickCount 13.0 / GetPINState 13.0 / SetLEDState 13.5 / KeepAlive 13.9 /
+    ReadShareMemory 15.0 / KickWDG 16.0 / **GetDongleInfo 921.5 µs**(贵 70 倍, 绝不可当心跳)。
+  ③**喂狗判定(循环内只有该调用, 时长 >3min ≫ ~2min 看门狗窗口)**: 标准版 GetTickCount 180.8s(13,846,153 次)、
+    KeepAlive 178.9s(12,857,142 次)、GetPINState 181.5s(13,846,153 次) —— 全部 `rc=0` 且 `done` 跑满 ⇒ **均喂狗**。
+  ④**时钟锁(标准时钟锁 `381a5653e10a323f`, type=0x00)初始化**: 框架 admin 会话在 index<0xF0 时先做 provision —
+    `GenUniqueKey("10086",5)` → `ChangePIN(生成的 admin → FFFFFFFFFFFFFFFF)` → `Open` → `VerifyPIN` →
+    `SetUserID(rLANG_WORLD_MAGIC)`, 之后才是 `WT_APP_DONGLE` 刷写。实测全部 0/00000000, `UpdateExeFile 58712B 0`
+    ⇒ 初始化成功: PID=**1D9343F2**(与标准版同值, 由固定串"10086"/5 决定)、uid=world magic、admin PIN 回归标准 16×F;
+    之后 `ExecuteExeFile` 正常(573ms) ⇒ **之前挂死的真因是"未初始化 + 槽 1 无 app"**, 不是锁有问题。
+    机型能力差异: `LimitSeedCount` 时钟锁 **0** / 标准版 `F0000008`; `SetExpireTime` 时钟锁 **0** / 标准版 `F0000016`
+    (标准版日志里那两行红字即此, 非缺陷)。
+  ⑤**测量方法教训(重要)**: 时钟锁**每进程固定开销 ≈507ms**(标准版 ≈135ms)⇒ 用 2000 次小迭代得到"时钟锁 200µs/次"
+    完全是假象(各候选取值 535~541ms 几乎相同即是征兆)。**修正后两机型单次代价几乎一致**: 大迭代数实测
+    GetTickCount 13.1/13.6 µs、GetPINState 13.0/13.6 µs、KeepAlive 13.9/15.1、SetLEDState 13.5/15.1、
+    ReadShareMemory 15.0/17.1、KickWDG 16.0/17.1、GetDongleInfo 921/956 µs(前=标准版, 后=时钟锁)。
+    时钟锁喂狗判定重跑(14,000,000 次 ≈190s): GetTickCount 190.0s、GetPINState 190.6s 均 `rc=0` ⇒ **均喂狗**。
+    ⇒ **继续用基类 `KeepAlive()`(纯 GetTickCount, 不动 LED)**; "换 GetPINState 更一致"的假设**不成立**(持平或略贵,
+    且它读权限状态有语义副作用); 延时 0.200~1.000s 在两机型同样成立(延时是 CPU 忙等, 每 0x2000 单位一次心跳
+    即使 14µs 也只多 ~20ms)。**标定/代价测量一律用 ≥10⁵ 次迭代或同机型内取差值**。
+  ⑥**工具**: `__Testing__rsamrprobe__` 新增 **`-flash`**(Open+VerifyPIN(admin)+UpdateExeFile 后退出, **不执行**
+    ExecuteExeFile ⇒ 可在未初始化设备上安全判定"能否刷我们的 app"); 心跳/Delay 测量入口
+    `__Testing__dongle__ -2 18 <cand_hex> <iters_hex>`。
