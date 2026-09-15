@@ -68,7 +68,9 @@ enum class kTestingIndex : int {
 
   RsaKeyGenTests,
 
-  ChaosDelayTests
+  ChaosDelayTests,
+
+  HeartbeatTests
 
 };
 
@@ -3149,6 +3151,117 @@ int Testing_ChaosDelayTests(Dongle& rockey, void* Context, void* ExtendBuf) {
 #endif
 }
 
+/*! `HeartbeatTests` —— 心跳候选"代价 + 是否真喂狗"真机探针(用户 2026-09-15):
+ *!   背景: 设备侧长循环必须周期性发一次 COS 调用喂看门狗(纯 busy loop 会被 ROM 掐), 候选之间
+ *!   的代价差异极大且**未必跨机型一致**(有时钟锁/标准版), 之前 `-cos` 得到的数字在 master 上
+ *!   全是 `ExecuteExeFile` 固定往返的假象(设备侧快速路径只在 AGINX 分支), 因此用本测试项重测。
+ *!   设备侧: **只**循环调用一个候选 iters 次(不夹带任何其它调用), 结果写 factory dataFile[4064,4080)。
+ *!   宿主: 单次 ExecuteExeFile(同一宿主进程只有第一次会真正执行设备侧), 用墙钟算 µs/次;
+ *!         把 iters 提到"远超看门狗窗口"(单次调用总时长远大于 2 分钟)后仍能正常返回
+ *!         ⇒ 该候选**确实服务看门狗**; 若设备被复位/宿主永久等待 ⇒ 该候选不喂狗。
+ *! CLI: __Testing__dongle__ -2 18 <cand_hex> <iters_hex>
+ *!   cand: 1=GetPINState 2=GetTickCount 3=SetLEDState(kBlink) 4=ReadShareMemory
+ *!         5=GetDongleInfo 6=KeepAlive(基类: 仅 GetTickCount) 7=KickWDG(基类: GetTickCount+每8次翻LED) */
+constexpr uint32_t kHeartbeatMagic = 0x42414548u; /* 'HEAB' */
+constexpr uint32_t kHeartbeatStatusOffset = 4064;
+struct HeartbeatStatus {
+  uint32_t magic;
+  uint32_t cand;
+  uint32_t iters;
+  uint32_t done;     /* 实际完成次数(== iters 表示整个循环跑完) */
+  uint32_t checksum; /* 各次返回值累加: 防止循环被优化掉, 也便于肉眼确认调用真的发生 */
+  uint32_t beats;    /* rockey.Heartbeats() */
+};
+
+/*! 心跳候选循环(设备侧与模拟器共用; **宿主不调用** —— 宿主只负责计时) */
+static uint32_t HeartbeatLoop(Dongle& rockey, uint32_t cand, uint32_t iters, DONGLE_INFO* dinfo, uint8_t* share,
+                              uint32_t* done) {
+  uint32_t sum = 0;
+  for (uint32_t i = 0; i < iters; ++i) {
+    switch (cand) {
+      case 1: {
+        PERMISSION perm = PERMISSION::kAnonymous;
+        sum += static_cast<uint32_t>(rockey.GetPINState(&perm)) + static_cast<uint32_t>(perm);
+        break;
+      }
+      case 2: {
+        DWORD ticks = 0;
+        sum += static_cast<uint32_t>(rockey.GetTickCount(&ticks)) + (ticks & 0xffu);
+        break;
+      }
+      case 3:
+        sum += static_cast<uint32_t>(rockey.SetLEDState(LED_STATE::kBlink));
+        break;
+      case 4:
+        sum += static_cast<uint32_t>(rockey.ReadShareMemory(share));
+        break;
+      case 5:
+        sum += static_cast<uint32_t>(rockey.GetDongleInfo(dinfo));
+        break;
+      case 6:
+        sum += rockey.KeepAlive();
+        break;
+      case 7:
+        rockey.KickWDG();
+        ++sum;
+        break;
+      default:
+        break;
+    }
+    if (done)
+      ++*done;
+  }
+  return sum;
+}
+
+int Testing_HeartbeatTests(Dongle& rockey, void* Context, void* ExtendBuf) {
+  Context_t* ctx = static_cast<Context_t*>(Context);
+  const uint32_t cand = ctx->argv_[1];
+  const uint32_t iters = ctx->argv_[2];
+
+#if defined(__RockeyARM__) || defined(__EMULATOR__)
+  /* 大对象放 ExtendBuf, 不占栈(设备侧栈预算 2032B) */
+  DONGLE_INFO* const dinfo = reinterpret_cast<DONGLE_INFO*>(ExtendBuf);
+  uint8_t* const share = reinterpret_cast<uint8_t*>(ExtendBuf) + 128;
+  uint32_t done = 0;
+  HeartbeatStatus st{};
+  st.checksum = HeartbeatLoop(rockey, cand, iters, dinfo, share, &done);
+  st.magic = kHeartbeatMagic;
+  st.cand = cand;
+  st.iters = iters;
+  st.done = done;
+  st.beats = rockey.Heartbeats();
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kHeartbeatStatusOffset, &st, sizeof(st));
+  rlLOGI(TAG, "Heartbeat(dev/emu): cand=%u iters=%u done=%u checksum=%08x beats=%u", (unsigned)cand, (unsigned)iters,
+         (unsigned)done, (unsigned)st.checksum, (unsigned)st.beats);
+  return 0;
+#elif !defined(__EMULATOR__)
+  {
+    HeartbeatStatus zero{};
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kHeartbeatStatusOffset, &zero, sizeof(zero));
+  }
+  int main_result = 0;
+  const auto t0 = rLANG_GetTickCount();
+  const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+  const auto t1 = rLANG_GetTickCount();
+  HeartbeatStatus st{};
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kHeartbeatStatusOffset, &st, sizeof(st));
+  const long long ms = static_cast<long long>(t1 - t0);
+  /* 固定开销按 ChaosDelay 标定的 135ms 估(含两次 dataFile 往返 + app 启动/收尾) */
+  const double per_us = (st.done && ms > 135) ? (static_cast<double>(ms) - 135.0) * 1000.0 / st.done : 0.0;
+  rlLOGI(TAG,
+         "Heartbeat(host): cand=%u iters=%u ms=%lld rc=%d mainRet=%d status(magic=%08x done=%u checksum=%08x "
+         "beats=%u) => %.2f us/次(已扣 135ms 固定开销)",
+         (unsigned)cand, (unsigned)iters, ms, exec_result, main_result, st.magic, (unsigned)st.done, (unsigned)st.checksum,
+         (unsigned)st.beats, per_us);
+  return 0;
+#else
+  std::ignore = rockey;
+  std::ignore = ExtendBuf;
+  return 0;
+#endif
+}
+
 int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   Context_t* ctx = static_cast<Context_t*>(Context);
   [[maybe_unused]] const int mode = (int)(ctx->argv_[1] & 0xff) ? (int)(ctx->argv_[1] & 0xff) : 1;
@@ -3612,6 +3725,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(RsaCrtTests);
   DONGLE_RUN_TESTING(RsaKeyGenTests);
   DONGLE_RUN_TESTING(ChaosDelayTests);
+  DONGLE_RUN_TESTING(HeartbeatTests);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

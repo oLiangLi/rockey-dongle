@@ -1649,8 +1649,10 @@ int Dongle::TDESECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
-  auto callback = [&](const void* key, size_t size) -> int {
-    if (size != 16)
+  /*! 注意: 形参**不能**叫 `size` —— 它会遮蔽外层(待处理数据)的 `size`, 导致只处理第一个 16B 块
+   *! (2026-09-15 修复: 密文落盘用例里 header(16B) 能对上、其余大字段全错的根因)。 */
+  auto callback = [&](const void* key, size_t key_size) -> int {
+    if (key_size != 16)
       return last_error_ = -EFAULT;
     return TDESECB((const uint8_t*)key, buffer, size, encrypt);
   };
@@ -1681,8 +1683,9 @@ int Dongle::SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt) {
     return DONGLE_CHECK(-EBADF);
 
   DongleHandle* thiz = reinterpret_cast<DongleHandle*>(handle_);
-  auto callback = [&](const void* key, size_t size) -> int {
-    if (size != 16)
+  /*! 同上: 形参不得遮蔽外层 `size`(否则只加/解密第一个 16B 块, 见 TDESECB 注释)。 */
+  auto callback = [&](const void* key, size_t key_size) -> int {
+    if (key_size != 16)
       return last_error_ = -EFAULT;
     return SM4ECB((const uint8_t*)key, buffer, size, encrypt);
   };

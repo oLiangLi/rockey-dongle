@@ -1208,3 +1208,24 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ⑥**更正: `__Testing__rsamrprobe__` 的 `-cos`/`-delay`/单数字探测在 master 上全是 no-op** —— 设备侧快速路径(`rsaprobe::kMagic`→`Testing_RsaPrimeOne`/`Testing_CosProbe`)只存在于 AGINX 分支, master 的 `__Testing__/__dongle__/main.cc` 里 `rsaprobe|kModeOne|kModeCos|kModeDelay` **零命中**; `probe_io.h:21` 约定完成时回写 `error_[7]='COS1'` 而实测恒为 0。⇒ 此前记录的 COS 数字(dev[0] ≈34 µs/call、dev[1] 160 ms/call)**全是 `ExecuteExeFile` 固定往返 ÷ iters 的假象**(iters 200→20000 总时间不变即铁证)。**"GetPINState 是否两台一致 / 该不该用它做 COS"至今没有有效数据**, 要回答必须先在 master 上补设备侧心跳探针。
   ⑦**RSA-3072 设备内生成(昨日长跑)结果**: dev[0] `ExecuteExeFile=0 mainRet=10086 in 4,221,409ms(≈70.4min)`, `gen_rc=0`, 宿主 TASSL 复核全绿(素性 / gcd(e,p−1)=1 / p≠q / bits(n)=3072 / e·d≡1 mod lcm / dmp1·dmq1·iqmp); **`check_rc=-1` 不是失败** —— 该用例为省 300B 栈已不跑设备侧 `ExRSAKeyCheck`, 字段停在初始化哨兵 `0xFFFFFFFF`(`main.cc:3006-3007` 注释)。设备侧结果 06:56:21 就返回了, 宿主进程随后卡死 82min(CPU 0s; 已按用户选择 kill, 排队的 COS 测试一并停掉)。
   ⑧**改动文件**: `Interface/execute.cc`(ChaosDelay 单实现 + 标定后常量)、`Interface/script.h`(ChaosDelay 声明)、`src/__Testing__/__dongle__/main.cc`(ChaosDelayTests + 单次调用宿主)、`src/__Testing__/__rsamrprobe__/main.cc`(`-info` + ver/type/pid/uid 打印); `make dongle`(固件 `.bss` 仍 `0x10`)与 `make windows X4C_USING_CLANG=0` 均 rc=0。
+- 2026-09-15 **密文落盘(②)修好 + 心跳探针(③)就位**:
+  ①**SM4/TDES-ECB 密封路径 bug 根因(宿主/模拟器侧, 不是密码学设计问题)**: `Interface/emulator.cc` 的
+  `Dongle::SM4ECB(int id, uint8_t* buffer, size_t size, bool encrypt)` 里回调 lambda 的形参写成 `size`,
+  **遮蔽了外层待处理数据的 `size`**, 于是 `SM4ECB(key, buffer, size/*==16*/, encrypt)` 只加/解密**第一个
+  16B 块**; `TDESECB(int id, ...)` 同一处同样的写法。⇒ 完全解释此前的现象: 密文落盘用例里 `header`(16B) MATCH、
+  其余大字段(n/e/d/p/q/dmp1/dmq1/iqmp)**全 DIFF**。**修复**: lambda 形参改名 `key_size`, 传外层 `size`
+  (两处; 并加注释钉住, 防回归)。真机 `Dongle::SM4ECB` 走厂商 `Dongle_SM4`, **从未受影响**。
+  ②**验证**: `make foobar X4C_USING_CLANG=0` → `.bin/amd64-foobar-windows-debug/__Testing__rsamodexpvm__.exe`
+  **退出码 10086(0 错)**, 三条密封断言全绿: `密文落盘 + 逐块解密 == 明文生成 ✓`、`ExRSAKeyCheck(keyId) 接受密文 blob ✓`、
+  `ExRSACrtModExp(keyId) == TASSL m^d mod n ✓`(该用例按 xModule.mk 只在 foobar 板构建 ⇒ 之前那次失败必然是模拟器侧)。
+  真机密封路径端到端(刷固件 + `ExRSAGenKey` keyId=996/998 全流程)仍未跑, 留待休息时段。
+  ③**心跳探针就位**: 新增测试项 `HeartbeatTests`(`__Testing__dongle__` 索引 **0x18**): 设备侧**只**循环调用一个
+  候选 iters 次(不夹带任何其它调用), 结果写 factory dataFile `[4064,4080)`; 宿主**单次** `ExecuteExeFile` 计时并
+  扣掉 135ms 固定开销 ⇒ µs/次。候选: 1=`GetPINState` 2=`GetTickCount` 3=`SetLEDState(kBlink)`
+  4=`ReadShareMemory` 5=`GetDongleInfo` 6=基类 `KeepAlive()` 7=基类 `KickWDG()`。
+  CLI `__Testing__dongle__ -2 18 <cand_hex> <iters_hex>`; **判定喂狗**: 把 iters 提到"总时长远超看门狗窗口(>2min)"
+  后仍能正常返回 ⇒ 该候选服务看门狗, 设备被复位/宿主永久等待 ⇒ 不服务。模拟器管路自检通过(cand=1/2/4/6,
+  iters=1000, `done=1000`; cand=6 的 `beats=1000` 印证 KeepAlive 计数), 真机测量(每候选约 4 分钟 + 一次刷写)留待休息时段。
+  ④**改动文件**: `Interface/emulator.cc`(两处 lambda 遮蔽修复)、`src/__Testing__/__dongle__/main.cc`(HeartbeatTests +
+  `HeartbeatLoop` 共用循环); `make dongle`(栈 `超预算 0 条`, `.bss` 仍 `0x10`)、`make rockey-stack-check`、
+  `make windows X4C_USING_CLANG=0`、`make foobar X4C_USING_CLANG=0` 全 rc=0。
