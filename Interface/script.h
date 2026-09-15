@@ -318,6 +318,14 @@ rLANG_ABIREQUIRE(WorldPublic::kSizePublic == sizeof(WorldPublic) && 1024 == size
 rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf);
 
 /**
+ *! 设备侧随机延时循环(**单实现**: `RockeyTrustExecutePrepare` 与标定用例走同一条代码路径)。
+ *!   units 由调用方给出(生产 = `kDelayBaseUnits + 采样 % kDelaySpanUnits`; 标定 = 宿主指定固定值);
+ *!   每 0x2000 单位喂一次 `KeepAlive()`(GetTickCount 只读、**不动 LED**)。
+ *! 返回 LCG 终值与心跳累加值的混合 —— 调用方"使用"该结果, 循环才不会被优化掉。
+ */
+rLANGEXPORT uint32_t rLANGAPI ChaosDelay(Dongle& dongle, uint32_t units, uint32_t seed);
+
+/**
  *!
  */
 /**

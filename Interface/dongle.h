@@ -1,4 +1,4 @@
-#pragma once
+﻿#pragma once
 
 #ifndef __WTINC_DONGLE_PUBLIC__
 #define __WTINC_DONGLE_PUBLIC__
@@ -262,25 +262,29 @@ class Dongle {
   virtual int SetLEDState(LED_STATE state);
 
   /**
-   *! 看门狗心跳(喂狗) —— 放在**基类**, 任何"可能长时间不回宿主"的循环都能直接调
-   *! (MillerRabinContext/RsaModexp 各自的 KickWDG() 都转发到这里)。
-   *! 本机型的约定是**任何一次 COS 调用都算喂狗**(厂家未给显式喂狗 API), 所以这里用
-   *! "LED 翻转 + GetTickCount(只读、无副作用)" 作心跳, 边际开销 ≈13us; 宿主/模拟器上只计数,
-   *! 便于测试断言(Heartbeats())。
-   *!
-   *! 【纪律】喂狗必须按"时间"定节奏, 不能按"迭代次数": 单次迭代耗时差异大时, 按次数会在慢迭代
-   *! 段饿死看门狗(2026-09-15 ExRSAGenKey 真机实测): 每个候选一次试除 0.13~0.2s, 而进入
-   *! Miller-Rabin 的候选要几十秒 —— 旧的"每 1024 次喂一次"在连续小合数段会累计约 2 分钟不发
-   *! COS 调用 ⇒ 设备被复位、LED 停闪、host 永久等待。
+   *! 只"防冻结"的心跳: 发一次 COS 调用(`GetTickCount`, 只读、无副作用), **绝不动 LED**。
+   *! 用于一切"不能长时间不发 COS 调用"的等待/循环(ROM 只在命令/指令边界喂狗; 实测约 2 分钟
+   *! 不喂就会被看门狗复位)—— 例如 execute.cc 里的随机延时循环。
+   *! **LED 归用户语义**: 除了自研 RSA 这种分钟级、确实需要"还活着"指示的运算, 一律只 KeepAlive()。
+   */
+  uint32_t KeepAlive() {
+    /**
+     *! 在支持时钟的设备上, 这会带来一点点微不足道的熵
+     */
+    ++heartbeat_;
+    DWORD ticks = 0;
+    int result = GetTickCount(&ticks);
+    return heartbeat_ + ticks + result;
+  }
+
+  /**
+   *! 长任务心跳 = KeepAlive() + LED 翻转(每 8 次才翻, 否则 ~7Hz 肉眼像常亮)。
+   *! **只给自研 RSA/素数搜索这类分钟级运算用**(用户约定: LED 是用户语义, 别被普通等待占用)。
+   *! MillerRabinContext / RsaModexp 各自的 KickWDG() 都转发到这里(保留自己的计数)。
    */
   void KickWDG() {
-    ++heartbeat_;
+    KeepAlive();
 #if defined(__RockeyARM__)
-    /*! 喂狗与"看得见的心跳"分开: GetTickCount 每次调用都发(只读、~13us, 保证任何 0.2s 级的
-     *! 循环都把狗喂饱); LED 每 8 次才翻转一次 —— 每个候选都翻的话 ≈7Hz, 肉眼看起来是常亮/微闪,
-     *! 反而看不出"还活着"。每 8 次 ⇒ 约 1s 一次明显闪烁。 */
-    DWORD ticks = 0;
-    (void)GetTickCount(&ticks);
     if ((heartbeat_ & 7u) == 0)
       (void)SetLEDState((heartbeat_ & 8u) ? LED_STATE::kOn : LED_STATE::kOff);
 #endif

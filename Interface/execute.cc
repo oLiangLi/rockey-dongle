@@ -68,9 +68,23 @@ static int RockeyTrustDecryptData(VM_t& vm, const ScriptText* text, size_t szDat
   return 0;
 }
 
+/*! 设备侧随机延时循环(**单实现**): 每 0x2000 单位喂一次 `KeepAlive()`, 返回 LCG 终值 ^ 心跳累加。
+ *! **刻意不动 LED**: KeepAlive() 只读 GetTickCount, LED 语义留给用户与自研 RSA 分钟级长运算。 */
+rLANGEXPORT uint32_t rLANGAPI ChaosDelay(Dongle& dongle, uint32_t units, uint32_t seed) {
+  uint32_t chaos = seed;
+  uint32_t beats = 0;
+  for (volatile uint32_t i = 0; i < units; ++i) {
+    chaos = chaos * 1664525u + 1013904223u; /* LCG 依赖链: 编译器无法消除 */
+    if (0 == (i & 0x1fffu))
+      beats += dongle.KeepAlive();
+  }
+  return chaos ^ beats;
+}
+
 rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1024 */, void* ExtendBuf) {
   union DecodeTextContext {
     uint8_t data_[256];
+    uint32_t u32_data_[64];
     ScriptText text_;
     struct {
       WorldCreateHeader header_;
@@ -83,6 +97,32 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
   int result = 0;
   if (vm.data_ != InOutBuf || vm.buffer_ != ExtendBuf)
     return -EBADF;
+
+  /**
+   *! 考虑到我们私有的一些算法实现不是严格等时的, 我们在真机上产生一些各个ukey各异的延时以降低
+   *! 侧信道信息泄露的风险(同 ukey + 同输入 ⇒ 同延时; 不同 ukey ⇒ 不同延时 —— 设备唯一性来自
+   *! LocalChaos 里混入的 SM3(DONGLE_INFO), 见 secret.cc)。
+   *! **只在真机生效**: 模拟器/wasm 端我们不依赖其安全, 也不需要这份延时(否则每次脚本执行都要
+   *! 付 0.2~1.0s, make ci/jsuite 会被拖慢几十倍)。
+   */
+#if defined(__RockeyARM__)
+  vm.dongle_->SHA512(InOutBuf, 1024, v.data_);
+  vm.dongle_->LocalChaos(v.u32_data_);
+
+  /*! 延时循环用 mr.cc `Endurance` 同款 **LCG 依赖链**(单实现在 `script::ChaosDelay`), 不需要 `__asm`。
+   *! **2026-09-15 真机标定**(dev[0] `f56a125b71094c42`, 测试项 `Testing_ChaosDelayTests` 逐个单位数计时):
+   *!     135ms(units=0) / 248(1e5) / 361(2e5) / 588(4e5) / 814(6e5) / 1041(8e5) / 1267(1e6) / 1549(1248575)
+   *!   ⇒ 线性回归 **1.1325 µs/单位**(kMaxProbes 内完全线性, ±1ms 可重复), 每帧固定开销 **135ms**
+   *!   (含两次 dataFile 往返与 app 启动/收尾; 框架自身空跑 = 57ms)。目标区间 0.2~1.0s ⇒
+   *!     base = 176600 单位 ≈ 0.200s; base + span = 883000 单位 ≈ 1.000s ⇒ span = 706400。 */
+  constexpr uint32_t kDelayBaseUnits = 176600; /* ≈0.200s @1.1325µs/单位 */
+  constexpr uint32_t kDelaySpanUnits = 706400; /* 跨度 ≈0.800s ⇒ 上沿 ≈1.000s */
+  {
+    const uint32_t units = kDelayBaseUnits + (v.u32_data_[0] % kDelaySpanUnits);
+    v.u32_data_[60] += ChaosDelay(*vm.dongle_, units, v.u32_data_[1]);
+    vm.dongle_->SeedBytes(&v, sizeof(v));
+  }
+#endif /* __RockeyARM__ */
 
   rLANG_ABIREQUIRE(256 == sizeof(v));
   memcpy(&v, InOutBuf, sizeof(v));

@@ -44,6 +44,7 @@ int RsaprProbeMain(int argc, char* argv[]) {
   (void)TAG;
   std::setvbuf(stdout, nullptr, _IONBF, 0); /* 关缓冲: 卡死时也能看到最后阶段 */
   bool admin = false;
+  bool info_only = false; /* -info: 只枚举打印设备信息(不 Open/不下载/不执行) */
   bool cos_mode = false;
   bool delay_mode = false;
   uint32_t delay_iters = 0; /* -delay N: 设备端负载迭代数 */
@@ -52,6 +53,10 @@ int RsaprProbeMain(int argc, char* argv[]) {
   int maxProbes = 2000;
   int limbs = 32; /* 候选 limb 数(标定用: 4/8/16/24/32) */
   int ai = 1;
+  if (ai < argc && 0 == strcmp("-info", argv[ai])) {
+    info_only = true; /* 只枚举: 打印 ver_/type_/pid_/uid_ 后退出(对任何设备都安全) */
+    ++ai;
+  }
   if (ai < argc && 0 == strcmp("-2", argv[ai])) {
     admin = true;
     ++ai;
@@ -89,8 +94,19 @@ int RsaprProbeMain(int argc, char* argv[]) {
   if (r <= 0) return 1;
   for (int i = 0; i < r && i < 8; ++i) {
     const uint8_t* h = dongle_info[i].hid_;
-    std::printf("[rsamrprobe] dev[%d] hid=%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x%02x\n", i, h[0],
-                h[1], h[2], h[3], h[4], h[5], h[6], h[7], h[8], h[9], h[10], h[11]);
+    /* m_Type 语义(厂商 Dongle_API.h:115): 0xFF=标准版(无时钟) / 0x00=标准时钟锁 / 0x02=标准U盘锁 */
+    const char* tname = 0xFF == dongle_info[i].type_   ? "standard/no-clock"
+                        : 0x00 == dongle_info[i].type_ ? "clock-lock"
+                        : 0x02 == dongle_info[i].type_ ? "udisk-lock"
+                                                       : "?";
+    std::printf("[rsamrprobe] dev[%d] ver=%08x type=%02x(%s) pid=%08x uid=%08x hid=", i,
+                dongle_info[i].ver_, dongle_info[i].type_, tname, dongle_info[i].pid_, dongle_info[i].uid_);
+    for (int k = 0; k < 12; ++k) std::printf("%02x", h[k]);
+    std::printf("\n");
+  }
+  if (info_only) {
+    std::printf("[rsamrprobe] -info: 枚举 %d 台设备后退出(未 Open/未下载)\n", r);
+    return 0;
   }
   if (dev_index < 0 || dev_index >= r) {
     std::printf("[rsamrprobe] WT_RKEY_DEVICE=%d 超出枚举范围(0..%d)\n", dev_index, r - 1);

@@ -66,7 +66,9 @@ enum class kTestingIndex : int {
 
   RsaCrtTests,
 
-  RsaKeyGenTests
+  RsaKeyGenTests,
+
+  ChaosDelayTests
 
 };
 
@@ -2940,10 +2942,12 @@ struct GenKeyStatus {
 
 int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   Context_t* ctx = static_cast<Context_t*>(Context);
-  [[maybe_unused]] int bits = (int)ctx->argv_[0];
+  /*! 框架约定(与 Testing_RsaCrtTests 一致): argv_[0] = 测试索引, 参数从 argv_[1] 起
+   *!  ⇒ CLI: __Testing__dongle__ -2 16 <bits> <rounds>  (hex; 800=2048 / C00=3072) */
+  [[maybe_unused]] int bits = (int)ctx->argv_[1];
   if (bits != 2048 && bits != 3072)
-    bits = 2048; /* 缺省 2048(真机 ≈6min@4 轮); 3072 要 ≈1 小时, 由 CLI 显式指定 */
-  [[maybe_unused]] int rounds = (int)ctx->argv_[1];
+    bits = 2048; /* 缺省 2048(真机 ≈25min@4 轮); 3072 约 1 小时量级, 由 CLI 显式指定 */
+  [[maybe_unused]] int rounds = (int)ctx->argv_[2];
   if (rounds < 1 || rounds > MillerRabinContext::kMaxRounds)
     rounds = MillerRabinContext::kMaxRounds; /* 缺省 16 轮(生产口径) */
 
@@ -3089,6 +3093,62 @@ int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
 #endif /* __RockeyARM__ */
 }
 
+/*! `ChaosDelayTests` —— 设备侧随机延时标定(用户 2026-09-15):
+ *!   设备端**只**调用 `script::ChaosDelay`(与 `RockeyTrustExecutePrepare` 生产路径**同一个函数**),
+ *!   单位数由宿主逐次写进 `Context_t::argv_[1]`; 宿主用墙钟测每次 `ExecuteExeFile` 耗时 ⇒
+ *!   线性回归得到「µs/单位」与「每帧固定开销」, 再按 0.2~1.0s 反解 execute.cc 的两个常量。
+ *!   设备端不自己计时(item 内 GetTickCount 冻结), 结果(units/result/beats)经 factory dataFile 回读。
+ *! CLI: __Testing__dongle__ -2 17   (每档 2 次, 含 units=0 的空跑作固定开销参考) */
+constexpr uint32_t kChaosMagic = 0x4C414843u; /* 'CHAL' */
+constexpr uint32_t kChaosStatusOffset = 4048; /* 与 GenKey 状态(4032..4047)错开 */
+struct ChaosStatus {
+  uint32_t magic;
+  uint32_t units;
+  uint32_t result;
+  uint32_t beats;
+};
+
+int Testing_ChaosDelayTests(Dongle& rockey, void* Context, void* ExtendBuf) {
+  Context_t* ctx = static_cast<Context_t*>(Context);
+#if defined(__RockeyARM__)
+  std::ignore = ExtendBuf;
+  ChaosStatus st{};
+  st.magic = kChaosMagic;
+  st.units = ctx->argv_[1];
+  st.result = script::ChaosDelay(rockey, st.units, 0x12345678u);
+  st.beats = rockey.Heartbeats();
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kChaosStatusOffset, &st, sizeof(st));
+  rlLOGI(TAG, "ChaosDelay(dev): units=%u result=%08x beats=%u", (unsigned)st.units, (unsigned)st.result,
+         (unsigned)st.beats);
+  return 0;
+#elif !defined(__EMULATOR__)
+  /*! **单次调用**: 实测同一宿主进程内只有**第一次** `ExecuteExeFile` 会真正执行设备侧程序
+   *! (第二次起 SDK 返回 0 但设备侧不跑 —— 见 2026-09-15 标定记录) ⇒ 每个单位数独立起一次进程:
+   *!   CLI: __Testing__dongle__ -2 17 <units_hex>
+   *! 宿主只测这一次的墙钟; 设备侧结果(units/result/beats)经 factory dataFile 回读校验。 */
+  const uint32_t units = ctx->argv_[1];
+  {
+    ChaosStatus zero{};
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kChaosStatusOffset, &zero, sizeof(zero));
+  }
+  int main_result = 0;
+  const auto t0 = rLANG_GetTickCount();
+  const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+  const auto t1 = rLANG_GetTickCount();
+  ChaosStatus st{};
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kChaosStatusOffset, &st, sizeof(st));
+  rlLOGI(TAG,
+         "ChaosDelay(host): units=%u rc=%d mainRet=%d ms=%lld status(magic=%08x units=%u result=%08x beats=%u)",
+         (unsigned)units, exec_result, main_result, (long long)(t1 - t0), st.magic, (unsigned)st.units,
+         (unsigned)st.result, (unsigned)st.beats);
+  return 0;
+#else
+  std::ignore = rockey;
+  std::ignore = ExtendBuf;
+  return 0;
+#endif
+}
+
 int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   Context_t* ctx = static_cast<Context_t*>(Context);
   [[maybe_unused]] const int mode = (int)(ctx->argv_[1] & 0xff) ? (int)(ctx->argv_[1] & 0xff) : 1;
@@ -3116,7 +3176,7 @@ int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
     st.sign_rc = 0xFFFFFFFEu;
   } else {
     st.sign_rc = static_cast<uint32_t>(
-        mx.CrtSignFile(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset, m, s, bits, ws));
+        mx.CrtSignFile(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset, m, s, bits, 0 /* 内部 API: 0=无密文(脚本层的 1000 哨兵由 opcode 层映射) */, ws));
     if (0 == static_cast<int32_t>(st.sign_rc))
       std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtSReOffset, s, static_cast<size_t>(nbytes));
   }
@@ -3551,6 +3611,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(RsaModexpTests);
   DONGLE_RUN_TESTING(RsaCrtTests);
   DONGLE_RUN_TESTING(RsaKeyGenTests);
+  DONGLE_RUN_TESTING(ChaosDelayTests);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;
