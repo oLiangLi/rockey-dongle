@@ -216,23 +216,31 @@ int VM_t::OpFuncRsaKeyGen(int argc, int32_t argv[]) {
 
   cycles_ -= kCyclesGenkey;
 
-  if (argc < 4) {
+  if (argc < 4 || argc > 6) {
     zero_ = SIGILL;
   } else {
     const int key_file = argv[0];
     const int32_t key_offset = argv[1];
     const int32_t bits = argv[3];
     const int rounds = (argc >= 5) ? argv[4] : 0;
+    /*! cipherKeyId 约定(用户 2026-09-15): **1000 = 明文哨兵**(不用 0 —— 真机上 id=0 的文件可能建不了);
+     *! 真实 SM4 临时密钥只允许 901..999(正好落在"900 以上"/1000 以下的内部区间)。 */
+    const int cipher_arg = (argc >= 6) ? argv[5] : kCipherPlainId;
+    const int cipher_key = (kCipherPlainId == cipher_arg) ? 0 : cipher_arg;
 
-    if (bits != RsaKeyGen::kMinBits && bits != RsaKeyGen::kMaxBits) {
+    /*! RSA-3072 生成只服务最重要的用途 ⇒ **一律要求管理员权限**(不再是"仅 keyFile < 1000 时才要") */
+    if (valid_permission_ != PERMISSION::kAdministrator) {
+      value = zero_ = -EACCES;
+    } else if (bits != RsaKeyGen::kMinBits && bits != RsaKeyGen::kMaxBits) {
       value = zero_ = -EINVAL;
-    } else if (key_offset < 0 || (key_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
-      value = zero_ = -EACCES; /* 私钥落盘位置必须受管理员保护(与 Ex* RSA 家族同规) */
+    } else if (key_offset < 0 || (cipher_arg != kCipherPlainId && (cipher_arg <= 900 || cipher_arg >= 1000))) {
+      value = zero_ = -EINVAL; /* 只接受 1000(明文)或 901..999(内部临时 SM4 密钥) */
     } else {
       const uint8_t* seed = static_cast<const uint8_t*>(OpCheckMM(argv[2], RsaKeyGen::SeedSize(bits)));
       if (seed) {
         RsaKeyGen::Arena& arena = *reinterpret_cast<RsaKeyGen::Arena*>(buffer_);
-        value = RsaKeyGen::Generate(*dongle_, key_file, static_cast<uint32_t>(key_offset), seed, bits, rounds, arena);
+        value = RsaKeyGen::Generate(*dongle_, key_file, static_cast<uint32_t>(key_offset), seed, bits, rounds, cipher_key,
+                                    arena);
         if (value < 0)
           zero_ = value; /* 失败必须中止脚本: 否则调用方会把"未写完的 blob"当成"已生成" */
       }
@@ -515,14 +523,17 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
      * 工作区(968B)复用 buffer_(ExtendBuf); out 兼作 p*q 校验缓冲 ⇒ 必须与 m 分开。 */
     cycles_ -= kCyclesModExp;
 
-    if (argc != 5) {
+    if (argc != 5 && argc != 6) {
       zero_ = SIGILL;
     } else {
       const int key_file = argv[0];
       const int32_t key_offset = argv[1];
       const int32_t bits = argv[4];
+      const int cipher_arg = (argc >= 6) ? argv[5] : kCipherPlainId; /* 1000=明文 / 901..999=SM4 keyId */
+      const int cipher_key = (kCipherPlainId == cipher_arg) ? 0 : cipher_arg;
 
-      if (bits < RsaModexp::kCrtMinBits || bits > RsaModexp::kMaxBits || (bits % 64) != 0) {
+      if (bits < RsaModexp::kCrtMinBits || bits > RsaModexp::kMaxBits || (bits % 64) != 0 ||
+          (cipher_arg != kCipherPlainId && (cipher_arg <= 900 || cipher_arg >= 1000))) {
         value = zero_ = -EINVAL;
       } else if (key_offset < 0 || (key_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
         value = zero_ = -EACCES; /* 拒绝私钥文件访问必须中止脚本(否则调用方看到 exit 0 + 全 0 输出) */
@@ -537,7 +548,7 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
           auto& ws = *reinterpret_cast<RsaModexp::CrtWorkspace*>(buffer_);
           RsaModexp modexp;
           modexp.SetDongle(dongle_);
-          value = modexp.CrtSignFile(*dongle_, key_file, static_cast<uint32_t>(key_offset), m, out, bits, ws);
+          value = modexp.CrtSignFile(*dongle_, key_file, static_cast<uint32_t>(key_offset), m, out, bits, cipher_key, ws);
           if (value < 0)
             zero_ = value; /* blob 非法/算法失败: 中止并让 host 看到错误码 */
         }
@@ -547,14 +558,17 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
     /* 私钥 blob 校验: 不碰底数/结果, 只借用脚本给的 scratch(2*halfWords limb = bits/8 字节) */
     cycles_ -= kCyclesPubkey;
 
-    if (argc != 4) {
+    if (argc != 4 && argc != 5) {
       zero_ = SIGILL;
     } else {
       const int key_file = argv[0];
       const int32_t key_offset = argv[1];
       const int32_t bits = argv[3];
+      const int cipher_arg = (argc >= 5) ? argv[4] : kCipherPlainId; /* 1000=明文 / 901..999=SM4 keyId */
+      const int cipher_key = (kCipherPlainId == cipher_arg) ? 0 : cipher_arg;
 
-      if (bits < RsaModexp::kCrtMinBits || bits > RsaModexp::kMaxBits || (bits % 64) != 0) {
+      if (bits < RsaModexp::kCrtMinBits || bits > RsaModexp::kMaxBits || (bits % 64) != 0 ||
+          (cipher_arg != kCipherPlainId && (cipher_arg <= 900 || cipher_arg >= 1000))) {
         value = zero_ = -EINVAL;
       } else if (key_offset < 0 || (key_file < kUserFileID && valid_permission_ != PERMISSION::kAdministrator)) {
         value = zero_ = -EACCES;
@@ -566,7 +580,8 @@ int VM_t::OpFuncRSA(uint16_t op, int argc, int32_t argv[]) {
           auto& ws = *reinterpret_cast<RsaModexp::CrtWorkspace*>(buffer_);
           RsaModexp modexp;
           modexp.SetDongle(dongle_);
-          value = modexp.KeyCheckFile(*dongle_, key_file, static_cast<uint32_t>(key_offset), bits, ws, scratch);
+          value = modexp.KeyCheckFile(*dongle_, key_file, static_cast<uint32_t>(key_offset), bits, cipher_key, ws,
+                                      scratch);
           if (value < 0)
             zero_ = value;
         }

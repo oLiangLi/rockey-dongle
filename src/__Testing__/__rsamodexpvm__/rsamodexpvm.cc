@@ -432,6 +432,8 @@ int CheckGenKey(Dongle& rockey, script::VM_t& vm, Buffers& b) {
   int error = 0;
   const int bits = 3072;
   const int hb = bits / 16; /* 每个素数的种子字节数 */
+  const PERMISSION saved_perm = vm.valid_permission_;
+  vm.valid_permission_ = PERMISSION::kAdministrator; /* ExRSAGenKey 一律要求管理员权限 */
 
   /* 固定种子(device 侧算法与 rsa-prime-repro.cjs 逐位对齐 ⇒ 同种子必得同一 p/q) */
   for (int i = 0; i < hb; ++i) {
@@ -531,6 +533,123 @@ int CheckGenKey(Dongle& rockey, script::VM_t& vm, Buffers& b) {
       ++error;
   }
 
+  /* 密文落盘: SM4-ECB 临时密钥(keyId 996)+ 逐字段随机解密(生成/KeyCheck/CRT 三条路径都必须照常工作) */
+  {
+    const int kKeyId = 996; /* 约定: >900 只作内部临时密钥 */
+    uint8_t sm4key[16];
+    for (int i = 0; i < 16; ++i)
+      sm4key[i] = static_cast<uint8_t>(0xA0 + i);
+    if (0 != rockey.CreateKeyFile(kKeyId, PERMISSION::kAdministrator, SECRET_STORAGE_TYPE::kSM4) ||
+        0 != rockey.WriteKeyFile(kKeyId, sm4key, sizeof(sm4key), SECRET_STORAGE_TYPE::kSM4)) {
+      rlLOGE(TAG, "GenKey(sealed): 创建/写入 SM4 临时密钥失败");
+      ++error;
+    } else {
+      memcpy(b.data, seed_copy, sizeof(seed_copy)); /* 前面的 CRT 用例覆盖过数据区 */
+      int32_t argv[6] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kGenSeedAddr, bits,
+                         MillerRabinContext::kMaxRounds, kKeyId};
+      vm.zero_ = 0;
+      const int rc = vm.OpFuncRsaKeyGen(6, argv);
+      if (0 != rc || 0 != vm.zero_) {
+        rlLOGE(TAG, "GenKey(sealed): ExRSAGenKey(keyId=%d) 返回 %d(zero_=%d)", kKeyId, rc, vm.zero_);
+        ++error;
+      }
+
+      /* 落盘必须是密文: header 魔数不该还是 'RSAK' */
+      uint8_t sealed_raw[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+      uint8_t unsealed[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+      const size_t blob_len = static_cast<size_t>(RsaModexp::KeyBlob::TotalSize(bits));
+      if (0 != rockey.ReadDataFile(kFileId, kGenKeyOffset, sealed_raw, blob_len)) {
+        rlLOGE(TAG, "GenKey(sealed): 读回失败");
+        ++error;
+      } else if (reinterpret_cast<const RsaModexp::KeyBlobHeader*>(sealed_raw)->magic == RsaModexp::KeyBlob::kMagic) {
+        rlLOGE(TAG, "GenKey(sealed): 落盘竟是明文(!)");
+        ++error;
+      } else {
+        /* 逐块解密后必须与刚才那把明文 blob 逐字节相同(同一粒种子 ⇒ 同一把私钥) */
+        memcpy(unsealed, sealed_raw, blob_len);
+        int dec_rc = 0;
+        for (size_t off = 0; off < blob_len && 0 == dec_rc; off += 256) {
+          const size_t n = (blob_len - off < 256) ? (blob_len - off) : 256;
+          dec_rc = rockey.SM4ECB(kKeyId, unsealed + off, n, false); /* 256/16 对齐 ⇒ 块内可独立解 */
+        }
+        if (0 != dec_rc)
+          ++error;
+        else if (0 != memcmp(unsealed, raw1, blob_len)) {
+          const int wd = RsaModexp::KeyBlob::FieldSize(bits), hd2 = RsaModexp::KeyBlob::HalfSize(bits);
+          const struct { const char* name; int off; int len; } fld[] = {
+              {"header", 0, 16},
+              {"n", RsaModexp::KeyBlob::NOffset(bits), wd},
+              {"e", RsaModexp::KeyBlob::EOffset(bits), wd},
+              {"d", RsaModexp::KeyBlob::DOffset(bits), wd},
+              {"p", RsaModexp::KeyBlob::POffset(bits), hd2},
+              {"q", RsaModexp::KeyBlob::QOffset(bits), hd2},
+              {"dmp1", RsaModexp::KeyBlob::Dmp1Offset(bits), hd2},
+              {"dmq1", RsaModexp::KeyBlob::Dmq1Offset(bits), hd2},
+              {"iqmp", RsaModexp::KeyBlob::IqmpOffset(bits), hd2}};
+          for (const auto& x : fld)
+            rlLOGE(TAG, "GenKey(sealed) 字段 %-6s %s", x.name,
+                   (0 == memcmp(unsealed + x.off, raw1 + x.off, static_cast<size_t>(x.len))) ? "MATCH" : "DIFF");
+          ++error;
+        } else {
+          rlLOGI(TAG, "GenKey(sealed): 密文落盘 + 逐块解密 == 明文生成 ✓");
+        }
+      }
+
+      /* 带 keyId 的 ExRSAKeyCheck: 必须接受(证明读侧逐字段解密正确) */
+      {
+        int32_t argv_chk[5] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kChkScratchAddr, bits,
+                               kKeyId};
+        vm.zero_ = 0;
+        const int rc_chk = vm.OpFuncRSA(kOpKeyCheck, 5, argv_chk);
+        if (0 != rc_chk || 0 != vm.zero_) {
+          rlLOGE(TAG, "GenKey(sealed): ExRSAKeyCheck(keyId) 返回 %d(zero_=%d)", rc_chk, vm.zero_);
+          ++error;
+        } else {
+          rlLOGI(TAG, "GenKey(sealed): ExRSAKeyCheck(keyId) 接受密文 blob ✓");
+        }
+      }
+
+      /* 带 keyId 的 CRT 签名: 与 TASSL m^d mod n 对拍 */
+      {
+        const size_t nbytes = static_cast<size_t>(bits) / 8;
+        BIGNUM* mv = BN_lebin2bn(b.data + kMAddr, static_cast<int>(nbytes), nullptr);
+        BN_CTX* bc = BN_CTX_new();
+        BN_mod(mv, mv, key.n, bc);
+        std::ignore = BN_bn2lebinpad(mv, b.data + kMAddr, static_cast<int>(nbytes));
+        int32_t argv_crt[6] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kMAddr, kCrtOutAddr,
+                               bits, kKeyId};
+        memset(b.data + kCrtOutAddr, 0, nbytes);
+        vm.zero_ = 0;
+        const int rc_crt = vm.OpFuncRSA(kOpCrtModExp, 6, argv_crt);
+        BIGNUM* got = BN_lebin2bn(b.data + kCrtOutAddr, static_cast<int>(nbytes), nullptr);
+        BIGNUM* ref = BN_new();
+        std::ignore = BN_mod_exp(ref, mv, key.d, key.n, bc);
+        if (0 != rc_crt || 0 != vm.zero_ || 0 != BN_cmp(got, ref)) {
+          rlLOGE(TAG, "GenKey(sealed): ExRSACrtModExp(keyId) 与 TASSL 不一致(rc=%d zero_=%d)", rc_crt, vm.zero_);
+          ++error;
+        } else {
+          rlLOGI(TAG, "GenKey(sealed): ExRSACrtModExp(keyId) == TASSL m^d mod n ✓");
+        }
+        BN_free(ref);
+        BN_free(got);
+        BN_free(mv);
+        BN_CTX_free(bc);
+      }
+
+      /* 负例: 1..900 的 keyId 必须被拒(避免误用业务 keyId) */
+      {
+        int32_t argv_bad[6] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kGenSeedAddr, bits,
+                               MillerRabinContext::kMaxRounds, 100};
+        vm.zero_ = 0;
+        std::ignore = vm.OpFuncRsaKeyGen(6, argv_bad);
+        if (0 == vm.zero_) {
+          rlLOGE(TAG, "GenKey(sealed): cipherKeyId=100 未被拒绝");
+          ++error;
+        }
+      }
+    }
+  }
+
   /* 参数/权限/越界分支 */
   {
     int32_t argv_argc[3] = {static_cast<int32_t>(kFileId), static_cast<int32_t>(kGenKeyOffset), kGenSeedAddr};
@@ -563,6 +682,7 @@ int CheckGenKey(Dongle& rockey, script::VM_t& vm, Buffers& b) {
     }
   }
 
+  vm.valid_permission_ = saved_perm;
   return error;
 }
 

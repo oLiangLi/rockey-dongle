@@ -168,6 +168,7 @@ class RsaModexp {
                   const limb_t* base,
                   limb_t* out,
                   int bits,
+                  int cipherKeyId,
                   CrtWorkspace& ws);
 
   /**
@@ -175,7 +176,8 @@ class RsaModexp {
    *!   magic/bits/flags、p*q == n、q*iqmp ≡ 1 (mod p)、dmp1 < p-1、dmq1 < q-1。
    *! scratch 需 bits/8 字节(2*halfWords 个 limb, 用于 p*q 乘积)。返回 0 = 通过。
    */
-  int KeyCheckFile(Dongle& dongle, int keyFile, uint32_t keyOffset, int bits, CrtWorkspace& ws, limb_t* scratch);
+  int KeyCheckFile(Dongle& dongle, int keyFile, uint32_t keyOffset, int bits, int cipherKeyId, CrtWorkspace& ws,
+                     limb_t* scratch);
 
   /** 每 kKickSquarings 次平方喂一次狗(设备侧 k=96 单次 MontMul ≈ 40ms、k=48 ≈ 10ms) */
   static constexpr int kKickSquarings = 8;

@@ -274,8 +274,14 @@ rLANG_NOINLINE int MillerRabinContext::FindPrime(BN& out,
     /* 边界防御: 进位越过最高位就不再是 bits 位候选(预算内不可能发生, 仅防呆) */
     if (out.n != words || 0 == (out.v[words - 1] >> 31))
       return 0;
-    if ((i & 0x3ffu) == 0)
-      KickWDG();
+    /*! 喂狗必须按"时间"定节奏, 不能按"探测次数": 试除命中的候选只要 ~0.13s(1024 位)/~0.2s
+     *! (1536 位), 而进入 Miller-Rabin 的候选要几十秒。历史上这里只在第 1024 次探测喂一次,
+     *! 于是在"连续小合数"的长段里会累计约 2 分钟不发任何 COS 调用(ROM 只在命令/指令边界喂狗)
+     *! ⇒ 被看门狗复位(U 盘 LED 停闪、host 永久等待)。以前能跑通是因为调用方 label != 0,
+     *! 靠每 32 次探测一条进度落盘(也是 COS 调用)顺带喂狗 —— 生成指令为不写 dashboard 把
+     *! label 关了, 这个**隐含心跳**就没了(2026-09-15 真机实测踩到)。
+     *! 现在每个候选都喂一次: KickWDG 边际 ~13us, 相对一次试除(~0.13s)约 0.01% 开销。 */
+    KickWDG();
     /* 每 32 次探测落一次进度(带 MR 的候选每次约几十秒 ⇒ ≈3 分钟一次):
      * 即使中途被看门狗复位, dashboard 上也能看到搜到第几个候选、在找 p 还是 q。
      * ! 该记录会被最终 GenResult 覆盖(magic 不同)。*/
@@ -331,25 +337,13 @@ rLANG_NOINLINE uint32_t MillerRabinContext::Endurance(uint64_t iters) {
   return checksum;
 }
 void MillerRabinContext::KickWDG() {
-#if defined(__RockeyARM__)
+  /*! 心跳统一走基类(见 Dongle::KickWDG 的说明); 本类只额外保留自己的计数供 Heartbeats() 用 */
   ++counter_;
-
-  if (nullptr == dongle_)
-    return; /* 未注入 COS 句柄: 只能计数, 无法真正喂狗 */
-
-  dongle_->SetLEDState(counter_ & 1 ? LED_STATE::kOn : LED_STATE::kOff);
-
-  /**
-   *! 仅仅设置LED状态并不生效, 需要一次有效的 COS 调用 ...
-   */
-#if 1
-  DWORD ticks = 0;
-  std::ignore = dongle_->GetTickCount(&ticks);
+  if (dongle_)
+    dongle_->KickWDG();
+#if !defined(__RockeyARM__)
+  rlLOGV(TAG, "MR.KickWDG %d ...", (int)counter_);
 #endif
-#else  /* __RockeyARM__ */
-  rlLOGV(TAG, "MR.KickWDG %d ...", (int)++counter_);
-#endif /* __RockeyARM__ */
-
   std::ignore = TAG;
 }
 

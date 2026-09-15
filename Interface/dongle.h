@@ -261,6 +261,37 @@ class Dongle {
   virtual int GetPINState(PERMISSION* state);
   virtual int SetLEDState(LED_STATE state);
 
+  /**
+   *! 看门狗心跳(喂狗) —— 放在**基类**, 任何"可能长时间不回宿主"的循环都能直接调
+   *! (MillerRabinContext/RsaModexp 各自的 KickWDG() 都转发到这里)。
+   *! 本机型的约定是**任何一次 COS 调用都算喂狗**(厂家未给显式喂狗 API), 所以这里用
+   *! "LED 翻转 + GetTickCount(只读、无副作用)" 作心跳, 边际开销 ≈13us; 宿主/模拟器上只计数,
+   *! 便于测试断言(Heartbeats())。
+   *!
+   *! 【纪律】喂狗必须按"时间"定节奏, 不能按"迭代次数": 单次迭代耗时差异大时, 按次数会在慢迭代
+   *! 段饿死看门狗(2026-09-15 ExRSAGenKey 真机实测): 每个候选一次试除 0.13~0.2s, 而进入
+   *! Miller-Rabin 的候选要几十秒 —— 旧的"每 1024 次喂一次"在连续小合数段会累计约 2 分钟不发
+   *! COS 调用 ⇒ 设备被复位、LED 停闪、host 永久等待。
+   */
+  void KickWDG() {
+    ++heartbeat_;
+#if defined(__RockeyARM__)
+    /*! 喂狗与"看得见的心跳"分开: GetTickCount 每次调用都发(只读、~13us, 保证任何 0.2s 级的
+     *! 循环都把狗喂饱); LED 每 8 次才翻转一次 —— 每个候选都翻的话 ≈7Hz, 肉眼看起来是常亮/微闪,
+     *! 反而看不出"还活着"。每 8 次 ⇒ 约 1s 一次明显闪烁。 */
+    DWORD ticks = 0;
+    (void)GetTickCount(&ticks);
+    if ((heartbeat_ & 7u) == 0)
+      (void)SetLEDState((heartbeat_ & 8u) ? LED_STATE::kOn : LED_STATE::kOff);
+#endif
+  }
+  uint32_t Heartbeats() const { return heartbeat_; }
+
+ private:
+  uint32_t heartbeat_ = 0; /* KickWDG() 次数(设备侧 = LED 翻转次数 = COS 心跳次数) */
+
+ public:
+
  public:
   virtual int ReadShareMemory(uint8_t buffer[32]);
   virtual int WriteShareMemory(const uint8_t buffer[32]);

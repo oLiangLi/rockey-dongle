@@ -1,3 +1,5 @@
+#pragma once
+
 #include <Interface/aginx.h>
 #include <Interface/dongle.h>
 
@@ -218,7 +220,7 @@ class MillerRabinContext {
         a.v[i] = 0;
       a.n = limb + 1;
     }
-    uint64_t carry = (uint64_t)a.v[limb] + (1u << off);
+    uint64_t carry = (uint64_t)a.v[limb] + (1ull << off);
     a.v[limb] = (uint32_t)carry;
     int j = limb;
     while (carry >>= 32) {

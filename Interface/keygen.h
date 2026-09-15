@@ -33,6 +33,8 @@ namespace dongle {
  *! 内存: 全部工作区由调用方给(Arena 1024B, 设备侧 = ExtendBuf), 栈上只有小局部量与几个临时标量;
  *!       峰值占用 968B。素数搜索是本工程最深栈路径之一(1536 位 MR ≈1.9KB),
  *!       因此**调用方必须用尽量浅的栈帧**调用本函数。
+ *! 副作用: 除 keyFile 外, 还会按 MillerRabinContext 的既有约定往 dashboard[4096] 写进度记录
+ *!       (每 32 次探测一条, magic 'MRun') —— 它既是长跑可观测性, 也是一次 COS 调用(喂狗)。
  */
 class RsaKeyGen {
  public:
@@ -61,6 +63,10 @@ class RsaKeyGen {
    *! 生成并以 KeyBlob('RSAK') 写入 dongle 数据文件 [keyOffset, keyOffset + TotalSize(bits))。
    *! seed: 指向 SeedSize(bits) 字节的种子块(seed_p || seed_q, 小端, 原地不被修改)。
    *! rounds: Miller-Rabin 轮数, 越界取 MillerRabinContext::kMaxRounds(16)。
+   *! cipherKeyId: 0 = 明文落盘(调试/对拍用); > 900 = 用该 **SM4 密钥文件** 以 **ECB** 逐字段
+   *!   加密后再写(KeyBlob 每个字段的偏移与长度都是 16 的倍数, 所以读侧可以按块随机解密,
+   *!   明文永远不需要整体进 RAM)。约定: keyId > 900 只给这种"内部临时密钥"用, 一切重要用途
+   *!   的脚本都不使用 900 以上的 keyId。
    *! 返回 0 成功; 负值为错误码(-EINVAL 参数/-EIO 读写失败/-ERANGE 搜索超限)。
    */
   static int Generate(Dongle& dongle,
@@ -69,6 +75,7 @@ class RsaKeyGen {
                       const uint8_t* seed,
                       int bits,
                       int rounds,
+                      int cipherKeyId,
                       Arena& arena);
 };
 

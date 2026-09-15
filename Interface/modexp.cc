@@ -1,4 +1,4 @@
-﻿#include "modexp.h"
+#include "modexp.h"
 
 AGINX_DECLARE_MACHINE
 
@@ -229,23 +229,11 @@ void RsaModexp::MulAddK(limb_t* out, const limb_t* a, const limb_t* b, int k, co
 }
 
 void RsaModexp::KickWDG() {
-#if defined(__RockeyARM__)
+  /*! 心跳统一走基类(见 Dongle::KickWDG 的说明); 本类只额外保留自己的计数供 Heartbeats() 用 */
   ++counter_;
-
-  if (nullptr == dongle_)
-    return; /* 未注入 COS 句柄: 只能计数, 无法真正喂狗 */
-
-  dongle_->SetLEDState(counter_ & 1 ? LED_STATE::kOn : LED_STATE::kOff);
-
-  /*! 仅设置 LED 状态并不生效, 需要一次有效的 COS 调用 */
-#if 1
-  DWORD ticks = 0;
-  std::ignore = dongle_->GetTickCount(&ticks);
-#endif
-#else  /* __RockeyARM__ */
-  ++counter_;
+  if (dongle_)
+    dongle_->KickWDG();
   std::ignore = TAG;
-#endif /* __RockeyARM__ */
 }
 
 /*! 平方乘核心: r = base_m^exp mod n(base_m 已在 Montgomery 域且只读; r 与 base_m 不同缓冲) */
@@ -358,8 +346,22 @@ void RsaModexp::CrtCombine(limb_t* out,
 }
 
 /*! 读 blob 头并做基本校验 */
-static int ReadKeyHeader(Dongle& dongle, int keyFile, uint32_t keyOffset, int bits, RsaModexp::KeyBlobHeader& hdr) {
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset, &hdr, sizeof(hdr)))
+/*! 读字段(密文感知): cipherKeyId != 0 时读出后用该 SM4 密钥文件做 ECB 解密。
+ *! KeyBlob 每个字段的偏移与长度都是 16 的倍数 ⇒ 可逐字段随机解密, 明文永不整体进 RAM。 */
+static int ReadFieldCipher(Dongle& dongle, int cipherKeyId, int keyFile, size_t offset, void* buffer, size_t size) {
+  const int rc = dongle.ReadDataFile(keyFile, offset, buffer, size);
+  if (0 != rc)
+    return -EIO;
+  if (cipherKeyId) {
+    if (0 != (size % 16))
+      return -EINVAL;
+    if (0 != dongle.SM4ECB(cipherKeyId, static_cast<uint8_t*>(buffer), size, false))
+      return -EIO;
+  }
+  return 0;
+}
+static int ReadKeyHeader(Dongle& dongle, int keyFile, uint32_t keyOffset, int bits, int cipherKeyId, RsaModexp::KeyBlobHeader& hdr) {
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset, &hdr, sizeof(hdr)))
     return -EIO;
   if (hdr.magic != RsaModexp::KeyBlob::kMagic || hdr.bits != static_cast<uint32_t>(bits) ||
       0 == (hdr.flags & RsaModexp::KeyBlob::kFlagCrt))
@@ -368,10 +370,10 @@ static int ReadKeyHeader(Dongle& dongle, int keyFile, uint32_t keyOffset, int bi
 }
 
 /*! 校验 q*iqmp ≡ 1 (mod p): 进入时 ws.a=p、ws.b=q; 出口 ws.b=iqmp(已被转换过, 需重读) */
-static int CheckIqmp(Dongle& dongle, int keyFile, uint32_t keyOffset, int bits, RsaModexp::CrtWorkspace& ws, int hw) {
+static int CheckIqmp(Dongle& dongle, int keyFile, uint32_t keyOffset, int bits, int cipherKeyId, RsaModexp::CrtWorkspace& ws, int hw) {
   const int hb = bits / 16;
   RsaModexp::ModReduce(ws.c, ws.b, hw, ws.a, hw); /* c = q mod p */
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::IqmpOffset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + RsaModexp::KeyBlob::IqmpOffset(bits), ws.b, hb))
     return -EIO;
   RsaModexp::ToMont(ws.c, ws.a, hw);
   RsaModexp::ToMont(ws.b, ws.a, hw);
@@ -389,16 +391,17 @@ static int CheckModulus(Dongle& dongle,
                         int keyFile,
                         uint32_t keyOffset,
                         int bits,
+                        int cipherKeyId,
                         RsaModexp::CrtWorkspace& ws,
                         RsaModexp::limb_t* prod,
                         int hw) {
   const int hb = bits / 16;
   RsaModexp::MulAddK(prod, ws.a, ws.b, hw, nullptr);
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::NOffset(bits), ws.c, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + RsaModexp::KeyBlob::NOffset(bits), ws.c, hb))
     return -EIO;
   if (0 != memcmp(ws.c, prod, static_cast<size_t>(hb)))
     return -EBADMSG;
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::NOffset(bits) + hb, ws.c, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + RsaModexp::KeyBlob::NOffset(bits) + hb, ws.c, hb))
     return -EIO;
   if (0 != memcmp(ws.c, reinterpret_cast<const uint8_t*>(prod) + hb, static_cast<size_t>(hb)))
     return -EBADMSG;
@@ -411,6 +414,7 @@ int RsaModexp::CrtSignFile(Dongle& dongle,
                            const limb_t* base,
                            limb_t* out,
                            int bits,
+                           int cipherKeyId,
                            CrtWorkspace& ws) {
   if (!base || !out)
     return -EINVAL;
@@ -426,45 +430,45 @@ int RsaModexp::CrtSignFile(Dongle& dongle,
     return -EINVAL;
 
   KeyBlobHeader hdr{};
-  int rc = ReadKeyHeader(dongle, keyFile, keyOffset, bits, hdr);
+  int rc = ReadKeyHeader(dongle, keyFile, keyOffset, bits, cipherKeyId, hdr);
   if (0 != rc)
     return rc;
 
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::POffset(bits), ws.a, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::POffset(bits), ws.a, hb))
     return -EIO;
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::QOffset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::QOffset(bits), ws.b, hb))
     return -EIO;
 
-  rc = CheckModulus(dongle, keyFile, keyOffset, bits, ws, out, hw); /* out 兼作乘积缓冲 */
+  rc = CheckModulus(dongle, keyFile, keyOffset, bits, cipherKeyId, ws, out, hw); /* out 兼作乘积缓冲 */
   if (0 != rc)
     return rc;
-  rc = CheckIqmp(dongle, keyFile, keyOffset, bits, ws, hw);
+  rc = CheckIqmp(dongle, keyFile, keyOffset, bits, cipherKeyId, ws, hw);
   if (0 != rc)
     return rc;
 
   /* 半域 1: s_p = (base mod p)^dmp1 mod p(结果直接写栈上的 s1) */
   limb_t s1[kHalfWords], s2[kHalfWords];
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::Dmp1Offset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::Dmp1Offset(bits), ws.b, hb))
     return -EIO;
   ModReduce(ws.c, base, k, ws.a, hw);
   if (0 != HalfModExp(s1, ws.c, reinterpret_cast<const uint8_t*>(ws.b), hb, ws.a, hw, ws.t))
     return -EFAULT;
 
   /* 半域 2: s_q = (base mod q)^dmq1 mod q */
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::QOffset(bits), ws.a, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::QOffset(bits), ws.a, hb))
     return -EIO;
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::Dmq1Offset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::Dmq1Offset(bits), ws.b, hb))
     return -EIO;
   ModReduce(ws.c, base, k, ws.a, hw);
   if (0 != HalfModExp(s2, ws.c, reinterpret_cast<const uint8_t*>(ws.b), hb, ws.a, hw, ws.t))
     return -EFAULT;
 
   /* 重组: out = s_q + q * ((s_p - s_q) * iqmp mod p); 临时区借用 s1(其原值仍作为 SubModK 的入参) */
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::POffset(bits), ws.a, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::POffset(bits), ws.a, hb))
     return -EIO;
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::QOffset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::QOffset(bits), ws.b, hb))
     return -EIO;
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::IqmpOffset(bits), ws.c, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::IqmpOffset(bits), ws.c, hb))
     return -EIO;
   CrtCombine(out, s1, s2, ws.a, ws.b, ws.c, hw, s1, ws.t);
   std::ignore = TAG;
@@ -475,6 +479,7 @@ int RsaModexp::KeyCheckFile(Dongle& dongle,
                             int keyFile,
                             uint32_t keyOffset,
                             int bits,
+                            int cipherKeyId,
                             CrtWorkspace& ws,
                             limb_t* scratch) {
   if (!scratch)
@@ -489,19 +494,19 @@ int RsaModexp::KeyCheckFile(Dongle& dongle,
     return -EINVAL;
 
   KeyBlobHeader hdr{};
-  int rc = ReadKeyHeader(dongle, keyFile, keyOffset, bits, hdr);
+  int rc = ReadKeyHeader(dongle, keyFile, keyOffset, bits, cipherKeyId, hdr);
   if (0 != rc)
     return rc;
 
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::POffset(bits), ws.a, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::POffset(bits), ws.a, hb))
     return -EIO;
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::QOffset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::QOffset(bits), ws.b, hb))
     return -EIO;
 
-  rc = CheckModulus(dongle, keyFile, keyOffset, bits, ws, scratch, hw);
+  rc = CheckModulus(dongle, keyFile, keyOffset, bits, cipherKeyId, ws, scratch, hw);
   if (0 != rc)
     return rc;
-  rc = CheckIqmp(dongle, keyFile, keyOffset, bits, ws, hw);
+  rc = CheckIqmp(dongle, keyFile, keyOffset, bits, cipherKeyId, ws, hw);
   if (0 != rc)
     return rc;
 
@@ -509,16 +514,16 @@ int RsaModexp::KeyCheckFile(Dongle& dongle,
   const limb_t one[1] = {1};
   memcpy(ws.c, ws.a, static_cast<size_t>(hb)); /* c = p */
   SubEqK(ws.c, one, 1);                        /* c = p-1 */
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::Dmp1Offset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::Dmp1Offset(bits), ws.b, hb))
     return -EIO;
   if (CmpK(ws.b, ws.c, hw) >= 0)
     return -EBADMSG;
 
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::QOffset(bits), ws.a, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::QOffset(bits), ws.a, hb))
     return -EIO;
   memcpy(ws.c, ws.a, static_cast<size_t>(hb)); /* c = q */
   SubEqK(ws.c, one, 1);                        /* c = q-1 */
-  if (0 != dongle.ReadDataFile(keyFile, keyOffset + KeyBlob::Dmq1Offset(bits), ws.b, hb))
+  if (0 != ReadFieldCipher(dongle, cipherKeyId, keyFile, keyOffset + KeyBlob::Dmq1Offset(bits), ws.b, hb))
     return -EIO;
   if (CmpK(ws.b, ws.c, hw) >= 0)
     return -EBADMSG;

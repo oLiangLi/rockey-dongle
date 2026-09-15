@@ -1,6 +1,8 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
+#include <Interface/keygen.h>
 #include <Interface/modexp.h>
 #include <Interface/mr.h>
+#include <Interface/script.h>
 #include <Interface/x509.h>
 #include <base/base.h>
 
@@ -62,7 +64,9 @@ enum class kTestingIndex : int {
 
   RsaModexpTests,
 
-  RsaCrtTests
+  RsaCrtTests,
+
+  RsaKeyGenTests
 
 };
 
@@ -2912,6 +2916,179 @@ static void BuildKeyBlob(uint8_t* blob, int bits, const BIGNUM* n, const BIGNUM*
 }
 #endif /* !__RockeyARM__ && !__EMULATOR__ */
 
+/* -------------------------------------------------------------------------
+ * ExRSAGenKey(opcode 0x153, 设备内生成完整 RSA 私钥) —— 真机单指令用例(index 22)
+ *   host  : 把种子(seed_p||seed_q, 各 bits/16 字节, 小端)写 dashboard[kGenKeySeedOffset],
+ *           再 ExecuteExeFile 让设备端跑(需 WT_APP_DONGLE 指向测试固件 rockey_dongle.bin),
+ *           跑完读回 blob 用 TASSL 复核并打印 p/q 小端 hex(可喂 rsa-prime-repro.cjs)。
+ *   设备端: 从 dashboard 读种子进 InOutBuf[384..), 用 **VM 调 ExRSAGenKey**(与生产脚本同一条
+ *           代码路径)生成完整私钥 blob 到 dashboard[kCrtKeyOffset](2128B), 再用 ExRSAKeyCheck 复核,
+ *           状态写 dashboard[kGenKeyStatusOffset]。
+ * CLI: __Testing__dongle__ -2 16 <bits>      bits: 800=2048(缺省, 真机 ≈6min) | C00=3072(≈1 小时)
+ * ------------------------------------------------------------------------- */
+#if !defined(__EMULATOR__)
+constexpr uint32_t kGenKeySeedOffset = 4096;   /* 种子块(384B) */
+constexpr uint32_t kGenKeyStatusOffset = 4032; /* 生成状态(与 CRT 的 3968 错开) */
+constexpr uint32_t kGenKeyMagic = 0x4E45474Bu; /* 'KGEN' */
+struct GenKeyStatus {
+  uint32_t magic;
+  uint32_t bits;
+  uint32_t gen_rc;   /* ExRSAGenKey 返回码 */
+  uint32_t check_rc; /* ExRSAKeyCheck 返回码 */
+};
+#endif /* !__EMULATOR__ */
+
+int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
+  Context_t* ctx = static_cast<Context_t*>(Context);
+  [[maybe_unused]] int bits = (int)ctx->argv_[0];
+  if (bits != 2048 && bits != 3072)
+    bits = 2048; /* 缺省 2048(真机 ≈6min@4 轮); 3072 要 ≈1 小时, 由 CLI 显式指定 */
+  [[maybe_unused]] int rounds = (int)ctx->argv_[1];
+  if (rounds < 1 || rounds > MillerRabinContext::kMaxRounds)
+    rounds = MillerRabinContext::kMaxRounds; /* 缺省 16 轮(生产口径) */
+
+#if defined(__RockeyARM__)
+  /* ---- 设备端: 只调用 RsaKeyGen::Generate(与 opcode 0x153 内部完全同一条代码路径) ----
+   *! 这里**刻意不构造 VM_t**: VM_t 本身约 300B 栈, 叠在测试项 + MR 深链上会把最坏栈深顶到
+   *! 1976B(余量只剩 56B, 而 stack-check 有 92 个未匹配帧按 0 计 ⇒ 不可信)。opcode 胶水层
+   *! (argc/OpCheckMM/权限/arena)由宿主用例 __Testing__rsamodexpvm__ 覆盖, 设备侧只需要真实
+   *! 的算术 + 真实的数据文件写入 + 真实耗时, 以及 host 侧的 TASSL 复核。 */
+  uint8_t* const inout = static_cast<uint8_t*>(Context);
+  const size_t seed_bytes = static_cast<size_t>(bits) / 8;
+  GenKeyStatus st{};
+  st.magic = kGenKeyMagic;
+  st.bits = static_cast<uint32_t>(bits);
+  st.gen_rc = 0xFFFFFFFFu;
+  st.check_rc = 0xFFFFFFFFu;
+
+  rockey.SetLEDState(LED_STATE::kBlink);
+  if (0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kGenKeySeedOffset, inout + 384, seed_bytes)) {
+    st.gen_rc = 0xFFFFFFFEu;
+  } else {
+    auto& arena = *reinterpret_cast<RsaKeyGen::Arena*>(ExtendBuf);
+    st.gen_rc = static_cast<uint32_t>(RsaKeyGen::Generate(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset,
+                                                          inout + 384, bits, rounds, 0 /* cipherKeyId: 明文 */, arena));
+  }
+  std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kGenKeyStatusOffset, &st, sizeof(st));
+  rockey.SetLEDState(LED_STATE::kOff);
+  rlLOGI(TAG, "RsaGenKey(dev): bits=%d rounds=%d gen_rc=%d", bits, rounds, (int)st.gen_rc);
+  return 0;
+#elif !defined(__EMULATOR__)
+  /* ---- 主机: 注入种子 → 设备执行 → 读回并用 TASSL 复核 ---- */
+  int error = 0;
+  const int hb = bits / 16;
+  uint8_t seed[384];
+  for (int i = 0; i < hb; ++i) {
+    seed[i] = static_cast<uint8_t>(0x11 + i * 7);            /* seed_p */
+    seed[hb + i] = static_cast<uint8_t>(0x51 + i * 5);       /* seed_q */
+  }
+  if (0 != rockey.WriteDataFile(Dongle::kFactoryDataFileId, kGenKeySeedOffset, seed, static_cast<size_t>(bits) / 8)) {
+    rlLOGE(TAG, "RsaGenKey(host): 种子写入 dashboard 失败");
+    return 1;
+  }
+  {
+    GenKeyStatus zero{};
+    std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kGenKeyStatusOffset, &zero, sizeof(zero));
+  }
+
+  int main_result = 0;
+  const auto gen_t0 = rLANG_GetTickCount();
+  const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
+  const auto gen_t1 = rLANG_GetTickCount();
+
+  GenKeyStatus st{};
+  std::ignore = rockey.ReadDataFile(Dongle::kFactoryDataFileId, kGenKeyStatusOffset, &st, sizeof(st));
+  rlLOGI(TAG, "RsaGenKey(host): ExecuteExeFile=%d mainRet=%d in %lld ms; status magic=%08x bits=%u gen_rc=%d check_rc=%d",
+         exec_result, main_result, static_cast<long long>(gen_t1 - gen_t0), st.magic, st.bits, (int)st.gen_rc,
+         (int)st.check_rc);
+  if (st.magic != kGenKeyMagic || 0 != (int32_t)st.gen_rc)
+    ++error; /* 注: check_rc 现在由**宿主**的 TASSL 复核代替(设备侧不再跑 ExRSAKeyCheck, 省 300B 栈) */
+
+  const int total = RsaModexp::KeyBlob::TotalSize(bits);
+  uint8_t blob[RsaModexp::KeyBlob::TotalSize(RsaModexp::kMaxBits)];
+  if (0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtKeyOffset, blob, static_cast<size_t>(total))) {
+    rlLOGE(TAG, "RsaGenKey(host): 读回 blob 失败");
+    return error + 1;
+  }
+  const int w = RsaModexp::KeyBlob::FieldSize(bits);
+  const int h = RsaModexp::KeyBlob::HalfSize(bits);
+  const RsaModexp::KeyBlobHeader* hdr = reinterpret_cast<const RsaModexp::KeyBlobHeader*>(blob);
+  if (hdr->magic != RsaModexp::KeyBlob::kMagic || hdr->bits != static_cast<uint32_t>(bits) ||
+      0 == (hdr->flags & RsaModexp::KeyBlob::kFlagCrt)) {
+    rlLOGE(TAG, "RsaGenKey(host): blob header 非法(magic=%08x bits=%u flags=%u)", hdr->magic, hdr->bits, hdr->flags);
+    ++error;
+  }
+
+  /* 素因子复核(素数性 / gcd(e,p-1)=1 / p≠q / 位宽 / d 存在) */
+  if (0 == VerifyRsaPrimePair(blob + RsaModexp::KeyBlob::POffset(bits), blob + RsaModexp::KeyBlob::QOffset(bits),
+                              bits / 2, "GenKey"))
+    ++error;
+
+  /* 全字段复核: e*d ≡ 1 (mod lcm(p-1,q-1)) / dmp1 / dmq1 / iqmp / bits(n) / e */
+  {
+    BIGNUM* p = BN_lebin2bn(blob + RsaModexp::KeyBlob::POffset(bits), h, nullptr);
+    BIGNUM* q = BN_lebin2bn(blob + RsaModexp::KeyBlob::QOffset(bits), h, nullptr);
+    BIGNUM* n = BN_lebin2bn(blob + RsaModexp::KeyBlob::NOffset(bits), w, nullptr);
+    BIGNUM* e = BN_lebin2bn(blob + RsaModexp::KeyBlob::EOffset(bits), w, nullptr);
+    BIGNUM* d = BN_lebin2bn(blob + RsaModexp::KeyBlob::DOffset(bits), w, nullptr);
+    BIGNUM* dmp1 = BN_lebin2bn(blob + RsaModexp::KeyBlob::Dmp1Offset(bits), h, nullptr);
+    BIGNUM* dmq1 = BN_lebin2bn(blob + RsaModexp::KeyBlob::Dmq1Offset(bits), h, nullptr);
+    BIGNUM* iqmp = BN_lebin2bn(blob + RsaModexp::KeyBlob::IqmpOffset(bits), h, nullptr);
+    BN_CTX* bc = BN_CTX_new();
+    BIGNUM* t = BN_new();
+    BIGNUM* pm1 = BN_new();
+    BIGNUM* qm1 = BN_new();
+    BIGNUM* g = BN_new();
+    BIGNUM* lcm = BN_new();
+    std::ignore = BN_sub_word(BN_copy(pm1, p), 1);
+    std::ignore = BN_sub_word(BN_copy(qm1, q), 1);
+    std::ignore = BN_gcd(g, pm1, qm1, bc);
+    std::ignore = BN_mul(lcm, pm1, qm1, bc);
+    std::ignore = BN_div(lcm, nullptr, lcm, g, bc);
+    std::ignore = BN_mod_mul(t, e, d, lcm, bc);
+    const int ed_ok = BN_is_one(t);
+    std::ignore = BN_mod(t, d, pm1, bc);
+    const int dmp1_ok = (0 == BN_cmp(t, dmp1));
+    std::ignore = BN_mod(t, d, qm1, bc);
+    const int dmq1_ok = (0 == BN_cmp(t, dmq1));
+    std::ignore = BN_mod_inverse(t, q, p, bc);
+    const int iqmp_ok = (0 == BN_cmp(t, iqmp));
+    BIGNUM* e65537 = BN_new();
+    std::ignore = BN_set_word(e65537, RsaKeyGen::kE);
+    const int e_ok = (0 == BN_cmp(e, e65537));
+    const int bits_ok = (BN_num_bits(n) == bits);
+    rlLOGI(TAG, "RsaGenKey(host) 复核: bits(n)=%d(%s) e=%s(%s) e*d≡1(mod lcm)=%d dmp1=%d dmq1=%d iqmp=%d", BN_num_bits(n),
+           bits_ok ? "OK" : "BAD", BN_bn2hex(e), e_ok ? "OK" : "BAD", ed_ok, dmp1_ok, dmq1_ok, iqmp_ok);
+    if (!(ed_ok && dmp1_ok && dmq1_ok && iqmp_ok && e_ok && bits_ok))
+      ++error;
+    LogLeHex("GenKey", "n(le)", blob + RsaModexp::KeyBlob::NOffset(bits), w);
+    LogLeHex("GenKey", "p(le)", blob + RsaModexp::KeyBlob::POffset(bits), h);
+    LogLeHex("GenKey", "q(le)", blob + RsaModexp::KeyBlob::QOffset(bits), h);
+    LogLeHex("GenKey", "seed(le)", seed, bits / 8);
+    BN_free(e65537);
+    BN_free(lcm);
+    BN_free(g);
+    BN_free(qm1);
+    BN_free(pm1);
+    BN_free(t);
+    BN_CTX_free(bc);
+    BN_free(iqmp);
+    BN_free(dmq1);
+    BN_free(dmp1);
+    BN_free(d);
+    BN_free(e);
+    BN_free(n);
+    BN_free(q);
+    BN_free(p);
+  }
+
+  rlLOGI(TAG, "RsaGenKey(host): %s (error=%d)", error ? "FAIL" : "PASS", error);
+  return error;
+#else
+  return 0;
+#endif /* __RockeyARM__ */
+}
+
 int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   Context_t* ctx = static_cast<Context_t*>(Context);
   [[maybe_unused]] const int mode = (int)(ctx->argv_[1] & 0xff) ? (int)(ctx->argv_[1] & 0xff) : 1;
@@ -3373,6 +3550,7 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   DONGLE_RUN_TESTING(PrimeMRTests);
   DONGLE_RUN_TESTING(RsaModexpTests);
   DONGLE_RUN_TESTING(RsaCrtTests);
+  DONGLE_RUN_TESTING(RsaKeyGenTests);
 
   Context->result_[0] = result;
   Context->result_[1] = result2;

@@ -66,6 +66,31 @@ limb_t ModInvSmallPrime(limb_t a, uint32_t m) {
   return static_cast<limb_t>(result);
 }
 
+/*! 读字段: cipherKeyId != 0 时读出后**逐字段 ECB 解密**(KeyBlob 各字段偏移/长度都是 16 的倍数,
+ *! 所以可以按块随机解密, 明文永不整体进 RAM)。 */
+int ReadField(Dongle& dongle, int keyFile, uint32_t off, void* buf, size_t size, int cipherKeyId) {
+  if (0 != dongle.ReadDataFile(keyFile, off, buf, size))
+    return -EIO;
+  if (cipherKeyId) {
+    if (0 != (size % 16))
+      return -EINVAL;
+    if (0 != dongle.SM4ECB(cipherKeyId, static_cast<uint8_t*>(buf), size, false))
+      return -EIO;
+  }
+  return 0;
+}
+
+/*! 写字段: cipherKeyId != 0 时**就地** ECB 加密后再写 —— 调用方必须保证该缓冲此后不再当明文用 */
+int WriteField(Dongle& dongle, int keyFile, uint32_t off, uint8_t* buf, size_t size, int cipherKeyId) {
+  if (cipherKeyId) {
+    if (0 != (size % 16))
+      return -EINVAL;
+    if (0 != dongle.SM4ECB(cipherKeyId, buf, size, true))
+      return -EIO;
+  }
+  return dongle.WriteDataFile(keyFile, off, buf, size);
+}
+
 }  // namespace
 
 /**
@@ -83,6 +108,7 @@ int RsaKeyGen::Generate(Dongle& dongle,
                         const uint8_t* seed,
                         int bits,
                         int rounds,
+                        int cipherKeyId,
                         Arena& arena) {
   if (nullptr == seed)
     return -EINVAL;
@@ -117,13 +143,18 @@ int RsaKeyGen::Generate(Dongle& dongle,
         memcpy(&cand->v[0], seed + static_cast<size_t>(i) * static_cast<size_t>(hb), static_cast<size_t>(hb));
         cand->n = hk; /* 候选宽度 = 种子宽度(FindPrime 只保证最高位/最低位) */
         uint64_t probes = 0;
-        /* label = 0: 本指令只碰 keyFile, 不往 dashboard 写进度(看门狗心跳仍由 MR/Montgomery 内部派发) */
-        if (mr->FindPrime(*cand, bits / 2, rounds, kMaxProbes, probes, 0) <= 0) {
+        /* label = 1(p) / 2(q): 与测试口径一致 —— 每 32 次探测往 dashboard 落一条进度记录
+         * (magic 'MRun', seq=label, units=已探测数), 长跑期间 host 可用 `-2 19 5` 只读观察
+         * "到底还在推进还是在某处卡住"; 该记录同时是一次 COS 调用(额外的喂狗)。
+         * 注意: 不要把 label 设成 0 —— 那会同时去掉这条可观测性与隐含心跳(见 mr.cc 注释)。 */
+        if (mr->FindPrime(*cand, bits / 2, rounds, kMaxProbes, probes, static_cast<uint32_t>(i + 1)) <= 0) {
           rc = -ERANGE; /* 探测超限/候选越界: 按失败处理, 绝不无限搜索 */
           break;
         }
         const uint32_t off = (0 == i) ? RsaModexp::KeyBlob::POffset(bits) : RsaModexp::KeyBlob::QOffset(bits);
-        if (0 != dongle.WriteDataFile(keyFile, keyOffset + off, &cand->v[0], static_cast<size_t>(hb))) {
+        /* cipherKeyId != 0 时就地加密候选: p 之后候选会被 q 的种子完全重写, 不影响后续 ✓ */
+        if (0 != WriteField(dongle, keyFile, keyOffset + off, reinterpret_cast<uint8_t*>(&cand->v[0]),
+                            static_cast<size_t>(hb), cipherKeyId)) {
           rc = -EIO;
           break;
         }
@@ -135,15 +166,17 @@ int RsaKeyGen::Generate(Dongle& dongle,
     limb_t* const P = reinterpret_cast<limb_t*>(A);
     limb_t* const Q = reinterpret_cast<limb_t*>(A + hk * 4);
     limb_t* const W = reinterpret_cast<limb_t*>(A + wk * 4);
+    dongle.KickWDG(); /* 组装阶段的显式心跳: 基类方法, 任何长循环都可以直接调(见 Dongle::KickWDG) */
 
     /* (a) n = p*q */
-    if (0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::POffset(bits), P, static_cast<size_t>(hb)) ||
-        0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::QOffset(bits), Q, static_cast<size_t>(hb))) {
+    if (0 != ReadField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::POffset(bits), P, static_cast<size_t>(hb), cipherKeyId) ||
+        0 != ReadField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::QOffset(bits), Q, static_cast<size_t>(hb), cipherKeyId)) {
       rc = -EIO;
       break;
     }
     RsaModexp::MulAddK(W, P, Q, hk, nullptr); /* 2*hk = wk limb */
-    if (0 != dongle.WriteDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::NOffset(bits), W, static_cast<size_t>(wb))) {
+    if (0 != WriteField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::NOffset(bits), reinterpret_cast<uint8_t*>(W),
+                        static_cast<size_t>(wb), cipherKeyId)) {
       rc = -EIO;
       break;
     }
@@ -168,29 +201,34 @@ int RsaKeyGen::Generate(Dongle& dongle,
         break;
       }
     }
-    if (0 != dongle.WriteDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::DOffset(bits), W, static_cast<size_t>(wb))) {
-      rc = -EIO;
-      break;
-    }
-    /* 此后 W = d */
+    /* W = d 到此为止; **先不写盘**: 下面的 dmp1/dmq1 还要用 W 里的明文 d(就地加密会毁掉它),
+     * 因此 d 的写盘挪到 dmp1/dmq1 之后 —— 那时 d 已不再被使用。 */
 
     /* (d)(e) dmp1 = d mod (p-1)、dmq1 = d mod (q-1) */
     for (int i = 0; i < 2; ++i) {
       const uint32_t in_off = (0 == i) ? RsaModexp::KeyBlob::POffset(bits) : RsaModexp::KeyBlob::QOffset(bits);
       const uint32_t out_off = (0 == i) ? RsaModexp::KeyBlob::Dmp1Offset(bits) : RsaModexp::KeyBlob::Dmq1Offset(bits);
-      if (0 != dongle.ReadDataFile(keyFile, keyOffset + in_off, P, static_cast<size_t>(hb))) {
+      if (0 != ReadField(dongle, keyFile, keyOffset + in_off, P, static_cast<size_t>(hb), cipherKeyId)) {
         rc = -EIO;
         break;
       }
       SubOneK(P, hk);                          /* P = p-1 / q-1 */
       RsaModexp::ModReduce(Q, W, wk, P, hk);    /* Q(输出)不得与 W(被除数)别名 */
-      if (0 != dongle.WriteDataFile(keyFile, keyOffset + out_off, Q, static_cast<size_t>(hb))) {
+      if (0 != WriteField(dongle, keyFile, keyOffset + out_off, reinterpret_cast<uint8_t*>(Q),
+                          static_cast<size_t>(hb), cipherKeyId)) {
         rc = -EIO;
         break;
       }
     }
     if (0 != rc)
       break;
+
+    /* d 已不再被使用 ⇒ 现在就地加密写盘 */
+    if (0 != WriteField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::DOffset(bits),
+                        reinterpret_cast<uint8_t*>(W), static_cast<size_t>(wb), cipherKeyId)) {
+      rc = -EIO;
+      break;
+    }
 
     /* (f) iqmp = q^{p-2} mod p(Fermat: p 为素数 ⇒ q^{p-1} ≡ 1) */
     {
@@ -203,9 +241,9 @@ int RsaKeyGen::Generate(Dongle& dongle,
 
       /* exp 区容量恰 hk limb: 先当 limb 数组读入 p 并减 2 ⇒ 指数 = p-2(小端字节序与 limb 同) */
       limb_t* const exp_limbs = reinterpret_cast<limb_t*>(exp);
-      if (0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::POffset(bits), exp_limbs, static_cast<size_t>(hb)) ||
-          0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::QOffset(bits), base, static_cast<size_t>(hb)) ||
-          0 != dongle.ReadDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::POffset(bits), mod, static_cast<size_t>(hb))) {
+      if (0 != ReadField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::POffset(bits), exp_limbs, static_cast<size_t>(hb), cipherKeyId) ||
+          0 != ReadField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::QOffset(bits), base, static_cast<size_t>(hb), cipherKeyId) ||
+          0 != ReadField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::POffset(bits), mod, static_cast<size_t>(hb), cipherKeyId)) {
         rc = -EIO;
         break;
       }
@@ -214,10 +252,12 @@ int RsaKeyGen::Generate(Dongle& dongle,
 
       RsaModexp rsa;
       rsa.SetDongle(&dongle);
+      dongle.KickWDG(); /* iqmp 是 2*k 位指数的模幂(1024/1536 位指数), 入口先喂一次 */
       rc = rsa.HalfModExp(out, base, exp, hb, mod, hk, t);
       if (0 != rc)
         break;
-      if (0 != dongle.WriteDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::IqmpOffset(bits), out, static_cast<size_t>(hb))) {
+      if (0 != WriteField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::IqmpOffset(bits),
+                          reinterpret_cast<uint8_t*>(out), static_cast<size_t>(hb), cipherKeyId)) {
         rc = -EIO;
         break;
       }
@@ -228,7 +268,8 @@ int RsaKeyGen::Generate(Dongle& dongle,
       memset(A, 0, static_cast<size_t>(wb));
       A[0] = 0x01;
       A[2] = 0x01;
-      if (0 != dongle.WriteDataFile(keyFile, keyOffset + RsaModexp::KeyBlob::EOffset(bits), A, static_cast<size_t>(wb))) {
+      if (0 != WriteField(dongle, keyFile, keyOffset + RsaModexp::KeyBlob::EOffset(bits), A,
+                          static_cast<size_t>(wb), cipherKeyId)) {
         rc = -EIO;
         break;
       }
@@ -241,7 +282,7 @@ int RsaKeyGen::Generate(Dongle& dongle,
       hdr.bits = static_cast<uint32_t>(bits);
       hdr.flags = RsaModexp::KeyBlob::kFlagCrt;
       hdr.reserved = 0;
-      if (0 != dongle.WriteDataFile(keyFile, keyOffset, &hdr, sizeof(hdr))) {
+      if (0 != WriteField(dongle, keyFile, keyOffset, reinterpret_cast<uint8_t*>(&hdr), sizeof(hdr), cipherKeyId)) {
         rc = -EIO;
         break;
       }

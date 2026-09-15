@@ -320,6 +320,13 @@ rLANGEXPORT int rLANGAPI RockeyTrustExecutePrepare(VM_t& vm, void* InOutBuf /* 1
 /**
  *!
  */
+/**
+ *! RSA 指令族(ExRSAGenKey/ExRSACrtModExp/ExRSAKeyCheck)的 cipherKeyId 约定(用户 2026-09-15):
+ *!   1000     = **明文哨兵**(默认; 特意不用 0 —— 真机上 id=0 的文件可能创建不了)
+ *!   901..999 = 内部临时 SM4 密钥 keyId(逐字段 ECB 加解密)
+ *!   其它值    = -EINVAL
+ */
+static constexpr int kCipherPlainId = 1000;
 enum class OpCode : uint16_t {
   /**
    *! MASK: 0x0FFF
@@ -476,19 +483,23 @@ enum class OpCode : uint16_t {
    *! 校验失败(magic/bits/flags、p*q != n、q*iqmp != 1 mod p)返回负值; **outAddr 不得等于 mAddr**
    *! (校验阶段用结果区当 p*q 乘积缓冲)。
    */
-  kExRSACrtModExp = 0x151, // argc : 5, value = ExRSACrtModExp(keyFile, keyOffset, mAddr, outAddr, bits)
+  kExRSACrtModExp = 0x151, // argc : 5...6, value = ExRSACrtModExp(keyFile, keyOffset, mAddr, outAddr, bits, cipherKeyId)
+                           //   cipherKeyId: 0=明文 blob; >900 = 该 SM4 keyId 逐字段 ECB 解密(见 kExRSAGenKey)
 
   /**
    *! 只校验数据文件里的私钥 blob(不改动其它内存): magic/bits/flags、p*q == n、
    *! q*iqmp ≡ 1 (mod p)、dmp1 < p-1、dmq1 < q-1; 0 = 通过。scratchAddr 需 bits/8 字节。
    */
-  kExRSAKeyCheck = 0x152,  // argc : 4, value = ExRSAKeyCheck(keyFile, keyOffset, scratchAddr, bits)
+  kExRSAKeyCheck = 0x152,  // argc : 4...5, value = ExRSAKeyCheck(keyFile, keyOffset, scratchAddr, bits, cipherKeyId)
 
   /**
    *! 设备内生成 RSA 私钥(2048/3072)并把**完整私钥**写成 RsaModexp::KeyBlob('RSAK') 落进数据文件:
    *! 生成完可直接接 ExRSAKeyCheck / ExRSACrtModExp —— 全程不经过 host, 私钥不出设备。
    *! 【耗时(真机实测)】1536 位素因子(RSA-3072)整对 ≈52 分钟(期望 ≈84 分钟, 长尾 2-3 小时);
-   *!                  2048 位(1024 位素因子)≈6 分钟量级。期间 LED 由心跳驱动闪烁, 不写 dashboard。
+   *!                  2048 位(1024 位素因子)≈6 分钟起(长尾 35-50 分钟)。期间 LED 由心跳翻转
+   *!                  (每候选一次 ⇒ ≈0.1-0.2s); 另外每 32 次探测往 dashboard[4096] 落一条
+   *!                  进度记录(magic 'MRun', seq=1/2 表示在找 p / q, units=已探测候选数),
+   *!                  host 可用 `__Testing__dongle__ -2 19 5` 只读观察进度(长跑必需)。
    *! 【种子】argv[2] 指向 **bits/8 字节**的种子块 = seed_p || seed_q(各 bits/16 字节, 小端),
    *!        调用方用 KDF(MASTER.SECRET, nonce, kType != 0) 派生 ⇒ 同一种子必得同一把私钥
    *!        (设备内算法与 tools/rockey/LIMIT/sbin/rsa-prime-repro.cjs 逐位对齐)。
@@ -496,11 +507,19 @@ enum class OpCode : uint16_t {
    *! 【落盘】[keyOffset, keyOffset + KeyBlob::TotalSize(bits)): 3072 位 2128B / 2048 位 1424B;
    *!        字段按 KeyBlob 布局, header(magic 'RSAK')**最后写** ⇒ 半成品可按 magic 识别。
    *! 【失败】返回负值并置 zero_ 中止脚本(-EINVAL 参数 / -EIO 读写 / -ERANGE 探测超限)。
-   *! 【权限】keyFile < kUserFileID(1000) 需要管理员权限。
+   *! 【权限】**仅管理员脚本可调用**(RSA-3072 生成只服务最重要的用途)。
+   *! 【密文落盘】argv[5] = cipherKeyId: 0 = 明文(调试/对拍); > 900 = 用该 **SM4 密钥文件**以
+   *!        **ECB** 逐字段加密后写盘(KeyBlob 字段偏移/长度都是 16 的倍数 ⇒ 读侧可逐字段随机解密,
+   *!        明文永不整体进 RAM)。约定: keyId > 900 只留给这种"内部临时密钥", 一切重要用途的脚本
+   *!        都不使用 900 以上的 keyId;  典型流程: 脚本先 `CreateSM4File(996)` + `WriteSM4File(996,
+   *!        随机16B)`、`CreateDataFile(998, 管理员读写)`, 生成/签名完成后删除 996 与 998。
+   *!        (1..900 的 cipherKeyId 一律 -EINVAL, 避免误用业务 keyId。)
    *! 【资源】工作区 = VM 的 buffer_(ExtendBuf 1KB, 峰值 968B); 本指令会走到 1536 位 Miller-Rabin
    *!        (本工程最深栈路径之一) ⇒ 栈说明见 Interface/keygen.h。
    */
-  kExRSAGenKey = 0x153,    // argc : 4...5, value = ExRSAGenKey(keyFile, keyOffset, seedAddr, bits, rounds)
+  /*! cipherKeyId 约定: **1000 = 明文**(默认; 不用 0 —— 真机上 id=0 的文件可能建不了), 901..999 = 内部临时
+   *! SM4 密钥 keyId(逐字段 ECB); 其它值一律 -EINVAL。 */
+  kExRSAGenKey = 0x153,    // argc : 4...6, value = ExRSAGenKey(keyFile, keyOffset, seedAddr, bits, rounds, cipherKeyId)
 
   /**
    *!
