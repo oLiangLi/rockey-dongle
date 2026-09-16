@@ -251,6 +251,55 @@ g++     -std=c++17 -Wall -Werror -fsyntax-only -I <ATOMIC> -I <ATOMIC>/atomic/in
 - 随之而来的一批**新问题** (编译阻断与契约缺口) 见 **`hyper-vm-t-issues-2026-09-16.md`**: 共 **122 个编译错误 / 3 个根因**, 另有 9 条 P0 语义契约问题。
 - ⚠ 检查方式随之变化: 解释器是模板成员函数, **只有 TU 里真的调用 `Execv` 才会实例化并暴露其中的错误** —— 只 include 或只调 hook 的 TU 看不见 (附录 A 的 TU 需按此升级)。
 
+## 11. ⚠ 二次核对新增发现 (2026-09-16, 读周期计价时顺带): 载入到 `x0` + `DIV` 的 UB
+
+### 11.1 **`rd == 0` 的载入被整体跳过 ⇒ 违反 ISA 卷 I §2.6** (确认; ✅ **已修** blob `bf3d9f5a`)
+
+**规范原文** (本次从离线 PDF = Volume I **v20260120** 提取, "2.6. Load and Store Instructions", p.33):
+
+> "The EEI will define what portions of the address space are legal to access with which instructions (e.g., some addresses might be read only, or support word access only). **Loads with a destination of x0 must still raise any exceptions and cause any other side effects even though the load value is discarded.**"
+
+这是**规范性 "must"**。而 `rv32im-atomic.hpp` 的载入分支是:
+
+```cpp
+case 0x03 >> 2:  // LB, LH, LW, LBU, LHU
+  rd = rlRD(op);
+  if (0 != rd) {            // ← rd == 0 时连 mm_L* 都不调用: 不访存、不报错、无副作用
+    ...
+  }
+```
+
+**对照实验** (同一未映射地址 `0`, 只有 `rd` 不同; 落地前在真头 blob `e1aaa777` 上实测 —— 该探针资产随提案原型目录一起删除了, 修复后的断言见**规程九 ⑥**):
+
+| 指令 | 结果 | 应该 |
+| --- | --- | --- |
+| `lw t0, 0(x0)` (rd=5) | `rc = SIGSEGV` (11) | ✅ 一致 |
+| `lw x0, 0(x0)` (rd=0) | `rc = TIMEDOUT` —— **静默"成功"** | ❌ 必须同样 `SIGSEGV` |
+| `lb x0, 0(x0)` / `lbu x0, 0(x0)` | `rc = TIMEDOUT` | ❌ 同上 |
+
+**为什么会有这段 `if`**: 落点不能写 `regs[0]` —— **`x0` 是执行循环的错误通道** (`while (regs.zero == 0)`), 写它就会破坏错误传递。所以正确修法不是删 `if`, 而是**照常访问 + 把结果丢进临时寄存器**:
+
+```cpp
+reg_t dummy;
+reg_t* const dst = rd ? &regs[rd] : &dummy;   // rd == 0 也必须真的访问 (ISA §2.6)
+... Self()->mm_LB(addr, dst) ...
+```
+
+**影响**: ① 不符合 ISA; ② 与本仓自身取向冲突 (`mm_CHKWR/CHKRO/CHKCS` 连 `size == 0` 都拒绝非法地址 —— 都是 fail-closed); ③ ISA 特意保证 `lw x0` 可当**可访问性探针**, 现在这个探针失效; ④ 在最终内存映射下 `lb x0, 0` 对未映射区不报错, 少了一层护栏。
+**状态**: ✅ **已修 (blob `bf3d9f5a`)** —— 修法与验证见 `rv32im-atomic-cycle-weights-2026-09-16.md` §6 (P2) / §9.1: `reg_t dummy; reg_t* const dst = rd ? &regs[rd] : &dummy;`。修复后 `lw x0,0(x0)` 报 `SIGSEGV` 且 `x0` 未被写坏, `lw x0,0(t1)` 合法地址仍正常 (**规程九 ⑥**), 现有冒烟其余断言全部不受影响 (九规程 80 项 0 失败)。
+
+### 11.2 **`DIV` 的 `-rs1` 快速路径在 `rs1 == INT_MIN` 时是有符号溢出 UB** (确认; ✅ **已修** blob `bf3d9f5a`)
+
+```cpp
+case 4:  // DIV
+  if (rLANG_UNLIKELY(regs[rs2].iv == -1))
+    regs[rd].iv = -regs[rs1].iv;   // ← rs1 == INT_MIN 时: 对 int32_t 取负溢出 = UB
+```
+
+这条快速路径**恰好专门处理** `rs2 == -1`, 而 `INT_MIN ÷ -1` **正是 ISA 规定的溢出特例** ⇒ 它一定会被执行到 `-INT_MIN`。C++ 里对 `int32_t` 取负溢出是 UB (与头内"启用最高级别的编译优化, 代码必须消除潜在的UB"的注释、以及 `rLANGiOPT` 的 `-O3` 并列时尤其扎眼)。
+**修法**: `regs[rd].uv = 0u - regs[rs1].uv;` —— 无符号回绕**有定义**, 结果与 ISA 完全一致 (`DIV(INT_MIN,-1) == INT_MIN`)。**已修 (blob `bf3d9f5a`), 规程九 ⑦ 已验证**。
+**注**: 本报告 §5/§9 早先写的"`DIV(INT_MIN,-1) = INT_MIN`, 用 `-rs1` **恰好等价** ✅" —— 数值等价没错, 但"**恰好**"二字掩盖了 UB, 以本条为准。
+
 ## 附录 A. 最小复核 TU (本次实测用的骨架, 可原样复现)
 
 ```cpp

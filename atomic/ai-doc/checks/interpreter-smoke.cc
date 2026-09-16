@@ -44,7 +44,15 @@ struct Impl : machine::hyper::VM_t<Impl> {
   int mm_SH (libmb_t a, libmb_t v) { if (!inRange(a,2) || (a & 1u)) return SIGSEGV; set(a, v, 2); return 0; }
   int mm_SW (libmb_t a, libmb_t v) { if (!inRange(a,4) || (a & 3u)) return SIGSEGV; set(a, v, 4); return 0; }
 
-  int op_GATE(int id) { ++gate_calls; gate_last_id = id; return 0; }
+  /* 门实现可以把自己的真实成本追加到同一个 cyc_ 上 (hart_ 是 protected, 派生类可达) */
+  libmb_t gate_charge = 0;
+  int hyper_calls = 0;
+  int op_GATE(int id) {
+    ++gate_calls; gate_last_id = id;
+    if (hart_ && gate_charge) hart_->cyc_ += gate_charge;   /* 分层计价: 解释器收进门费, 门自报其余 */
+    return 0;
+  }
+  int op_HYPER(libmb_t) { ++hyper_calls; return rLANG_ERROR_HYPER; }  /* 真实现就是这个语义: 挂起等 RPC */
 
   /* ---- 宿主/上层 API 的参考实现 (mm_CHKWR / mm_CHKRO / mm_CHKCS) ----
      契约: 返回 0 = 通过并把地址/长度写出参; 非 0 = SIGSEGV (拒绝), **不写 hart 的 zero** (由调用者处理)。
@@ -75,6 +83,27 @@ struct Impl : machine::hyper::VM_t<Impl> {
 static int failures = 0;
 #define CHECK(cond, what) do { if (cond) printf("  PASS  %s\n", what); else { printf("  FAIL  %s\n", what); ++failures; } } while (0)
 
+/* 指令编码构造器 (按规范 §2 的字段位置生成; 手写 hex 曾经漏掉 funct3 而变成另一条指令, 一律用它) */
+static constexpr std::uint32_t encR(std::uint32_t f7, std::uint32_t rs2, std::uint32_t rs1,
+                                    std::uint32_t f3, std::uint32_t rd, std::uint32_t op) {
+  return (f7 << 25) | (rs2 << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op;
+}
+static constexpr std::uint32_t encI(std::int32_t imm, std::uint32_t rs1, std::uint32_t f3,
+                                    std::uint32_t rd, std::uint32_t op) {
+  return (static_cast<std::uint32_t>(imm) << 20) | (rs1 << 15) | (f3 << 12) | (rd << 7) | op;
+}
+static constexpr std::uint32_t encS(std::int32_t imm, std::uint32_t rs2, std::uint32_t rs1,
+                                    std::uint32_t f3, std::uint32_t op) {
+  return (((static_cast<std::uint32_t>(imm) >> 5) & 0x7F) << 25) | (rs2 << 20) | (rs1 << 15) |
+         (f3 << 12) | ((static_cast<std::uint32_t>(imm) & 0x1F) << 7) | op;
+}
+static constexpr std::uint32_t encB(std::int32_t imm, std::uint32_t rs2, std::uint32_t rs1,
+                                    std::uint32_t f3, std::uint32_t op) {
+  const std::uint32_t u = static_cast<std::uint32_t>(imm);
+  return (((u >> 12) & 1u) << 31) | (((u >> 5) & 0x3Fu) << 25) | (rs2 << 20) | (rs1 << 15) |
+         (f3 << 12) | (((u >> 1) & 0xFu) << 8) | ((u & 0x1Fu) << 7) | op;
+}
+
 int main() {
   {
     Impl vm; Impl::hart_t hart{};
@@ -92,7 +121,7 @@ int main() {
     vm.put(p + 0x28, 0x06300893u);  /* addi a7, x0, 99 (跳过) */
     vm.put(p + 0x2C, 0x00000073u);  /* ecall -> 默认 SIGILL */
     hart.pc_ = p; hart.Enable();
-    const int rc = vm.Execv(&hart, 64);
+    const int rc = vm.Execv(&hart, 256);  /* 周期预算: 该程序 = 29 拍 (DIV 计入 8 拍; 用 64 也够, 这里留余量) */
     printf("[规程一] rc=%d zero=%d pc=0x%X cycles=%llu\n", rc, hart.regs_.zero.iv, hart.pc_,
            static_cast<unsigned long long>(hart.cycles_));
     CHECK(rc == SIGILL && hart.regs_.zero.iv == SIGILL, "ecall 默认返回 SIGILL 且写入 regs.zero");
@@ -106,16 +135,16 @@ int main() {
     CHECK(vm.get(0x2000u, 4) == 35u, "sw a3 -> mem[0x2000] = 35");
     CHECK(hart.regs_.a6.iv == 35, "lw a6 = 35");
     CHECK(hart.regs_.a7.iv == 0, "jal x0 跳过 addi a7");
-    CHECK(hart.cyc_ == 11, "cyc_ = 11 条(本片)");
+    CHECK(hart.cyc_ == 29, "cyc_ == 29 拍 (addi1+addi1+add1+mul3+div8+rem8+lui1+sw2+lw2+jal1+ecall1), 不再是 11 条");
   }
   {
     Impl vm; Impl::hart_t hart{};
     vm.put(Mem::kBase, 0x00000067u);            /* jalr x0, 0(x0) -> 跳进门窗口 id 0 */
     hart.pc_ = Mem::kBase; hart.regs_.ra.uv = Mem::kBase; hart.Enable();
-    const int rc = vm.Execv(&hart, 6);
+    const int rc = vm.Execv(&hart, 15);   /* 周期预算: 3 个"jalr(1) + 门(1+3)"交替 = 3*5 = 15 拍, 恰好停在门上 */
     printf("[规程二] rc=%d 门调用=%d 末次id=%d pc=0x%X\n", rc, vm.gate_calls, vm.gate_last_id, hart.pc_);
     CHECK(rc == rLANG_ERROR_TIMEDOUT, "时间片用尽返回 rLANG_ERROR_TIMEDOUT");
-    CHECK(vm.gate_calls == 3 && vm.gate_last_id == 0, "门被调用 3 次 (6 条预算里 jalr/门 交替), id=0");
+    CHECK(vm.gate_calls == 3 && vm.gate_last_id == 0, "门被调用 3 次 (15 拍预算里 jalr/门 交替), id=0");
     CHECK(hart.pc_ == Mem::kBase, "门返回后 pc_ 取 x1(ra)");
     CHECK(hart.regs_.ra.uv == Mem::kBase, "ra 未被改动");
   }
@@ -255,6 +284,174 @@ int main() {
     CHECK(rc3 == rLANG_ERROR_TIMEDOUT && vm3.gate_calls == 1 && vm3.gate_last_id == 0
        && h3.pc_ == Mem::kBase,
           "Enable(0) 后第一条指令被当**门 0 调用** (pc<0x800 是门窗口, 且不做取指) => 入口校验值得考虑");
+  }
+  {
+    /* 规程九: 指令周期计价 (2026-09-16 落地) —— 权重表 / 纯函数性 / 预算下界与超调 / 折叠 /
+       门与 HYPER 的分层计价 / rd==0 载入的 ISA §2.6 修复 / RV32M 边界 / 可复现性 */
+    printf("[规程九] 周期计价: 基础 1 拍 + 附加 (访存/M/除法/FENCE/门/RPC)\n");
+    const int kTo = rLANG_ERROR_TIMEDOUT;
+    CHECK(Impl::kCycMem == 1 && Impl::kCycBranch == 1 && Impl::kCycMul == 2 && Impl::kCycMulh == 3
+       && Impl::kCycDiv == 7 && Impl::kCycFence == 3 && Impl::kCycGate == 3 && Impl::kCycHyper == (1u << 16),
+          "权重表本身: mem 1 / branch 1 / mul 2 / mulh 3 / div 7 / fence 3 / gate 3 / hyper 65536 (附加; 合计 = 1+附加)");
+    /* 计价原则 (用户 2026-09-16): "内置指令应该小于自己实现个自定义的门的代价, 不然就没人用了"
+       界的最低算式 = 2 次寄存器经内存搬运 (2×(1+kCycMem)) + 一次自定义门 ((1+kCycGate) + 至少自加 1)
+       补充: 门还要**占寄存器/现场**, 真实代价远高于此 ⇒ 这是保险丝, 只需成立 (见计价文档 §4.4) */
+    CHECK(Impl::kCycDiv + 1 < 2 * (1 + Impl::kCycMem) + (1 + Impl::kCycGate) + 1,
+          "内置最贵的 DIV (8 拍) < 2 次搬运 (4 拍) + 自定义门 (缺省 4 拍起, 自定义必然再自加 >=1) = 9 拍 => 原则成立");
+    CHECK(Impl::kCycDiv >= Impl::kCycMem && Impl::kCycDiv >= Impl::kCycBranch && Impl::kCycDiv >= Impl::kCycMul
+       && Impl::kCycDiv >= Impl::kCycMulh && Impl::kCycDiv >= Impl::kCycFence,
+          "DIV 是内置指令里最贵的一档 => 上面那条不等式就是**全局上界** (以后加权重不得越过它)");
+
+    /* 只跑一条指令: limit=1 单步 (第一条若成功则因时间片用尽返回 TIMEDOUT) */
+    auto one = [](std::uint32_t op, int* rcOut, std::uint32_t rs1val = Mem::kBase,
+                  std::uint32_t rs2val = 1u) -> std::uint32_t {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, op);
+      vm.put(Mem::kBase + 4, 0x00000073u);   /* ecall -> 默认 SIGILL (单步时跑不到) */
+      h.regs_.t1.uv = rs1val; h.regs_.a1.uv = 5; h.regs_.a2.uv = rs2val;
+      h.pc_ = Mem::kBase; h.Enable();
+      const int r = vm.Execv(&h, 1);
+      if (rcOut) *rcOut = r;
+      return static_cast<std::uint32_t>(h.cyc_);
+    };
+
+    int rc = 0;
+    std::uint32_t c = 0;
+    c = one(encI(7, 0, 0, 10, 0x13), &rc);        CHECK(rc == kTo && c == 1,  "addi / lui / add 类 => 1 拍");
+    c = one(encI(0, 6, 2, 5, 0x03), &rc);         CHECK(rc == kTo && c == 2,  "lw  t0,0(t1)  => 2 拍 (1 + kCycMem)");
+    c = one(encI(0, 6, 0, 5, 0x03), &rc);         CHECK(rc == kTo && c == 2,  "lb  t0,0(t1)  => 2 拍");
+    c = one(encS(0, 5, 6, 2, 0x23), &rc);         CHECK(rc == kTo && c == 2,  "sw  t0,0(t1)  => 2 拍");
+    c = one(encS(0, 5, 6, 0, 0x23), &rc);         CHECK(rc == kTo && c == 2,  "sb  t0,0(t1)  => 2 拍");
+    c = one(encR(1, 12, 11, 0, 10, 0x33), &rc);   CHECK(rc == kTo && c == 3,  "mul           => 3 拍 (1 + kCycMul)");
+    c = one(encR(1, 12, 11, 1, 10, 0x33), &rc);   CHECK(rc == kTo && c == 4,  "mulh          => 4 拍 (1 + kCycMulh)");
+    c = one(encR(1, 12, 11, 2, 10, 0x33), &rc);   CHECK(rc == kTo && c == 4,  "mulhsu        => 4 拍");
+    c = one(encR(1, 12, 11, 3, 10, 0x33), &rc);   CHECK(rc == kTo && c == 4,  "mulhu         => 4 拍");
+    c = one(encR(1, 12, 11, 4, 10, 0x33), &rc);   CHECK(rc == kTo && c == 8,  "div           => 8 拍 (1 + kCycDiv, 策略上限)");
+    c = one(encR(1, 12, 11, 5, 10, 0x33), &rc);   CHECK(rc == kTo && c == 8,  "divu          => 8 拍");
+    c = one(encR(1, 12, 11, 6, 10, 0x33), &rc);   CHECK(rc == kTo && c == 8,  "rem           => 8 拍");
+    c = one(encR(1, 12, 11, 7, 10, 0x33), &rc);   CHECK(rc == kTo && c == 8,  "remu          => 8 拍");
+    c = one(0x0FF0000Fu, &rc);                    CHECK(rc == kTo && c == 4,  "fence         => 4 拍 (1 + kCycFence)");
+    c = one(0x0000100Fu, &rc);                    CHECK(rc == kTo && c == 4,  "fence.i       => 4 拍");
+    /* 条件分支: 固定 +1 拍惩罚, **不分**是否命中 (无条件跳转 JAL/JALR 不加) */
+    c = one(encB(8, 12, 11, 0, 0x63), &rc, Mem::kBase, 5u);  CHECK(rc == kTo && c == 2, "beq a1,a2 (命中)   => 2 拍 (1 + kCycBranch)");
+    c = one(encB(8, 12, 11, 0, 0x63), &rc, Mem::kBase, 6u);  CHECK(rc == kTo && c == 2, "beq a1,a2 (不命中) => 2 拍 (固定惩罚, 不分命中)");
+    c = one(0x0080006Fu, &rc);                    CHECK(rc == kTo && c == 1,  "jal x0,+8 (无条件) => 1 拍 (跳转不加惩罚)");
+
+    /* 权重必须是"指令类的纯函数": 与操作数无关, 不做早退 */
+    const std::uint32_t d0 = one(encR(1, 12, 11, 4, 10, 0x33), &rc, Mem::kBase, 0u);
+    const std::uint32_t dn = one(encR(1, 12, 11, 4, 10, 0x33), &rc, 0x80000000u, 0xFFFFFFFFu);
+    const std::uint32_t d1 = one(encR(1, 12, 11, 4, 10, 0x33), &rc, 5u, 1u);
+    CHECK(d0 == 8 && dn == 8 && d1 == 8,
+          "div 除零 / INT_MIN÷-1 / 普通除法 都为 8 拍 => 权重是纯函数 (可复现、可预测)");
+
+    /* 预算是下界: limit=0 仍是单步; 最大超调 = 单条最贵指令 = 8 拍 (DIV) = 调度粒度 */
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, encR(1, 12, 11, 4, 10, 0x33));   /* div */
+      h.regs_.a1.uv = 5; h.regs_.a2.uv = 2;
+      h.pc_ = Mem::kBase; h.Enable();
+      const int r = vm.Execv(&h, 0);
+      CHECK(r == kTo && h.regs_.a0.uv == 2u && h.cyc_ == 8,
+            "limit=0 跑 div: 仍执行 1 条 (0 与 1 都是单步) 且超调到 8 拍 = 最大超调 = 调度粒度上限");
+    }
+
+    /* 折叠语义: 总代价 = cycles_ + cyc_ (折叠发生在 Execv 入口, 最后一片未结算) */
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase + 0, encI(7, 0, 0, 10, 0x13));      /* addi 1 拍 */
+      vm.put(Mem::kBase + 4, encI(0, 6, 2, 5, 0x03));       /* lw   2 拍 */
+      vm.put(Mem::kBase + 8, encR(1, 12, 11, 0, 10, 0x33)); /* mul  3 拍 */
+      h.regs_.t1.uv = Mem::kBase; h.pc_ = Mem::kBase; h.Enable();
+      vm.Execv(&h, 1); vm.Execv(&h, 1); vm.Execv(&h, 1);
+      CHECK(h.cycles_ == 3 && h.cyc_ == 3,
+            "3 次单步后 cycles_ == 3 (已结算 2 片) 而 cyc_ == 3 (最后一片未结算)");
+      CHECK(h.cycles_ + h.cyc_ == 6,
+            "**总代价 = cycles_ + cyc_** (== 6 = 1+2+3): 宿主做程序总预算时必须相加, 否则少算一片");
+    }
+
+    /* 门调用: 解释器缺省收 kCycGate (+3 => 合计 4 拍); 门实现可以再追加自己的成本 */
+    {
+      Impl vm; Impl::hart_t h{};
+      h.regs_.ra.uv = Mem::kBase; h.pc_ = 0;   /* 入口落在门窗口 => 门 0 */
+      h.Enable();
+      const int r = vm.Execv(&h, 1);
+      CHECK(r == kTo && vm.gate_calls == 1 && h.cyc_ == 4,
+            "门调用缺省: 1 (基础) + kCycGate (3) == 4 拍");
+    }
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.gate_charge = 0x10000;                /* 门自报"我其实很贵" */
+      h.regs_.ra.uv = Mem::kBase; h.pc_ = 0;
+      h.Enable();
+      const int r = vm.Execv(&h, 1);
+      CHECK(r == kTo && h.cyc_ == 4 + 0x10000,
+            "门实现自报成本: 4 + gate_charge => 分层计价成立 (解释器无需知道门的真实成本)");
+    }
+
+    /* 世界魔数 (HYPER): 跨世界 RPC 级开销; 典型行为是返回 rLANG_ERROR_HYPER 并挂起本次执行 */
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, rLANG_WORLD_MAGIC);
+      vm.put(Mem::kBase + 4, 0x00000013u);     /* HYPER 的操作数 (此处无关) */
+      h.pc_ = Mem::kBase; h.Enable();
+      const int r = vm.Execv(&h, 1);
+      CHECK(r == rLANG_ERROR_HYPER && vm.hyper_calls == 1 && h.cyc_ == 1 + (1u << 16),
+            "HYPER: 基础 1 + kCycHyper (RPC 发起开销) == 65537 拍, 返回 rLANG_ERROR_HYPER (等待时间不计)");
+    }
+
+    /* rd == 0 的载入也必须真的访存 (ISA 卷 I §2.6) */
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, encI(0, 0, 2, 0, 0x03));   /* lw x0, 0(x0): 地址 0 = 未映射 */
+      h.pc_ = Mem::kBase; h.Enable();
+      const int r = vm.Execv(&h, 10);
+      CHECK(r == SIGSEGV && h.regs_.zero.iv == SIGSEGV,
+            "lw x0,0(x0) 现在 **SIGSEGV** (ISA §2.6: 载入到 x0 仍须报异常), 错误仍只落在 x0");
+    }
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, encI(0, 6, 2, 0, 0x03));   /* lw x0, 0(t1): 合法地址 */
+      h.regs_.t1.uv = Mem::kBase; h.pc_ = Mem::kBase; h.Enable();
+      const int r = vm.Execv(&h, 1);
+      CHECK(r == kTo && h.cyc_ == 2 && h.regs_.zero.iv == 0,
+            "lw x0,0(t1) 合法地址: 不报错、仍计 2 拍、x0 未被载入结果写坏 (结果丢进临时 reg_t)");
+    }
+
+    /* RV32M 边界 (顺带修掉 -INT_MIN 的有符号溢出 UB) */
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, encR(1, 12, 11, 4, 10, 0x33));   /* div */
+      h.regs_.a1.uv = 0x80000000u; h.regs_.a2.uv = 0xFFFFFFFFu;
+      h.pc_ = Mem::kBase; h.Enable();
+      vm.Execv(&h, 1);
+      CHECK(h.regs_.a0.uv == 0x80000000u, "DIV(INT_MIN,-1) == INT_MIN (0u - uv 回绕, 已定义行为)");
+    }
+    {
+      Impl vm; Impl::hart_t h{};
+      vm.put(Mem::kBase, encR(1, 12, 11, 6, 10, 0x33));   /* rem */
+      h.regs_.a1.uv = 0x80000000u; h.regs_.a2.uv = 0xFFFFFFFFu;
+      h.pc_ = Mem::kBase; h.Enable();
+      vm.Execv(&h, 1);
+      CHECK(h.regs_.a0.uv == 0u, "REM(INT_MIN,-1) == 0");
+    }
+
+    /* 可复现性: 同一程序两次运行, cyc_ 逐条相同 */
+    {
+      std::uint32_t t[2] = {0, 0};
+      for (int k = 0; k < 2; ++k) {
+        Impl vm; Impl::hart_t h{};
+        vm.put(Mem::kBase + 0, encI(7, 0, 0, 10, 0x13));
+        vm.put(Mem::kBase + 4, encI(0, 6, 2, 5, 0x03));
+        vm.put(Mem::kBase + 8, encR(1, 12, 11, 1, 10, 0x33));
+        vm.put(Mem::kBase + 12, encS(0, 5, 6, 2, 0x23));
+        vm.put(Mem::kBase + 16, 0x00000073u);
+        h.regs_.t1.uv = Mem::kBase; h.pc_ = Mem::kBase; h.Enable();
+        vm.Execv(&h, 1000);
+        t[k] = static_cast<std::uint32_t>(h.cyc_);
+      }
+      CHECK(t[0] == t[1] && t[0] == 1u + 2u + 4u + 2u + 1u,
+            "同一程序两次运行 cyc_ 相同 (== 10 = addi1+lw2+mulh4+sw2+ecall1) => 权重是纯函数");
+    }
   }
   printf("\n%s (failures=%d)\n", failures ? "有失败" : "全部通过", failures);
   return failures;
