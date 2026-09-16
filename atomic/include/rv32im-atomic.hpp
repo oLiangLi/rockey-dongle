@@ -23,18 +23,9 @@ rLANG_DECLARE_MACHINE
 #define SIGTRAP 5
 #endif /* SIGTRAP */
 
-#if 0
-/**
- *! Windows 下 SIGABRT==22, 与其他环境不一致, 为了避免麻烦, 我用使用 SIGTERM
- */
-#ifndef SIGABRT
-#define SIGABRT 6
-#endif /* SIGABRT */
-#endif
-
-#ifndef SIGTERM
-#define SIGTERM 15
-#endif /* SIGTERM */
+#ifndef SIGQUIT
+#define SIGQUIT 3
+#endif /* SIGQUIT */
 
 #ifndef SIGSEGV
 #define SIGSEGV 11
@@ -55,7 +46,7 @@ rLANG_DECLARE_MACHINE
 /**
  *! 启用最高级别的编译优化, 代码必须消除潜在的UB ...
  */
-#if !defined(rLANGiOPT) && defined(__GNUC__)
+#if !defined(rLANGiOPT) && defined(__GNUC__) && !defined(__clang__) && !defined(__EMSCRIPTEN__)
 #define rLANGiOPT __attribute__((optimize("O3")))
 #elif !defined(rLANGiOPT)
 #define rLANGiOPT
@@ -103,6 +94,10 @@ struct VM_t {
   };
 
   union regs_t {
+    /**
+     *! 只有宿主/hook 可写 x0, 只有当 zero == 0 时当前的 hart 才可以执行代码
+     *! - 当 (zero|3) == rLANG_ERROR_HYPER 时, 标明程序处于一次异步过程调用之中, 上级调用者必须处理这种异常
+     */
     reg_t regs_[32];
 
     struct {
@@ -127,11 +122,27 @@ struct VM_t {
   };
 
   struct hart_t {
+    hart_t() {
+      /**
+       *! 刚初始化的 hart 不允许执行程序 ...
+       */
+      regs_.zero.uv = SIGQUIT;
+    }
+
+    /**
+     *! 清除hart可能的错误状态, 允许其开始执行程序, 另一个可以同时指定pc ...
+     */
+    void Enable() { regs_.zero.uv = 0; }
+    void Enable(libmb_t pc) {
+      regs_.zero.uv = 0;
+      pc_ = pc;
+    }
+
     regs_t regs_;
 
-    libmb_w_t cycles_;
-    libmb_t cyc_;
-    libmb_t pc_;
+    libmb_w_t cycles_ = 0;
+    libmb_t cyc_ = 0;
+    libmb_t pc_ = 0;
   };
 
  public:
@@ -151,16 +162,23 @@ struct VM_t {
     return (rlRV_X(x, 7, 5) | (rlRV_X(x, 25, 7) << 5) | (rlRV_IMM_SIGN(x) << 12));
   }
 
+
+  static constexpr libmb_t kConfigLimitCycles = 1 << 20;
+
   /**
    *! 我们以解释器方式执行代码, 最慢的但结果最标准的参考, 其他执行路径应该尽量不要与此发生偏差 ...
+   *! - 我们的 VM_t 是为了给 LIMIT 做外壳, 单线程执行的限制是合理的取舍 ...
+   *! - limit_cycles == 0||1 都为单步执行 ...
    */
-  static constexpr libmb_t kConfigLimitCycles = 1 << 20;
   rLANGiOPT int rLANGAPI Execv(hart_t* const hart, const libmb_t limit_cycles) {
     if (hart_)
       return -EALREADY;
 
     if (!hart || limit_cycles > kConfigLimitCycles)
       return -EINVAL;
+
+    if (0 != hart->regs_.zero.iv)
+      return hart->regs_.zero.iv;
 
     hart_ = hart;
     int result = inner_Execv(limit_cycles);
@@ -172,11 +190,12 @@ struct VM_t {
  protected:
   hart_t* hart_ = nullptr;
 
+ private:
   rLANGiOPT int rLANGAPI inner_Execv(const libmb_t limit_cycles) {
-    ASSERT(nullptr != hart_ && limit_cycles < kConfigLimitCycles);
+    ASSERT(nullptr != hart_ && limit_cycles <= kConfigLimitCycles);
 
-    regs_t* const regs = hart_->regs_.regs_;
-    libmbi_t &err = hart_->regs_.zero, v;
+    reg_t* const regs = hart_->regs_.regs_;
+    libmbi_t &err = hart_->regs_.zero.iv, v;
     libmb_t rd, rs1, rs2, pc, addr, op;
 
     hart_->cycles_ += hart_->cyc_;
@@ -186,24 +205,24 @@ struct VM_t {
       ++hart_->cyc_;
 
       pc = hart_->pc_;
-      if rLANG_UNLIKELY(pc & 3)
+      if rLANG_UNLIKELY (pc & 3)
         return err = SIGSEGV;
       hart_->pc_ += 4;
 
       if rLANG_UNLIKELY (pc < 0x800 || pc >= 0xFFFFF800) {
-        hart_->pc_ = regs[1]; /// ra ...
+        hart_->pc_ = regs[1].uv;  /// ra ...
         err = Self()->op_GATE((int)pc / 4);
-        if rLANG_UNLIKELY(0 != err)
+        if rLANG_UNLIKELY (0 != err)
           return err;
       } else {
         err = Self()->if_CODE(pc, &op);
-        if rLANG_UNLIKELY(0 != err)
+        if rLANG_UNLIKELY (0 != err)
           return err;
 
-        if rLANG_UNLIKELY(rLANG_WORLD_MAGIC == op) {
+        if rLANG_UNLIKELY (rLANG_WORLD_MAGIC == op) {
           pc = hart_->pc_;
           err = Self()->if_CODE(pc, &op);
-          if rLANG_UNLIKELY(0 != err)
+          if rLANG_UNLIKELY (0 != err)
             return err;
           hart_->pc_ += 4;
 
@@ -229,18 +248,18 @@ struct VM_t {
             case 0x6F >> 2:  // JAL
               rd = rlRD(op);
               if (rd)
-                regs[rd].uv = hart_->pc;
-              hart_->pc = pc + rlEXTRACT_UJTYPE_IMM(op);
+                regs[rd].uv = hart_->pc_;
+              hart_->pc_ = pc + rlEXTRACT_UJTYPE_IMM(op);
               break;
 
             case 0x67 >> 2:  // JALR
               if (rLANG_UNLIKELY(0 != rlSUBTY(op)))
-                return SIGILL;
+                return err = SIGILL;
               rd = rlRD(op);
               rs1 = rlRS1(op);
               if (rd)
-                regs[rd].uv = hart_->pc;
-              hart_->pc = (regs[rs1].uv + (((int32_t)op) >> 20)) & ~1;
+                regs[rd].uv = hart_->pc_;
+              hart_->pc_ = (regs[rs1].uv + (((int32_t)op) >> 20)) & ~1;
               break;
 
             case 0x63 >> 2:  // BEQ, BNE, BLT, BGE, BLUT, BGEU
@@ -270,7 +289,7 @@ struct VM_t {
                   return err = SIGILL;
               }
               if (v)
-                hart_->pc = pc + rlEXTRACT_SBTYPE_IMM(op);
+                hart_->pc_ = pc + rlEXTRACT_SBTYPE_IMM(op);
               break;
 
             case 0x03 >> 2:  // LB, LH, LW, LBU, LHU
@@ -510,12 +529,12 @@ struct VM_t {
       }
     } while (hart_->cyc_ < limit_cycles);
 
-    return 0;
+    return rLANG_ERROR_TIMEDOUT;
   }
 
- public:
-  int mm_CHKWX(libmb_t addr, libmb_t size, void** ppv) { return SIGSEGV; }
-  int mm_CHKRX(libmb_t addr, libmb_t size, const void** ppv) { return SIGSEGV; }
+ public: /// 只要地址在非法区域, 即使 size==0 也触发SIGSEGV, 地址对齐由调用者检查 ...
+  int mm_CHKWR(libmb_t addr, libmb_t size, void** ppv) { return SIGSEGV; }
+  int mm_CHKRO(libmb_t addr, libmb_t size, const void** ppv) { return SIGSEGV; }
 
   /**
    *! 返回一个VM_t下的字符串, 如果 lenIf 非nullptr则同时返回其长度 ...
@@ -551,22 +570,15 @@ struct VM_t {
  protected:  /// pc < 0x00000800 || pc >= 0xFFFFF800;;; id = (int)pc / 4;;; jalr id*4(zero)
   int op_GATE(int id) { return -ENOSYS; }
 
- protected:  /// rLANG_WORLD_MAGIC 是一条六字节的指令, 它将读取之后的一个libmb_t, 并进入LIMIT-World 执行程序...
+ protected:  /// rLANG_WORLD_MAGIC 的opcode是未分配的, 我们将其视作8字节指令, 并作为进入 LIMIT-World 的唯一入口 ...
   int op_HYPER(libmb_t op) { return -ENOSYS; }
 };
-
-#if 0
-/**
- *! Windows 下 SIGABRT==22, 与其他环境不一致, 为了避免麻烦, 我用使用 SIGTERM
- */
-rLANG_ABIREQUIRE(SIGABRT == 6);
-#endif
 
 /**
  *!
  */
-rLANG_ABIREQUIRE(SIGQUIT == 3 && SIGILL == 4 && SIGTRAP == 5 && SIGTERM == 15 && SIGSEGV == 11 && SIGKILL == 9 &&
-                 SIGALRM == 14 && SIGVTALRM == 26);
+rLANG_ABIREQUIRE(SIGQUIT == 3 && SIGILL == 4 && SIGTRAP == 5 && SIGSEGV == 11 && SIGKILL == 9 && SIGALRM == 14 &&
+                 SIGVTALRM == 26);
 
 /**
  *!

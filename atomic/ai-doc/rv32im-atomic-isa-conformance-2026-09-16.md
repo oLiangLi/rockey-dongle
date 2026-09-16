@@ -33,7 +33,8 @@
 | 刻意偏差 (须写明) | `ECALL → SIGILL`、6 条 `CSR* → SIGILL`、`EBREAK → SIGTRAP`、`FENCE.I` 不实现 | ⚠ 等价于 "RV32IM **减去** Zicsr/Zifencei 与 ECALL/EBREAK"; 而工具链 `-march=rv32im` 默认**包含** Zicsr/Zifencei |
 | ✅ **已修复** | `op_FENCE()` / `op_FENCEI()` 无 `return` (UB) | 已按建议改成 **`void`** (`a1516e32`) ⇒ UB 从构造上消失 ✅ |
 | ✅ **已修复** | `limb_t` 未声明 (系 `libmb_t` 的**误写**) | 用户已改回 `libmb_t` (`41942715`) ⇒ 6 处 `'limb_t'未声明` 全部消失 ✅ |
-| **唯一必修 (只挡 g++)** | ABIREQUIRE 里 `uint32_t == int32_t` 的两次比较 (当前 `161:36` / `161:78`) | ❌ g++ 报 `-Werror=sign-compare`; **clang++ 已 rc=0** |
+| ✅ **已修复** | ABIREQUIRE 里 `uint32_t == int32_t` 的 sign-compare | 用户用 **`^` + `u` 后缀** 改写 (`7ba8a5bd`: `(rLANG_WORLD_MAGIC ^ rLANG_ERROR_HYPER) == 0u` 等) ⇒ **g++ 两个档位都 rc=0** ✅ |
+| ❌ **新必修 (只挡 clang)** | `rLANGiOPT` = `__attribute__((optimize("O3")))` 是 **GCC 专属** | clang++ `-Wall -Werror` 报 `unknown attribute 'optimize' ignored [-Werror,-Wunknown-attributes]` (158/175 行) ⇒ 宏需加 `&& !defined(__clang__)` |
 | 契约留白 | x0 硬连线、IALIGN=32、JALR bit0、对齐规则、RV32M 边界语义 (共 **5 项**; `pc` 已在 `473906f8` 落进基类) | ⚠ 见 §4 |
 | ✅ **已裁定** | **执行/错误契约 = `regs.zero`**: x0 就是错误标志, 只在 `regs.zero == 0` 时循环 | 用户 2026-09-16; 见 §4 第 1、5 条 |
 | ✅ 已声明 (`473906f8`) | **确定性契约** (解释/转译必须逐位一致, 以最慢解释器为准) + **执行代价契约** (周期数不得有大偏差) + **async 挂起语义** (`SIGALRM`/`SIGVTALRM` 唤醒) | 见 §4 第 7–9 条 |
@@ -56,24 +57,27 @@ isGate(0x000) && isGate(0x7FC) && !isGate(0x800) && !isGate(0xFFFFF7FC) && isGat
 SIGILL == 4 && SIGSEGV == 11 && SIGTRAP == 5             // 取值与 POSIX 一致
 ```
 
-### 2.2 编译结果 (当前版 `bdc6993b`)
+### 2.2 编译结果 (当前版 `7ba8a5bd`, 582 行)
 
-| 档位 | g++ 13.4.0 | clang++ 20.1.8 |
-| --- | --- | --- |
-| `-std=c++17` (静态断言) | **rc=0** ✅ (布局/ABI/门窗口/信号值断言全过) | **rc=0** ✅ |
-| `-std=c++17 -Wall -Werror` | **rc=1** ❌ **仅 1 条** | **rc=0** ✅ |
+| TU | 档位 | g++ 13.4.0 | clang++ 20.1.8 |
+| --- | --- | --- | --- |
+| **TU-A** (hooks + 布局/ABI 断言, 不调 `Execv`) | `-std=c++17` | **rc=0** ✅ | rc=1 ❌ |
+| **TU-A** | `-Wall -Werror` | **rc=0** ✅ | rc=1 ❌ `unknown attribute 'optimize' ignored` |
+| **TU-B** (调 `Execv` ⇒ 实例化解释器) | `-std=c++17` | **rc=1** ❌ **122 个错误** | — (同源) |
 
 ```
-rv32im-atomic.hpp:161:36: 错误：comparison of integer expressions of different signedness: 'uint32_t' 与 'int32_t' [-Werror=sign-compare]
-  161 | rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC == rLANG_ERROR_HYPER);
-  162 | rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC - rLANG_ERROR_YEILD == 3);   ← 这一条不报
+# clang++ 只差这一处 (GCC 专属属性):
+rv32im-atomic.hpp:158:3: error: unknown attribute 'optimize' ignored [-Werror,-Wunknown-attributes]
+   59 | #define rLANGiOPT __attribute__((optimize("O3")))
+# 修法: #if !defined(rLANGiOPT) && defined(__GNUC__) && !defined(__clang__)
+
+# TU-B (g++): 122 个错误, 3 个根因 (全部在"只有实例化才检查"的解释器函数体里)
+rv32im-atomic.hpp:178: cannot convert 'reg_t*' to 'regs_t*'      → 下游 68 个 "regs_t has no member 'uv'"
+rv32im-atomic.hpp:179: invalid initialization of reference 'libmbi_t&' from 'regs_t'  → 应写 .iv
+rv32im-atomic.hpp:232/233/242/243/273: no member named 'pc'; did you mean 'pc_'?      → 5 处
 ```
 
-**为什么只报 161**: 162 的右侧是**字面量 `3`**(非负常量), GCC 对"无符号 == 非负常量"**不**报 sign-compare; 161 的右侧是 `((int32_t)0xC8C04E1F)` 这样的**带转换表达式**, GCC 无法证明其非负 ⇒ 报警。
-
-⇒ **只差给 161 的常量加一个 `(uint32_t)`** (见 §6 ①)。clang 两条都不报 (它不在 `static_assert` 内诊断 sign-compare)。
-
-> 历史: `a1516e32` 的 6 处 `'limb_t'未声明` (误写) 已消失; `bb50ded8` 曾是 4 条 (含 116/117 的 `-Werror=return-type`)。**本报告按 blob 署名, 附录 A 的 TU 可直接对最新版复跑。**
+⇒ **必须分两个 TU**: TU-A 查接口与布局, **TU-B 必须真的调用 `Execv`** 才能实例化解释器 (否则 122 个错误一个都看不到)。完整问题清单见 `hyper-vm-t-issues-2026-09-16.md`。
 
 **这是现实风险**: `Build/config/arm-none-eabi.conf`、`aarch64-linux.conf`、`cygwin.conf`、`linux.conf`、`wasm.conf` 的档位都是 `X4C_TOOLCHAIN_CXXFLAGS ?= -Wall -Werror`。
 
@@ -87,7 +91,7 @@ rv32im-atomic.hpp:161:36: 错误：comparison of integer expressions of differen
 | RV32IM 组成 | 本头文件的对应物 | 说明 |
 | --- | --- | --- |
 | LUI/AUIPC/JAL/JALR/分支/ALU 立即数与寄存器型 | **无 hook** | 纯函数, 由 IMPL 直接算; 不需要宿主介入 ✅ 合理 |
-| Load: LB/LBU/LH/LHU/LW | `mm_LB/mm_LBU/mm_LH/mm_LHU/mm_LW` (+ `mm_CHKWX`/`mm_CHKRX` 映射与权限) | ✅ 覆盖 RV32I 全部宽度, 无多无少 |
+| Load: LB/LBU/LH/LHU/LW | `mm_LB/mm_LBU/mm_LH/mm_LHU/mm_LW` (+ 宿主侧 `mm_CHKRO`/`mm_CHKWR` 的地址解析与权限检查) | ✅ 覆盖 RV32I 全部宽度, 无多无少 |
 | Store: SB/SH/SW | `mm_SB/mm_SH/mm_SW` | ✅ |
 | FENCE / FENCE.I | `op_FENCE` / `op_FENCEI` (NOP) | ✅ 单 hart 下合法 |
 | ECALL / EBREAK | `op_ECALL`(SIGILL) / `op_EBREAK`(SIGTRAP) | ⚠ 刻意不支持 ECALL (与"地址窗口门"裁定一致) |
@@ -107,7 +111,8 @@ rv32im-atomic.hpp:161:36: 错误：comparison of integer expressions of differen
 - 推论 3: 因此 `regs_t` 的 `r32args`/`r64args` 是**纯位型搬运**视图 (`float` 单个 32 位寄存器、`double` 一对, ilp32 软浮点), 与任何浮点状态寄存器无关。
 - 推论 4 (ATOMC 的终止信号面因此收敛): `SIGILL`(非法指令 / 未实现的 CSR 与 ECALL)、`SIGSEGV`(访存 / 取指 / 未对齐)、`SIGTRAP`(EBREAK)、`SIGABRT`(内部不变量 / 未初始化), 外加 `hyper` 的 `rLANG_ERROR_HYPER` / `rLANG_ERROR_YEILD`。**算术问题不得用信号表达**。**预算/超时**照同仓惯例走**负 errno** (`script.cc:1425 zero_ = -ETIMEDOUT`), **不是** `SIGALRM`/`SIGVTALRM` —— 本头定义的 `SIGALRM`/`SIGVTALRM` 的用途已由用户在 `473906f8` 的注释里明确: **异步唤醒信号** (async.wait / async.ZION.execv, 见 §4 第 9 条), 与预算耗尽无关。`zero` 的完整契约见 §4 第 5 条。
 
-**门地址数学 (已编译期验证, 与 ISA 自洽)**: 判据 `pc < 0x00000800 || pc >= 0xFFFFF800` **恰好等于** `jalr` 12 位有符号立即数能编码的 `id = (int)pc / 4` 范围 —— 低窗 `id 0…511` (`imm = id*4 ∈ [0, 2044]`)、高窗 `id -512…-1` (`imm ∈ [-2048, -4]`), 共 **1024 个门位**; `atomic/README.md` 第 18 行分配的是其中 `0x0000'0100–0x0000'07FF` 与 `0xFFFF'F800–0xFFFF'FEFF`, 未分配的 `id 0…63` (地址 `0x000–0x0FC`, 即 **nullptr 附近**) 与 `id -64…-1` (地址 `0xFFFFFF00` 附近) 正是"填随机数"的那两段 ⇒ 判据比分配窗口宽是**刻意为之**。
+**门地址数学 (已编译期验证, 与 ISA 自洽)**: 判据 `pc < 0x00000800 || pc >= 0xFFFFF800` **恰好等于** `jalr` 12 位有符号立即数能编码的 `id = (int)pc / 4` 范围 —— 低窗 `id 0…511` (`imm = id*4 ∈ [0, 2044]`)、高窗 `id -512…-1` (`imm ∈ [-2048, -4]`), 共 **1024 个门位**; `atomic/README.md` 第 18 行分配的是其中 `0x0000'0100–0x0000'07FF` 与 `0xFFFF'F800–0xFFFF'FEFF`, 未分配的 `id 0…63` (地址 `0x000–0x0FC`) 与 `id -64…-1` (地址 `0xFFFFFF00` 附近) 就是**"每次编译都变的随机数"的落点 —— 是门位（门号）分配, 不是内存内容** (2026-09-16 收口: 低 64K **未映射、引用必 SIGSEGV**, 无字节可填) ⇒ 判据比分配窗口宽是**刻意为之**。
+> **两个门窗口都在未映射区** ⇒ 数据访问一律 fault、作为 `pc` 由 VM 取指前拦截 ⇒ **"门只可执行、不可读"由映射白拿** (不需要 U 模式/PMP; 计划文档 §4.3 的结论被取代; 同一地址的双重身份见 `checks/interpreter-smoke.cc` 规程六)。
 > **建议**: 把判据与 id 推导**放进头文件** (例如 `static constexpr bool is_gate(libmb_t pc)` 与 `gate_id(pc)`), 免得每个 IMPL 各写一份; 上述等价关系可直接写成 `rLANG_ABIREQUIRE`。
 
 **`SIGSEGV` 的性质: 宿主约定, 不是 ISA 行为 (用户 2026-09-16 提问, 结论如下)**:
@@ -156,21 +161,21 @@ rv32im-atomic.hpp:161:36: 错误：comparison of integer expressions of differen
 | 成员命名风格 | 本头用**无下划线**的 `regs` / `pc` / `cycles` / `cyc`; 同仓 `dongle.script` 用**带下划线**的 `zero_` / `pc_` / `cycles_` / `nstk_` | 两套风格并存 ⇒ 若之后补 `zero`, 建议跟随本头风格 (用户原话也写作 `VM.zero`), 并在头里点明 |
 | include | `#include <base/base.h>` 与仓内 23 处写法一致 ✅; `base.h` 自带 `<stdint.h>` / `<stddef.h>` / `<signal.h>` (`base.h:75–87`) ⇒ 本头自足 ✅ | — |
 
-## 6. 建议的修复 (只剩 1 处必修; 其余已完成)
+## 6. 建议的修复 (接口/布局档已干净; 剩 clang 属性 1 处 + 解释器 3 个根因)
 
 ```cpp
-// ① ❌ 唯一必修 (只挡 g++ -Wall -Werror): 161 行的常量加 (uint32_t) 即可
-rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC == (uint32_t)rLANG_ERROR_HYPER);
-rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC - rLANG_ERROR_YEILD == 3);           // 这条本来就不报 (见下行说明)
-//    为什么只报 161: 162 的右侧是字面量 3 (非负常量) ⇒ GCC 不报; 161 的右侧是 ((int32_t)0xC8C04E1F)
-//    这样的带转换表达式 ⇒ GCC 无法证明非负, 于是报 sign-compare。
-//    另一种改法是把两个宏定义成 ((uint32_t)0xC8C04E1F / …-3) —— 与 base.h 的 rLANG_WORLD_MAGIC 同型;
-//    但这两个宏同时要当"错误码"住进 regs.zero 并与负 errno(-ENOSYS 等)共存, 保守起见**只**在断言处转换。
-// ② ✅ 已完成 (a1516e32): op_FENCE / op_FENCEI 改成 void —— "无失败路径写进类型"。
-//    代价: 统一的 int (VM_t::*)() 成员指针表需要包装; switch 派发 (同仓 script.cc) 则零代价。
-// ③ ✅ 已完成 (a1516e32): mm_CHKCS 补语义注释 (VM 内字符串 + guard-page 保证 NUL 结尾)。
-// ④ ✅ 已完成 (c1d921fb): SIGABRT(6) 的 #ifndef 块; **不要**补 SIGFPE —— 见 §3 裁定。
-// ⑤ ✅ 已完成 (41942715): limb_t 误写改回 libmb_t。
+// ① ✅ 已完成 (7ba8a5bd): ABIREQUIRE 的 sign-compare 已用 "^" + "u" 后缀改写 ⇒ g++ -Wall -Werror rc=0
+// ② ❌ 只挡 clang (一处宏改): rLANGiOPT 用的 optimize 属性是 GCC 专属
+#if !defined(rLANGiOPT) && defined(__GNUC__) && !defined(__clang__)
+#define rLANGiOPT __attribute__((optimize("O3")))
+#elif !defined(rLANGiOPT)
+#define rLANGiOPT
+#endif
+// ③ ❌ 解释器 3 个根因 (g++ 报 122 个错误): 178 行 regs_t* → reg_t*;
+//    179 行 hart_->regs_.zero → hart_->regs_.zero.iv; 232/233/242/243/273 行 hart_->pc → hart_->pc_
+//    —— 完整清单见 hyper-vm-t-issues-2026-09-16.md §1 (TU 里必须真的调用 Execv 才会暴露)
+// ④ ✅ 已完成: op_FENCE/op_FENCEI → void (a1516e32); mm_CHKCS 注释 (a1516e32);
+//    SIGABRT(6) (c1d921fb); limb_t 误写回改 (41942715)
 ```
 
 > 本次**未改动该头文件** —— 按既有约定, `atomic/` 下只写 `ai-doc/`。
@@ -240,41 +245,48 @@ g++     -std=c++17 -Wall -Werror -fsyntax-only -I <ATOMIC> -I <ATOMIC>/atomic/in
 **建议落点 (仓内惯用法)**: `src/__Testing__/__atomic__/{xModule.mk,main.cc}` (与 `__rsamodexpvm__` / `__chachapolyvm__` 同构) + 一个 `make` 目标; 轻量替代是放进 `tools/rockey/LIMIT/sbin/` 式的脚本。
 ⚠ 我目前的写盘范围只到 `atomic/ai-doc/`, 所以**没有**把它放进 `src/`; 需要的话我可以把它写成 `atomic/ai-doc/checks/` 下的文件, 或由你授权写到 `src/`。
 
+## 10. 补充 (2026-09-16 晚): 基类已自带解释器
+
+- 头文件已从"hook 骨架"长成**含完整 RV32IM 解释器** (`hart_t` 状态 + `inner_Execv` 循环 + 指令解码) ⇒ 本报告 §3/§4 里若干"由 IMPL 实现"的项 —— **RV32M 边界语义、x0 写入守卫、JALR 语义、立即数抽取、编码判定** —— 现在**由基类实现, 且经逐条文本核对正确**。
+- 随之而来的一批**新问题** (编译阻断与契约缺口) 见 **`hyper-vm-t-issues-2026-09-16.md`**: 共 **122 个编译错误 / 3 个根因**, 另有 9 条 P0 语义契约问题。
+- ⚠ 检查方式随之变化: 解释器是模板成员函数, **只有 TU 里真的调用 `Execv` 才会实例化并暴露其中的错误** —— 只 include 或只调 hook 的 TU 看不见 (附录 A 的 TU 需按此升级)。
+
 ## 附录 A. 最小复核 TU (本次实测用的骨架, 可原样复现)
 
 ```cpp
+/* 接口/布局档 TU: 调用每个 hook + 静态断言 (不碰 Execv); 2026-09-16 按当前 API 刷新,
+   实测 g++ / clang++ 在 -Wall -Werror 下均 rc=0 (当前头 c0943b25) */
 #include <base/base.h>
 #include "rv32im-atomic.hpp"
 #include <cstddef>
 #include <cstdint>
 
 struct Impl : machine::hyper::VM_t<Impl> {};
-struct Expose : Impl {                       // 头里的 hook 是 protected, 用派生类提权才能 odr-use
+struct Expose : Impl {                       // 头里的 guest hook 是 protected, 用派生类提权才能 odr-use
   using Impl::op_FENCE;  using Impl::op_FENCEI; using Impl::op_ECALL;  using Impl::op_EBREAK;
-  using Impl::op_GATE;   using Impl::op_CSRRW;  using Impl::op_CSRRSI;
-  using Impl::mm_LW;     using Impl::mm_SW;     using Impl::mm_CHKCS;  using Impl::mm_CHKWX;
-  using Impl::if_CODE;
+  using Impl::op_CSRIF;  using Impl::op_GATE;   using Impl::op_HYPER;
+  using Impl::mm_LW;     using Impl::mm_SW;     using Impl::if_CODE;
 };
 // 逐个调用: 触发按需实例化 —— 缺 return / 参数类型不符 / 拼写错误只有被调用才会暴露
 int probe(Expose& e, Impl::reg_t* r) {
-  e.op_FENCE(); e.op_FENCEI();                                  // 现为 void
-  int acc = e.op_ECALL() + e.op_EBREAK() + e.op_CSRRW() + e.op_CSRRSI() + e.op_GATE(1);
+  e.op_FENCE(0x0000000Fu); e.op_FENCEI(0x0000100Fu);     // void 且带 op 参数
+  int acc = e.op_ECALL() + e.op_EBREAK() + e.op_CSRIF(0) + e.op_GATE(1) + e.op_HYPER(0);
   acc += e.mm_LW(0, r) + e.if_CODE(0, &r->uv);
-  const char* cs = nullptr; Impl::libmb_t n = 0; void* p = nullptr;
-  acc += e.mm_CHKCS(0, &cs, &n) + e.mm_CHKWX(0, 4, &p);
+  const char* cs = nullptr; Impl::libmb_t n = 0; void* wp = nullptr; const void* rp = nullptr;
+  acc += e.mm_CHKCS(0, &cs, &n) + e.mm_CHKWR(0, 4, &wp) + e.mm_CHKRO(0, 4, &rp);   // 宿主/上层 API
   e.mm_SW(0, 0x12345678u);
   return acc;
 }
-// 布局与 psABI: 32×32 位寄存器、a0 = x10、三个参数视图同址
+// 布局与 psABI: 32×32 位寄存器、x0 在第 0 位、a0 = x10、三个参数视图同址
 static_assert(sizeof(Impl::reg_t) == 4 && sizeof(Impl::regs_t) == 128 && alignof(Impl::regs_t) == 8, "layout");
-static_assert(offsetof(Impl::regs_t, a0) == 40 && offsetof(Impl::regs_t, u32args) == 40
-           && offsetof(Impl::regs_t, r64args) == 40, "abi views at a0");
+static_assert(offsetof(Impl::regs_t, zero) == 0 && offsetof(Impl::regs_t, a0) == 40
+           && offsetof(Impl::regs_t, u32args) == 40 && offsetof(Impl::regs_t, r64args) == 40, "abi");
 // 门窗口 <=> jalr 12 位有符号立即数; 高窗 id 为负
 static constexpr bool isGate(std::uint32_t pc) { return pc < 0x00000800u || pc >= 0xFFFFF800u; }
 static_assert(isGate(0x7FC) && !isGate(0x800) && isGate(0xFFFFF800u) && !isGate(0xFFFFF7FCu), "gate window");
 static_assert(static_cast<std::int32_t>(0xFFFFF800u) / 4 == -512, "high-window ids are negative");
-// 信号取值 (POSIX)
-static_assert(SIGABRT == 6 && SIGILL == 4 && SIGSEGV == 11 && SIGTRAP == 5, "sig values");
+// 信号取值 (POSIX; 本头用 SIGTERM 替代各平台不一致的 SIGABRT)
+static_assert(SIGQUIT == 3 && SIGILL == 4 && SIGTRAP == 5 && SIGTERM == 15 && SIGSEGV == 11, "sig values");
 int main() { Expose e; Impl::reg_t r{}; return probe(e, &r); }
 ```
 
@@ -283,4 +295,4 @@ g++     -std=c++17 -Wall -Werror -fsyntax-only -I <ATOMIC> -I <ATOMIC>/atomic/in
 clang++ -std=c++17 -Wall -Werror -fsyntax-only -I <ATOMIC> -I <ATOMIC>/atomic/include tu.cc
 ```
 
-> 注: 本机 cygwin 编出的可执行文件运行不起来 (rc=1024), 但**编译成功本身就足以证明上述 `static_assert`**; 因此本报告的全部判据都是**编译期**证据。
+> 注 (2026-09-16 更新): ① 上面这个 TU 已按当前 API 刷新 (FENCE/FENCEI 收 `op` 且为 `void`; 6 个 CSR hook 合成 `op_CSRIF(op)`; `mm_CHK*` 改用 `CHKWR`/`CHKRO`/`CHKCS`), 实测 g++/clang++ `-Wall -Werror` 均 rc=0。② 本机 cygwin 的程序**能运行** (之前那次 rc=1024 是我把编译输出接了管道、进程被截断写坏了 exe); 运行时冒烟见 `checks/interpreter-smoke.cc` (§7 of 问题审查)。

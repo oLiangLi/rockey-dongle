@@ -80,7 +80,7 @@ rLANG_ABIREQUIRE(offsetof(regs_t, a0) == 40 && offsetof(regs_t, u32args) == 40 &
 | 匿名 struct/union | C++ 非标准扩展, 但**本仓既有先例** (`Interface/script.h:141`、`Interface/secret.cc` 等多处), 且 `base/bits/base.h:14` 已 `#pragma warning(disable : 4996 4127 4201)` (MSVC 的 nameless struct/union 警告) | ✅ 与仓内风格一致, 不构成新问题 (工具链 flag 为 `-Wall` / `-Wall -Werror`, 无 `-Wpedantic`) |
 | 编译标准 | `-std=c++17` (`project.local.mk:66/95`, `MCU/project.mk:17`) | —— |
 
-**顺带一个有价值的观察** (`(int)pc / 4`, 130 行): 该转换依赖"无符号→有符号"的**实现定义**行为 (C++17 为实现定义, GCC/MSVC 均为二进制补码回绕; C++20 起为良定义) —— 建议写成显式 `static_cast<int32_t>(pc) / 4` 并加注释。更值得注意的是, 判据窗口 `pc < 0x00000800 || pc >= 0xFFFFF800` **恰好等于** `jalr` 12 位有符号立即数能编码的 id 范围: `imm = id*4 ∈ [-2048, 2044]` ⇒ 低窗 `id 0…511`、高窗 `id −512…−1`, 共 **1024 个门位**; 而 `atomic/README.md` 第 18 行分配的是其中 `0x0000'0100–0x0000'07FF` 与 `0xFFFF'F800–0xFFFF'FEFF`, 未分配的正是 `id 0…63` (地址 `0x000–0x0FC`, 即 **nullptr 附近**) 与 `id −64…−1` (地址 `0xFFFFFF00` 附近) —— 与"nullptr 附近填随机数"的设计完全吻合。⇒ 判据比分配窗口宽是**刻意为之**, 不是笔误。
+**顺带一个有价值的观察** (`(int)pc / 4`, 130 行): 该转换依赖"无符号→有符号"的**实现定义**行为 (C++17 为实现定义, GCC/MSVC 均为二进制补码回绕; C++20 起为良定义) —— 建议写成显式 `static_cast<int32_t>(pc) / 4` 并加注释。更值得注意的是, 判据窗口 `pc < 0x00000800 || pc >= 0xFFFFF800` **恰好等于** `jalr` 12 位有符号立即数能编码的 id 范围: `imm = id*4 ∈ [-2048, 2044]` ⇒ 低窗 `id 0…511`、高窗 `id −512…−1`, 共 **1024 个门位**; 而 `atomic/README.md` 第 18 行分配的是其中 `0x0000'0100–0x0000'07FF` 与 `0xFFFF'F800–0xFFFF'FEFF`, 未分配的正是 `id 0…63` 与 `id −64…−1` —— 这两段就是**"每次编译都变的随机数"的落点, 即门位（门号）分配** (2026-09-16 收口: 低 64K **未映射、引用必 SIGSEGV**, 那里没有字节可填, 所以随机化不可能是内存内容)。⇒ 判据比分配窗口宽是**刻意为之**, 不是笔误。
 
 ## 5. 建议的最小验证 (下一步)
 
