@@ -2931,7 +2931,9 @@ static void BuildKeyBlob(uint8_t* blob, int bits, const BIGNUM* n, const BIGNUM*
  * CLI: __Testing__dongle__ -2 16 <bits>      bits: 800=2048(缺省, 真机 ≈6min) | C00=3072(≈1 小时)
  * ------------------------------------------------------------------------- */
 #if !defined(__EMULATOR__)
-constexpr uint32_t kGenKeySeedOffset = 4096;   /* 种子块(384B) */
+constexpr uint32_t kGenKeySeedOffset = 448; /* 种子块(384B): **匿名区(0..4K)**, 不需要管理员会话
+                                             * (用户 2026-09-16 长跑落盘原则: 原 4096 属 ≥4K 区, 在会
+                                             * 话掉验证的机型上写种子会 F0000008=ADMINPIN_NOT_CHECK) */
 constexpr uint32_t kGenKeyStatusOffset = 4032; /* 生成状态(与 CRT 的 3968 错开) */
 constexpr uint32_t kGenKeyMagic = 0x4E45474Bu; /* 'KGEN' */
 struct GenKeyStatus {
@@ -3635,6 +3637,17 @@ int Start(void* InOutBuf, void* ExtendBuf) {
     }
   }
 
+  /*! **跨机型修正(2026-09-16)**: 某些机型(如标准时钟锁 type=0x00)在 `ResetUserPIN`/`ChangePIN`
+   *! 之后会把当前会话**掉回未验证**状态 —— 之后任何 ≥4K dashboard 写(种子/blob)都会以
+   *! `F0000008 = DONGLE_ADMINPIN_NOT_CHECK`("开发商密码没有验证", 见 Dongle_API.h:968)被拒。
+   *! 实测: 时钟锁上 `RsaGenKeyTests` 写种子直接失败(16s 即退), 而标准版因为这几个前奏调用
+   *! 本来就返回 F0000008/F0000006(机型不支持)、会话从没被动过, 所以一直没暴露。
+   *! ⇒ 跑用例前补一次管理员验证(幂等; 对仍然有效的管理员会话是空操作)。 */
+  if (Context->permission_ == PERMISSION::kAdministrator) {
+    result = rockey.VerifyPIN(PERMISSION::kAdministrator, nullptr, nullptr);
+    rlLOGI(TAG, "rockey.VerifyPIN(re-check admin) %d/%08X", result, rockey.GetLastError());
+  }
+
   if (!rockey.Ready())
     exit(1);
 #else  // __RockeyARM__
@@ -3733,13 +3746,22 @@ int Start(void* InOutBuf, void* ExtendBuf) {
   result += result2;
 
 #if !defined(__RockeyARM__) && !defined(__EMULATOR__)
-  auto start = rLANG_GetTickCount();
-  int main_result = 0, result3 = rockey.ExecuteExeFile(&CopyContext, sizeof(CopyContext), &main_result);
-  auto end = rLANG_GetTickCount();
-  rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X, in %lld ms",
-          result3, main_result, rockey.GetLastError(), static_cast<long long>(end - start));
-  if (result3 < 0)
-    ++result;
+  /*! 末尾这次"再执行一遍"(`CopyContext` 是测试前的快照)是给**宿主分支不自己调 ExecuteExeFile**的用例准备
+   *! 的(测试体在设备侧跑)。但 RsaKeyGen/RsaCrt/ChaosDelay/Heartbeat 这些已经自己调过的用例会被**重复执行
+   *! 一次** —— 对分钟级生成/模幂等于把设备时间翻倍, 而第一次的结果早已复核落盘(且这一次没有任何复核消费)。
+   *! 2026-09-15 实测: 3072@16 第一次 4,275,802ms 已 TASSL 全绿, 之后进程又在设备里跑 2h+ 才被误判为"卡死"。
+   *! ⇒ 允许 `WT_RKEY_SINGLE_RUN=1` 跳过这次重复执行(缺省行为不变)。 */
+  if (nullptr == getenv("WT_RKEY_SINGLE_RUN")) {
+    auto start = rLANG_GetTickCount();
+    int main_result = 0, result3 = rockey.ExecuteExeFile(&CopyContext, sizeof(CopyContext), &main_result);
+    auto end = rLANG_GetTickCount();
+    rlLOGXI(TAG, &CopyContext, sizeof(CopyContext), "rockey.ExecuteExeFile return %d, mainRet %d, %08X, in %lld ms",
+            result3, main_result, rockey.GetLastError(), static_cast<long long>(end - start));
+    if (result3 < 0)
+      ++result;
+  } else {
+    rlLOGI(TAG, "WT_RKEY_SINGLE_RUN=1: 跳过末尾的重复 ExecuteExeFile(本用例宿主侧已自行执行并复核)");
+  }
 #endif /* __RockeyARM__ */
 
 #if 1

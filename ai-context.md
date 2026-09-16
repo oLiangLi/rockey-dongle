@@ -1255,3 +1255,33 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
   ⑥**工具**: `__Testing__rsamrprobe__` 新增 **`-flash`**(Open+VerifyPIN(admin)+UpdateExeFile 后退出, **不执行**
     ExecuteExeFile ⇒ 可在未初始化设备上安全判定"能否刷我们的 app"); 心跳/Delay 测量入口
     `__Testing__dongle__ -2 18 <cand_hex> <iters_hex>`。
+- 2026-09-16 **两把锁的 RSA-3072@16 长测 + 三个跨机型/流程缺陷修复 + 长跑落盘原则(用户定)**:
+  ①**成绩单**: 普通锁 `f56a125b71094c42`(type=ff) `ExecuteExeFile=0 mainRet=10086 in 4,275,802ms(71.3min)`;
+    时钟锁 `381a5653e10a323f`(type=00, 已初始化) `4,438,554ms(74.0min)`; 两者 `gen_rc=0` 且 TASSL 复核全绿
+    (prime_p/q=1、gcd(e,p−1)=1、distinct、bits(n)=3072、e=010001、e·d≡1 mod lcm、dmp1/dmq1/iqmp=1)
+    ⇒ **两种机型都能在设备内完成 RSA-3072 私钥生成**(时钟锁慢 4%, 与其单次 COS 代价略高一致); 普通锁本轮与
+    上一轮(4,221,409ms)同种子**逐字节同密钥** ⇒ 确定性再次成立。
+  ②**修复A(流程; 长测时间减半)**: 框架在测试后会拿测试前的 `Context` 快照**再执行一遍** `ExecuteExeFile`
+    (`main.cc:3737`) —— 对已自行执行过的用例(RsaKeyGen/RsaCrt/ChaosDelay/Heartbeat)就是**重复跑一次**:
+    3072 上白白多花 ~71min 且该次结果无任何复核消费; 之前记的"宿主卡死 82min / 2h+"就是它。新增
+    `WT_RKEY_SINGLE_RUN=1` 跳过(缺省行为不变)。实测时钟锁本轮 4455s **干净退出** ✓。
+  ③**修复B(跨机型真实缺陷)**: 时钟锁上 `RsaGenKeyTests` 写种子直接失败 `F0000008`。根因:
+    `Dongle_API.h:968 F0000008 = DONGLE_ADMINPIN_NOT_CHECK`("开发商密码没有验证") —— 框架 provision 前奏里的
+    `ChangePIN(admin)`/`ResetUserPIN` 在时钟锁上**成功执行并把会话掉回未验证**, 之后 ≥4K dashboard 写全被拒;
+    标准版因这些前奏本来失败(机型不支持)**从未暴露**。修复: 跑用例前补一次 `VerifyPIN(admin)`(幂等)。
+    实测时钟锁 `VerifyPIN(re-check admin) 0/00000000` 后种子写入正常 ✓。
+  ④**长跑落盘原则(用户 2026-09-16, 已写进 `mr.h`)**: 长跑程序的**结果/进度一律写 dashboard[0,4096) 匿名区** ——
+    ①长跑到一定时长后宿主可能被判异常离线, 而设备侧程序仍在正确执行; ②≥4K 写需要管理员会话(见③);
+    ③匿名区**任何会话状态**都能读回结果, 便于事后判读与续跑。据此重排: `kProgressOffset`/`kGenStatusOffset`
+    4096→**0**、`kGenPOffset` 4160→**64**、`kGenQOffset` 4544→**256**、`RsaKeyGenTests` 种子
+    `kGenKeySeedOffset` 4096→**448**; ≥4K 只留证书/CA/世界。回归: `__Testing__rsamodexpvm__`(模拟器) exit
+    **10086 = 0 错**, 3072 生成 / 确定性 / 密封三条路径全绿。
+  ⑤**"卡死"与恢复(更正)**: 长跑期间杀宿主后 vendor SDK 会话留在驱动里 ⇒ 之后 `Dongle_Enum` **全局阻塞**
+    (实测守护脚本 4h 每 45s 探一次全部阻塞; 另一把空闲锁也打不开)。**并非自愈** —— 用户 09:33 **复插后**才恢复;
+    非管理员 `pnputil /restart-device` 被拒(`Access is denied`), 需复插或以管理员软复位。教训: 长跑**绝不中途
+    杀宿主**(现在有 `SINGLE_RUN`, 让它自己退出即可)。
+  ⑥**改动文件**: `Interface/mr.h`(落盘原则 + 新偏移)、`src/__Testing__/__dongle__/main.cc`(SINGLE_RUN + admin 补验
+    + 种子偏移)、`src/__Testing__/__rsamrprobe__/main.cc`(`-flash`); `make dongle` / `rockey-stack-check`(0 超预算)
+    / `make windows` / `make foobar` 全 rc=0。
+  ⑦**待办**: 两把锁上烧的仍是**旧布局固件**(种子在 4096, 那轮靠 admin 补验才过) ⇒ 新布局要生效需各刷一次
+    `rockey_dongle.bin`(写次数有限, 等用户确认)。

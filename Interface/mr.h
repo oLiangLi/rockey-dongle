@@ -74,7 +74,7 @@ class MillerRabinContext {
     uint32_t result; /* 最近一次 WriteDataFile 返回(0xFFFFFFFF = 未调用) */
     uint32_t spare;
   };
-  static constexpr uint32_t kProgressOffset = 4096;   /* 测试用进度区: 避开 [0,4096) 证书与 [5120,6144) CA blob */
+  static constexpr uint32_t kProgressOffset = 0;      /* **匿名用户区(0..4K)** —— 见下方"长跑落盘原则" */
   static constexpr uint32_t kMagicStart = 0x7473524d; /* 'MRst' */
   static constexpr uint32_t kMagicAlive = 0x6e75524d; /* 'MRun' */
   static constexpr uint32_t kMagicDone = 0x6e64524d;  /* 'MRdn' */
@@ -83,12 +83,18 @@ class MillerRabinContext {
   void ReportProgress(uint32_t magic, uint32_t seq, uint64_t units, uint32_t checksum);
 
   /**
-   *! RSA 素数生成(设备内单指令)的结果落盘布局 —— 全部在 dashboard 的测试区:
-   *!   [kProgressOffset, +64)  = 长跑进度记录 Progress(mode 4 用)
-   *!   [kGenStatusOffset, +64) = 生成状态 GenResult(生成结束时最后写, 作为完成标志)
+   *! **长跑落盘原则(用户 2026-09-16)**: 需要长时间运行的设备侧程序, 结果/进度一律写
+   *! **dashboard[0,4096) 匿名用户区** —— 该区**不需要管理员会话**即可写/读。原因(实测):
+   *!   ① 长跑到一定时长后宿主可能被判异常离线, 设备侧程序却仍在正确执行;
+   *!   ② ≥4K 区域的写需要管理员会话, 而某些机型(标准时钟锁)在 `ChangePIN`/`ResetUserPIN`
+   *!      之后会话会掉回未验证态, 写 ≥4K 直接得到 `F0000008 = ADMINPIN_NOT_CHECK`;
+   *!   ③ 结果落在匿名区 ⇒ 复插/复位后**任何会话状态**都能读回结果, 也便于据此续跑。
+   *! ⇒ 本结构与 GenResult/p/q 全部落在 [0,4096), 4K 以上只留给证书/CA/世界。
+   *
+   *! RSA 素数生成(设备内单指令)的结果落盘布局:
+   *!   [kProgressOffset, +64)  = 长跑进度记录 Progress(mode 4 用) / 生成状态 GenResult(同一时刻只用其一)
    *!   [kGenPOffset, +192)     = p(小端, ≤1536 位); [kGenQOffset, +192) = q
    *!   [kGenSeedPOffset,+192)  = p 的搜索起点种子; [kGenSeedQOffset,+192) = q 的
-   *! 前两者在 4K..5K(未分配测试区), 种子在 0..4K 匿名用户区 —— 不碰 5K 起的 CA blob。
    */
   struct GenResult {
     uint32_t magic;       /* kMagicGenDone */
@@ -100,10 +106,10 @@ class MillerRabinContext {
     uint32_t probes_q_lo;
     uint32_t probes_q_hi;
   };
-  static constexpr uint32_t kGenStatusOffset = 4096; /* 与 kProgressOffset 同一测试区(同一时刻只用其一) */
-  static constexpr uint32_t kGenPOffset = 4160;
-  static constexpr uint32_t kGenQOffset = 4544;
-  static constexpr uint32_t kGenSeedPOffset = 2048; /* 匿名用户区(0..4K) */
+  static constexpr uint32_t kGenStatusOffset = 0;   /* 与 kProgressOffset 同一区(同一时刻只用其一) */
+  static constexpr uint32_t kGenPOffset = 64;       /* 匿名区(0..4K) */
+  static constexpr uint32_t kGenQOffset = 256;
+  static constexpr uint32_t kGenSeedPOffset = 2048; /* 匿名区(0..4K) */
   static constexpr uint32_t kGenSeedQOffset = 2304;
   static constexpr uint32_t kMagicGenDone = 0x6e65474d; /* 'MGen' */
 
