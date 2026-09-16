@@ -23,9 +23,18 @@ rLANG_DECLARE_MACHINE
 #define SIGTRAP 5
 #endif /* SIGTRAP */
 
+#if 0
+/**
+ *! Windows 下 SIGABRT==22, 与其他环境不一致, 为了避免麻烦, 我用使用 SIGTERM
+ */
 #ifndef SIGABRT
 #define SIGABRT 6
 #endif /* SIGABRT */
+#endif
+
+#ifndef SIGTERM
+#define SIGTERM 15
+#endif /* SIGTERM */
 
 #ifndef SIGSEGV
 #define SIGSEGV 11
@@ -57,6 +66,11 @@ namespace hyper {
  *! - 通常我们mock的输入按 1周期==1纳秒 标定(1GHZ), 但SIGALRM不受此限制 ...
  */
 #define rLANG_ERROR_YEILD (rLANG_ERROR_HYPER - 3)
+
+/**
+ *! 程序单次执行的时间已经到达上限, 程序在下一次可使用的时间片到达时执行
+ */
+#define rLANG_ERROR_TIMEDOUT (rLANG_ERROR_HYPER - 2)
 
 /**
  *!
@@ -158,8 +172,25 @@ struct VM_t {
   int op_GATE(int id) { return -ENOSYS; }
 };
 
-rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC ^ rLANG_ERROR_HYPER == 0u);
+#if 0
+/**
+ *! Windows 下 SIGABRT==22, 与其他环境不一致, 为了避免麻烦, 我用使用 SIGTERM
+ */
+rLANG_ABIREQUIRE(SIGABRT == 6);
+#endif
+
+/**
+ *!
+ */
+rLANG_ABIREQUIRE(SIGQUIT == 3 && SIGILL == 4 && SIGTRAP == 5 && SIGTERM == 15 && SIGSEGV == 11 && SIGKILL == 9 &&
+                 SIGALRM == 14 && SIGVTALRM == 26);
+
+/**
+ *!
+ */
+rLANG_ABIREQUIRE((rLANG_WORLD_MAGIC ^ rLANG_ERROR_HYPER) == 0u);
 rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC - rLANG_ERROR_YEILD == 3u);
+rLANG_ABIREQUIRE(rLANG_WORLD_MAGIC - rLANG_ERROR_TIMEDOUT == 2u);
 
 }  // namespace hyper
 
