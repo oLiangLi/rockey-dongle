@@ -54,15 +54,16 @@ int RsaprProbeMain(int argc, char* argv[]) {
   int maxProbes = 2000;
   int limbs = 32; /* 候选 limb 数(标定用: 4/8/16/24/32) */
   int ai = 1;
-  if (ai < argc && 0 == strcmp("-info", argv[ai])) {
-    info_only = true; /* 只枚举: 打印 ver_/type_/pid_/uid_ 后退出(对任何设备都安全) */
-    ++ai;
-  }
-  if (ai < argc && 0 == strcmp("-flash", argv[ai])) {
-    flash_only = true; /* 只做 Open+VerifyPIN(admin)+UpdateExeFile(WT_APP_DONGLE) 后退出:
-                        * **不调 ExecuteExeFile** —— 未初始化设备(槽 1 空)执行会挂死, 而刷写
-                        * 失败只是返回 F0000008/F0000006, 因此可安全用来判定"能否刷我们的 app"。 */
-    ++ai;
+  /*! `-info` / `-flash` 是**与位置无关**的开关(CLI 约定 `-2` 常在最前, 如 `-2 -flash`) ⇒ 扫描全部
+   *! 参数; 否则会漏判并悄悄退回**默认探测模式**(2026-09-16 实测: `-2 -flash` 被当成 rounds=1 的普通
+   *! 探测, 一路跑到 call #100 —— 既不刷写也不退出)。 */
+  for (int i = 1; i < argc; ++i) {
+    if (0 == strcmp("-info", argv[i]))
+      info_only = true; /* 只枚举: 打印 ver_/type_/pid_/uid_ 后退出(对任何设备都安全) */
+    else if (0 == strcmp("-flash", argv[i]))
+      flash_only = true; /* 只做 Open+VerifyPIN(admin)+UpdateExeFile(WT_APP_DONGLE) 后**立即退出**:
+                          * 不执行 ExecuteExeFile(未初始化设备槽 1 为空时执行会挂死), 也不做任何
+                          * "可用性检查"(Ready 只是本地 handle 判断, 见下方注释)。 */
   }
   if (ai < argc && 0 == strcmp("-2", argv[ai])) {
     admin = true;
@@ -157,12 +158,13 @@ int RsaprProbeMain(int argc, char* argv[]) {
       }
     }
   }
-  if (!rockey.Ready()) {
-    std::printf("[rsamrprobe] rockey not ready\n");
-    return 1;
-  }
+  /*! `-flash`: 刷完**立即退出**。这里**刻意不做任何"可用性检查"**: `Dongle::Ready()` 只是
+   *! "自己是否持有有效 handle"的本地判断(状态只由 `FactoryReset` 改变), 它既不真正探测 ukey
+   *! 是否可用, 也不该出现在这条路径上(用户 2026-09-16 指出)。刷写是独立动作: `UpdateExeFile`
+   *! 返回即代表刷写完成, 之后不触发任何设备侧执行、也不再问东问西。 */
   if (flash_only) {
-    std::printf("[rsamrprobe] -flash: 刷写流程结束(未执行), 不触碰槽 1 的执行\n");
+    std::printf("[rsamrprobe] -flash: 刷写流程结束(未执行任何设备侧动作), 直接退出\n");
+    std::fflush(stdout);
     return 0;
   }
 
