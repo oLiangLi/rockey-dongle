@@ -1285,3 +1285,26 @@ ChaChaPoly AAD: 去掉设备端 .rodata + 复现"ukey 上 AAD 卡死"
     / `make windows` / `make foobar` 全 rc=0。
   ⑦**待办**: 两把锁上烧的仍是**旧布局固件**(种子在 4096, 那轮靠 admin 补验才过) ⇒ 新布局要生效需各刷一次
     `rockey_dongle.bin`(写次数有限, 等用户确认)。
+- 2026-09-16 **真机密封路径(SM4-ECB)端到端跑通 + 新布局固件刷入 + 延时端点两机型实测**(用户冻结 ukey 前的最后一批):
+  ①**刷新布局固件**: 两把锁 `UpdateExeFile rockey_dongle.bin 58768B → 0/00000000` ⇒ 新匿名区布局(进度/结果/种子都在
+    `[0,4096)`)已在真机生效(此前 ⑦ 的待办完成)。
+  ②**密封写侧(设备加密落盘)**: 框架用例新增 `argv_[3]=cipherKeyId`(0/1000=明文, 901..999=临时 SM4 keyId):
+    `-2 16 800 4 3E4`(2048@4, keyId 996)在**两把锁上 PASS(error=0)**: 普通锁 `ExecuteExeFile=0 mainRet=10086 in
+    1,302,454ms`、时钟锁 `1,351,733ms`; 两者 `gen_rc=0`、落盘为密文(header 非明文)、宿主逐字段解密后 TASSL 全绿
+    (prime_p/q=1、gcd(e,p−1)=1、distinct、bits(n)=2048、e·d≡1 mod lcm、dmp1/dmq1/iqmp=1)。
+  ③**密封读侧(设备解密封签名)**: `-2 15 1 800 3E4` 宿主把 TASSL 私钥 blob **逐字段 ECB 加密**后注入, 设备必须走
+    `ReadFieldCipher` 才能签对 —— 两把锁均 `s==m^d:1 s^e==m:1 status_ok:1 guard_err:0 ⇒ PASS`(18.6s / 19.7s)。
+  ④**真机 vs 模拟器差异**: `CreateKeyFile(FILE_KEY, id)` 在**文件已存在**时真机返回
+    `F000000E = DONGLE_FILE_EXIST`(`Dongle_API.h:973`; 模拟器不报)⇒ 密封用例必须"忽略创建失败、以 `WriteKeyFile`
+    覆盖写为准", 否则第二次跑假失败(已在 keygen / CRT 两处修)。
+  ⑤**延时端点(新固件真机)**: units=176600 / 882984 ⇒ 普通锁 **334 / 1134 ms**、时钟锁 **717 / 1546 ms**;
+    扣掉各机型每进程固定开销(135 / 507 ms)后均为 **≈1.13 / 1.18 µs/单位** ⇒ **0.200~1.000s 区间在两机型一致**。
+  ⑥**改动**: `src/__Testing__/__dongle__/main.cc`(RsaKeyGenTests / RsaCrtTests 新增 `cipherKeyId` 参数 + 密封注入/解密
+    复核 + `F000000E` 容错, 新增 `MapCipherKeyId`); 两把锁已刷入对应固件。
+  ⑦**用户安全设计补充(2026-09-16)**: `(READ|WRITE)_MASTER_SECRET` 增加二次管理员确认
+    (`valid_permission_ != kAdministrator → -EACCES`, `Interface/secret.cc`)是**真·同帧二次确认** ——
+    因为 `src/app/main.cc:1029-1033` 每帧先 `ResetState`(设备回匿名), 且宿主**一进程一帧**(VM 缓存不跨帧)⇒
+    帧内唯一提权途径是显式 `VerifyPIN`; 离开安全区前会 `lock`, 之后正常情况下不再有管理员登录。
+    另: **模拟器/wasm 的权限不是安全边界**(blob 本就可被任何人以管理员打开) ⇒ 不在模拟器上写 `-EACCES` 负例,
+    该门的端到端验证只能在真机脚本路径上做(待 ukey 解冻)。设备侧仍是最终权威: 会话非管理员时
+    `Read/WriteDataFile(kKeyIdGlobalSECRET)` 会直接 `F0000008 = ADMINPIN_NOT_CHECK`。

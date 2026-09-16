@@ -133,6 +133,9 @@ static void MASTER_SECRET_PROCESS(uint8_t ENCRYPT_MASTER_SECRET[256], Dongle* do
 }
 
 int VM_t::READ_MASTER_SECRET(uint8_t MASTER_SECRET[64]) {
+  if(valid_permission_ != PERMISSION::kAdministrator)
+    return -EACCES;
+
   Dongle::SecretBuffer<256, uint8_t> ENCRYPT_MASTER_SECRET;
   int result = dongle_->ReadDataFile(kKeyIdGlobalSECRET, 0, ENCRYPT_MASTER_SECRET, 256);
   if (0 != result) {
@@ -153,6 +156,9 @@ int VM_t::READ_MASTER_SECRET(uint8_t MASTER_SECRET[64]) {
 }
 
 int VM_t::WRITE_MASTER_SECRET(const uint8_t MASTER_SECRET[64]) {
+  if (valid_permission_ != PERMISSION::kAdministrator)
+    return -EACCES;
+
   struct {
     uint32_t modulus_;
     uint8_t pubkey_[256];

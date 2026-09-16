@@ -74,6 +74,12 @@ enum class kTestingIndex : int {
 
 };
 
+/*! CLI 的 cipherKeyId 约定(与脚本层一致, 见 `script.h kCipherPlainId`):
+ *!   缺省/0/1000 = 明文(内部 API 用 0); 901..999 = 临时 SM4 密钥 keyId(逐字段 ECB 密封)。
+ *! 真机密封路径 = 设备侧用该 keyId 加密落盘 blob, 宿主用同一 keyId 逐字段解密后做 TASSL 复核;
+ *! 读侧同理: 宿主把 blob 逐字段加密后注入, 设备必须走 ReadFieldCipher 才能签对。 */
+static int MapCipherKeyId(uint32_t v) { return (v == 0u || v == 1000u) ? 0 : static_cast<int>(v); }
+
 enum class kAdminTestingIndex : int {
   FactoryReset = 1,
 
@@ -2954,6 +2960,8 @@ int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   [[maybe_unused]] int rounds = (int)ctx->argv_[2];
   if (rounds < 1 || rounds > MillerRabinContext::kMaxRounds)
     rounds = MillerRabinContext::kMaxRounds; /* 缺省 16 轮(生产口径) */
+  /* argv_[3]: cipherKeyId(0/1000=明文; 901..999=SM4 临时密钥 ⇒ 真机密封路径) */
+  [[maybe_unused]] const int cipherKeyId = MapCipherKeyId(ctx->argv_[3]);
 
 #if defined(__RockeyARM__)
   /* ---- 设备端: 只调用 RsaKeyGen::Generate(与 opcode 0x153 内部完全同一条代码路径) ----
@@ -2975,7 +2983,7 @@ int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   } else {
     auto& arena = *reinterpret_cast<RsaKeyGen::Arena*>(ExtendBuf);
     st.gen_rc = static_cast<uint32_t>(RsaKeyGen::Generate(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset,
-                                                          inout + 384, bits, rounds, 0 /* cipherKeyId: 明文 */, arena));
+                                                          inout + 384, bits, rounds, cipherKeyId, arena));
   }
   std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kGenKeyStatusOffset, &st, sizeof(st));
   rockey.SetLEDState(LED_STATE::kOff);
@@ -2990,6 +2998,21 @@ int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
     seed[i] = static_cast<uint8_t>(0x11 + i * 7);            /* seed_p */
     seed[hb + i] = static_cast<uint8_t>(0x51 + i * 5);       /* seed_q */
   }
+  /* 密封路径: 先建/写临时 SM4 密钥(与 __Testing__rsamodexpvm__ 同款), 设备侧据此逐字段加密落盘 */
+  if (cipherKeyId != 0) {
+    uint8_t sm4key[16];
+    for (int i = 0; i < 16; ++i)
+      sm4key[i] = static_cast<uint8_t>(0xA0 + i);
+    /* 真机实测: 文件已存在时 `CreateKeyFile` 返回 F000000E(模拟器不报) ⇒ 忽略创建结果,
+     * 只以 `WriteKeyFile`(覆盖写)是否成功为准, 这样重复跑密封用例不会假失败。 */
+    std::ignore = rockey.CreateKeyFile(cipherKeyId, PERMISSION::kAdministrator, SECRET_STORAGE_TYPE::kSM4);
+    if (0 != rockey.WriteKeyFile(cipherKeyId, sm4key, sizeof(sm4key), SECRET_STORAGE_TYPE::kSM4)) {
+      rlLOGE(TAG, "RsaGenKey(host): 写入 SM4 临时密钥 %d 失败", cipherKeyId);
+      return 1;
+    }
+    rlLOGI(TAG, "RsaGenKey(host): 密封模式 SM4 临时密钥 id=%d 就绪", cipherKeyId);
+  }
+
   if (0 != rockey.WriteDataFile(Dongle::kFactoryDataFileId, kGenKeySeedOffset, seed, static_cast<size_t>(bits) / 8)) {
     rlLOGE(TAG, "RsaGenKey(host): 种子写入 dashboard 失败");
     return 1;
@@ -3017,6 +3040,34 @@ int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   if (0 != rockey.ReadDataFile(Dongle::kFactoryDataFileId, kCrtKeyOffset, blob, static_cast<size_t>(total))) {
     rlLOGE(TAG, "RsaGenKey(host): 读回 blob 失败");
     return error + 1;
+  }
+
+  /* 密封路径: 落盘必须是密文; 逐字段解密后再做后面的 TASSL 复核(字段偏移/长度都是 16 的倍数) */
+  if (0 == error && cipherKeyId != 0) {
+    if (reinterpret_cast<const RsaModexp::KeyBlobHeader*>(blob)->magic == RsaModexp::KeyBlob::kMagic) {
+      rlLOGE(TAG, "RsaGenKey(host): 密封模式下落盘竟是明文(!)");
+      ++error;
+    } else {
+      const int wf = RsaModexp::KeyBlob::FieldSize(bits);
+      const int hf = RsaModexp::KeyBlob::HalfSize(bits);
+      const struct { uint32_t off; int len; } kFields[] = {
+          {0u, 16},
+          {RsaModexp::KeyBlob::NOffset(bits), wf},
+          {RsaModexp::KeyBlob::EOffset(bits), wf},
+          {RsaModexp::KeyBlob::DOffset(bits), wf},
+          {RsaModexp::KeyBlob::POffset(bits), hf},
+          {RsaModexp::KeyBlob::QOffset(bits), hf},
+          {RsaModexp::KeyBlob::Dmp1Offset(bits), hf},
+          {RsaModexp::KeyBlob::Dmq1Offset(bits), hf},
+          {RsaModexp::KeyBlob::IqmpOffset(bits), hf}};
+      for (const auto& f : kFields) {
+        if (0 != rockey.SM4ECB(cipherKeyId, blob + f.off, static_cast<size_t>(f.len), false)) {
+          rlLOGE(TAG, "RsaGenKey(host): 字段解密失败 off=%u len=%d", (unsigned)f.off, f.len);
+          ++error;
+        }
+      }
+      rlLOGI(TAG, "RsaGenKey(host): 密封 blob 逐字段解密完成(cipherKeyId=%d) ⇒ 按明文继续复核", cipherKeyId);
+    }
   }
   const int w = RsaModexp::KeyBlob::FieldSize(bits);
   const int h = RsaModexp::KeyBlob::HalfSize(bits);
@@ -3270,6 +3321,8 @@ int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   [[maybe_unused]] int bits = (int)ctx->argv_[2];
   if (bits != 2048 && bits != 3072)
     bits = 3072;
+  /* argv_[3]: cipherKeyId(0/1000=明文; 901..999=SM4 临时密钥 ⇒ 真机密封读侧验证) */
+  [[maybe_unused]] const int cipherKeyId = MapCipherKeyId(ctx->argv_[3]);
   [[maybe_unused]] const int nbytes = bits / 8;
 
 #if defined(__RockeyARM__)
@@ -3291,7 +3344,7 @@ int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
     st.sign_rc = 0xFFFFFFFEu;
   } else {
     st.sign_rc = static_cast<uint32_t>(
-        mx.CrtSignFile(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset, m, s, bits, 0 /* 内部 API: 0=无密文(脚本层的 1000 哨兵由 opcode 层映射) */, ws));
+        mx.CrtSignFile(rockey, Dongle::kFactoryDataFileId, kCrtKeyOffset, m, s, bits, cipherKeyId, ws));
     if (0 == static_cast<int32_t>(st.sign_rc))
       std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtSReOffset, s, static_cast<size_t>(nbytes));
   }
@@ -3457,6 +3510,37 @@ int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
   }
 
   /* ---- 注入 dashboard 并让设备单指令跑 CRT ---- */
+  /* 密封路径: 宿主把 blob **逐字段加密**后注入 ⇒ 设备必须走 ReadFieldCipher 才能签对(真机读侧验证) */
+  if (cipherKeyId != 0) {
+    uint8_t sm4key[16];
+    for (int i = 0; i < 16; ++i)
+      sm4key[i] = static_cast<uint8_t>(0xA0 + i);
+    /* 同上: 已存在(F000000E=DONGLE_FILE_EXIST)不算失败, 以 WriteKeyFile 为准 */
+    std::ignore = rockey.CreateKeyFile(cipherKeyId, PERMISSION::kAdministrator, SECRET_STORAGE_TYPE::kSM4);
+    if (0 != rockey.WriteKeyFile(cipherKeyId, sm4key, sizeof(sm4key), SECRET_STORAGE_TYPE::kSM4)) {
+      rlLOGE(TAG, "RsaCrt(host): 写入 SM4 临时密钥 %d 失败", cipherKeyId);
+      exit(1);
+    }
+    const int wf = RsaModexp::KeyBlob::FieldSize(bits);
+    const int hf = RsaModexp::KeyBlob::HalfSize(bits);
+    const struct { uint32_t off; int len; } kFields[] = {
+        {0u, 16},
+        {RsaModexp::KeyBlob::NOffset(bits), wf},
+        {RsaModexp::KeyBlob::EOffset(bits), wf},
+        {RsaModexp::KeyBlob::DOffset(bits), wf},
+        {RsaModexp::KeyBlob::POffset(bits), hf},
+        {RsaModexp::KeyBlob::QOffset(bits), hf},
+        {RsaModexp::KeyBlob::Dmp1Offset(bits), hf},
+        {RsaModexp::KeyBlob::Dmq1Offset(bits), hf},
+        {RsaModexp::KeyBlob::IqmpOffset(bits), hf}};
+    for (const auto& f : kFields) {
+      if (0 != rockey.SM4ECB(cipherKeyId, blob + f.off, static_cast<size_t>(f.len), true)) {
+        rlLOGE(TAG, "RsaCrt(host): 注入前加密失败 off=%u len=%d", (unsigned)f.off, f.len);
+        exit(1);
+      }
+    }
+    rlLOGI(TAG, "RsaCrt(host): 密封注入完成(逐字段 ECB, cipherKeyId=%d)", cipherKeyId);
+  }
   std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtKeyOffset, blob,
                                      static_cast<size_t>(RsaModexp::KeyBlob::TotalSize(bits)));
   std::ignore = rockey.WriteDataFile(Dongle::kFactoryDataFileId, kCrtMOffset, m_le, static_cast<size_t>(nbytes));
@@ -3465,6 +3549,7 @@ int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
 
   ctx->argv_[1] = static_cast<uint32_t>(mode);
   ctx->argv_[2] = static_cast<uint32_t>(bits);
+  ctx->argv_[3] = static_cast<uint32_t>(cipherKeyId);
   const int64_t t0 = rLANG_GetTickCount();
   int main_result = 0;
   const int exec_result = static_cast<RockeyARM*>(&rockey)->ExecuteExeFile(Context, 1024, &main_result);
