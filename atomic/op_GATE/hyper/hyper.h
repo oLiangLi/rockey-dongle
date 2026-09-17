@@ -41,9 +41,9 @@ rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperInitialize(const char* worldId, int 
 /**
  *!
  */
-#ifdef rLANG_CONFIG_ENABLE_ATOMC_WORLD
+#ifdef rLANG_CONFIG_ROCKEY_DONGLE_WORLD
 rLANGEXPORT void rLANGAPI rLANG_op_GATE_Initialize(void);
-#else /* rLANG_CONFIG_ENABLE_ATOMC_WORLD */
+#else /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
 #ifdef __cplusplus
 template <typename VM>
 inline int rLANGAPI rLANG_op_GATE_Initialize(VM* vmx) {
@@ -55,7 +55,7 @@ inline int rLANGAPI rLANG_op_GATE_Initialize(VM* vmx) {
   return rLANG_op_GATE_HyperInitialize(worldId, gates);
 }
 #endif /* __cplusplus */
-#endif /* rLANG_CONFIG_ENABLE_ATOMC_WORLD */
+#endif /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
 
 rLANG_DECLARE_END
 

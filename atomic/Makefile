@@ -86,7 +86,7 @@ rv32im-rockey: opGateWrapper
 rv32im-rockey-clean:
 	$(MAKE) $(wORLD_BOARD_MAKE) clean-all
 
-rv32im-atomic-rockey: opGateWrapper
+rv32im-atomic-rockey: rv32im-rockey
 	$(MAKE) $(wORLD_BOARD_MAKE) rLANG_CONFIG_ENABLE_ATOMC_WORLD=1 prepare
 	$(MAKE) $(wORLD_BOARD_MAKE) rLANG_CONFIG_ENABLE_ATOMC_WORLD=1 build-all
 

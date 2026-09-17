@@ -29,12 +29,12 @@ rLANGEXPORT const op_GATE_export_t* rLANG_op_GATE_HyperExports(void) {
 /**
  *!
  */
-#ifdef rLANG_CONFIG_ENABLE_ATOMC_WORLD
+#ifdef rLANG_CONFIG_ROCKEY_DONGLE_WORLD
 rLANGEXPORT void rLANG_op_GATE_Initialize(void) {
   auto* op_GATE = reinterpret_cast<decltype(rLANG_op_GATE_HyperInitialize)*>(4 * rLANG_START_ATOMIC_HYPER_GATE);
   (*op_GATE)(op_GATE__kWorldId, op_GATE__kExportCount);
 }
-#else  /* rLANG_CONFIG_ENABLE_ATOMC_WORLD */
+#else  /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
 rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperInitialize(const char* worldId, int gates) {
   if (gates != op_GATE__kExportCount) {
     rlLOGX(rLANG_ATOMC_WORLD_MAGIC, "HyperCountGate mismatch %d / %d", gates, op_GATE__kExportCount);
@@ -46,6 +46,6 @@ rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperInitialize(const char* worldId, int 
   }
   return 0;
 }
-#endif /* rLANG_CONFIG_ENABLE_ATOMC_WORLD */
+#endif /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
 
 rLANG_DECLARE_END
