@@ -1,0 +1,21 @@
+﻿##
+## *** 注意 *** 修改导出函数列表将导致 id 发生变化
+##
+name: "atomic-rockey libmusl op_GATE declare file ..."
+
+##
+##
+##
+version: 1.0
+
+libmusl:
+  list:
+    - vsnprintf
+    - vsprintf
+    - memcpy
+    - memmove
+    - memset
+    - memchr
+    - strchr
+    - strlen
+

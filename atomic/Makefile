@@ -41,10 +41,21 @@ rLANG_WORLD_SEED_1 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.g
 rLANG_WORLD_SEED_2 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
 rLANG_WORLD_SEED_3 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
 
-.PHONY: all clean rv32im-atomic-rockey rv32im-atomic-rockey-clean rv32im-rockey rv32im-rockey-clean
+##
+##
+##
+ALL_op_GATE_LIST := $(wildcard $(wORLD_ROOT)/atomic/op_GATE/list/*.yaml)
+
+.PHONY: all clean opGateWrapper rv32im-atomic-rockey rv32im-atomic-rockey-clean rv32im-rockey rv32im-rockey-clean
 
 all: rv32im-atomic-rockey rv32im-rockey
 clean: rv32im-atomic-rockey-clean rv32im-rockey-clean
+
+opGateWrapper:
+	$(hide) $(info op_GATE.gen $(ALL_op_GATE_LIST) ...)
+	$(hide) rm -rfv $(wORLD_ROOT)/atomic/op_GATE/gen
+	$(X4C_NODE) $(wORLD_ROOT)/atomic/op_GATE/tools/gen.cjs $(ALL_op_GATE_LIST) \
+		--world-seed="$(rLANG_WORLD_SEED_0),$(rLANG_WORLD_SEED_1),$(rLANG_WORLD_SEED_2),$(rLANG_WORLD_SEED_3)"
 
 wORLD_BOARD_MAKE := \
 	-C $(wORLD_REAL_ROOT)/atomic \
@@ -68,14 +79,14 @@ X4C_BUILD_MODULE := \
 ##
 X4C_BUILD_LOCAL_DEFINE := $(wORLD_REAL_ROOT)/atomic/project.mk
 
-rv32im-rockey:
+rv32im-rockey: opGateWrapper
 	$(MAKE) $(wORLD_BOARD_MAKE) prepare
 	$(MAKE) $(wORLD_BOARD_MAKE) build-all
 
 rv32im-rockey-clean:
 	$(MAKE) $(wORLD_BOARD_MAKE) clean-all
 
-rv32im-atomic-rockey:
+rv32im-atomic-rockey: opGateWrapper
 	$(MAKE) $(wORLD_BOARD_MAKE) rLANG_CONFIG_ENABLE_ATOMC_WORLD=1 prepare
 	$(MAKE) $(wORLD_BOARD_MAKE) rLANG_CONFIG_ENABLE_ATOMC_WORLD=1 build-all
 
