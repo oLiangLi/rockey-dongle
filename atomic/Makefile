@@ -1,16 +1,32 @@
-##
+﻿##
 ## 继续使用上级目录(rockey-dongle)作为主目录
 ##
-wORLD_ROOT := $(realpath $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))/..)
+wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))/..
+
+##
+##
+##
+wORLD_REAL_ROOT := $(realpath $(wORLD_ROOT))
 
 ifeq ("$(shell uname -o)","Cygwin")
-wORLD_ROOT := $(shell cygpath -m $(wORLD_ROOT))
+wORLD_REAL_ROOT := $(shell cygpath -m $(wORLD_REAL_ROOT))
 endif ## Cygwin ...
 
 ##
-## ATOMIC 编译只使用 /Machine/System/bin 下安装的 node.js ...
 ##
-X4C_NODE := $(if $(wildcard /Machine/System/bin/node-rlang),/Machine/System/bin/node-rlang,/Machine/System/bin/node)
+##
+rLANG_CONFIG_MINIMAL_WORLD := 1
+
+##
+##
+##
+X4C_BUILD_XWORLD := $(wORLD_ROOT)
+
+##
+## node 程序: 优先本机 rlang 专用 node, 其次 /Machine/System/bin/node, 最后退回 PATH 上的 node
+## (平台无关: 未安装 /Machine/System 的环境也能构建)
+##
+X4C_NODE ?= $(shell if [ -x /Machine/System/bin/node-rlang ] ; then echo /Machine/System/bin/node-rlang ; elif [ -x /Machine/System/bin/node ] ; then echo /Machine/System/bin/node ; else echo node ; fi )
 
 ##
 ## default build Release version ...
@@ -25,32 +41,32 @@ rLANG_WORLD_SEED_1 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.g
 rLANG_WORLD_SEED_2 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
 rLANG_WORLD_SEED_3 := $(shell $(X4C_NODE) -e "process.stdout.write('0x'+crypto.getRandomValues(Buffer.alloc(4)).toString('hex'))")
 
-.PHONY: all clean
-.PHONY: rv32im-atomic-rockey rv32im-atomic-rockey-clean rv32im-rockey rv32im-rockey-clean
+.PHONY: all clean rv32im-atomic-rockey rv32im-atomic-rockey-clean rv32im-rockey rv32im-rockey-clean
 
 all: rv32im-atomic-rockey rv32im-rockey
 clean: rv32im-atomic-rockey-clean rv32im-rockey-clean
 
 wORLD_BOARD_MAKE := \
-	-C $(wORLD_ROOT)/atomic \
+	-C $(wORLD_REAL_ROOT)/atomic \
 	wORLD_CONFIG=None \
-	X4C_BUILD_LOCAL_CONFIG=$(wORLD_ROOT)/atomic/toolchain/rv32im-atomic-rockey.conf
+	X4C_BUILD_LOCAL_CONFIG=$(wORLD_REAL_ROOT)/atomic/toolchain/rv32im-atomic-rockey.conf
 
 ##
 ##
 ##
--include $(wORLD_ROOT)/.user.local.mk
+-include $(wORLD_REAL_ROOT)/.user.local.mk
 
 ##
 ## 手工添加需要编译到 atomic 的模块 ...
 ##
 X4C_BUILD_MODULE := \
-	$(wORLD_ROOT)/base/xModule.mk
+	$(wORLD_REAL_ROOT)/base/xModule.mk \
+	$(wORLD_REAL_ROOT)/atomic/xModule.mk
 
 ##
 ##
 ##
-X4C_BUILD_LOCAL_DEFINE := $(wORLD_ROOT)/atomic/project.mk
+X4C_BUILD_LOCAL_DEFINE := $(wORLD_REAL_ROOT)/atomic/project.mk
 
 rv32im-rockey:
 	$(MAKE) $(wORLD_BOARD_MAKE) prepare
@@ -70,5 +86,5 @@ rv32im-atomic-rockey-clean:
 ##
 ##
 ifneq ("$(X4C_BUILD_LOCAL_CONFIG)","")
-include $(wORLD_ROOT)/Build/Main.mk
-endif
+include $(wORLD_REAL_ROOT)/Build/Main.mk
+endif ## X4C_BUILD_LOCAL_CONFIG
