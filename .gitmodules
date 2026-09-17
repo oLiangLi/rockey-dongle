@@ -4,3 +4,11 @@
 [submodule "Build"]
 	path = Build
 	url = https://github.com/oLiangLi/build
+[submodule "third_party/musl"]
+	path = third_party/musl
+	url = https://github.com/oLiangLi/musl.git
+	branch = rLANG-2026.06.06
+[submodule "third_party/tlsf"]
+	path = third_party/tlsf
+	url = https://github.com/oLiangLi/tlsf.git
+	branch = rLANG-2026.06.06
