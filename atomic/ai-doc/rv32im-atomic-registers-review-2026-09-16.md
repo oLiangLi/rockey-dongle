@@ -70,6 +70,7 @@ rLANG_ABIREQUIRE(offsetof(regs_t, a0) == 40 && offsetof(regs_t, u32args) == 40 &
 - **算术异常一律不抛 (用户 2026-09-16 裁定)**: RV32IM 的除零/溢出只有预定义结果、没有异常路径; 浮点即便支持也只置 `NaN`/`INF`。⇒ **`SIGFPE` 不进 ATOMC 世界**; 本节的浮点覆盖层只是**位型搬运**, 与浮点状态寄存器无关。详见 `rv32im-atomic-isa-conformance-2026-09-16.md` §3。
 - 返回值: "the first two of which are also used to return values" ⇒ a0/a1 兼任返回 ✅ 无需额外成员。
 - 栈 (非寄存器定义, 但门进出必须遵守): psABI 要求过程入口 **sp 16 字节对齐** (128-bit boundary), 栈向低地址增长, 第一个栈上参数在 `sp + 0`, 且"栈上参数按类型对齐与 XLEN 的较大者对齐"。
+- ➡ **变参 (`va_list`/`va_arg`) 的完整约定另见 `rv32im-atomic-calling-convention-and-varargs-2026-09-16.md`** (2026-09-16 新增): 它解释了上面那条差异的"变参侧"成因 —— 变参里 8 字节类型必须落**偶数起始**寄存器对、且"一旦上栈之后全部上栈"; 另外 `va_list` 就是 `void*`, 被调方要在**入口 sp 之下**造 varargs save area; 并给出"解释器不需要任何变参特例、但门实现必须遵守 callee-saved (`s0–s11`/`sp`/`gp`/`tp`)"的可执行清单。
 
 ## 4. 命名与风格 (低风险)
 
