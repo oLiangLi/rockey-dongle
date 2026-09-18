@@ -453,6 +453,134 @@ int main() {
             "同一程序两次运行 cyc_ 相同 (== 10 = addi1+lw2+mulh4+sw2+ecall1) => 权重是纯函数");
     }
   }
+  {
+    /* 规程十: exit GATE 的**宿主判别** (用户 2026-09-18; 同日"更自然"的语义修正后)
+       app 侧: `rLANGEXPORT int MatrixExecv()` 就是**应用入口** (自己 return 状态, 像 main 一样);
+               crt (start.S) 只是把它的返回值原样交给 MatrixExit:
+                 call MatrixExecv      => a0 = 状态
+                 tail MatrixExit       => MatrixExit(a0); MatrixExit 是 noreturn => tail 安全
+       guest 侧: atomic/op_GATE/hyper/modules.cc:29-41 —— **只钳门号, 不钳状态**:
+                 constexpr uint32_t kExitMagic = 0xFEE1DEAD;
+                 const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
+                 auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int, uint32_t, uint32_t, uint32_t)>(4 * kGate);
+                 for (;;) op_GATE(v, kExitMagic, v + kExitMagic, rLANG_WORLD_MAGIC);
+       真机代码生成 (实测 riscv32-unknown-elf-g++ -O2 -march=rv32im -mabi=ilp32) 与上面逐条对应:
+                 mv a0,s2 (真 v) / slli s0,s0,2 (4*kGate) / a1 = 0xFEE1DEAD / add a2 = v + 0xFEE1DEAD /
+                 a3 = 0xC8C04E1F / jalr s0        ⇒ a2 是**无符号加** (单条 add, 不做溢出检查)
+       ⇒ ① a0 带**完整 32 位状态**, 只有**门号**被钳到 [-64,63] (钳制只影响派发, 不影响状态);
+          ② 门号空间 1024 个 id 被三段**无缝瓜分**: [-512,-65] hyper 448 / [-64,63] exit 128 / [64,511] 库导出 448;
+          ③ 本规程验的是**宿主侧**看得到的东西: 门号 id + a0..a3 ⇒ 即"判别规则"本身。
+       注: 下面按 guest 的公式填寄存器 (同构复现, 不是跑 guest 机器码 —— 那要真链接 Matrix 映像才能跑,
+       见 checks/varargs/ 的 loader 路线)。 */
+    printf("[规程十] exit GATE: 门号钳制 (状态不钳) + 三元组判别 (exit(0) vs (*nullptr)())\n");
+    const int kTo2 = rLANG_ERROR_TIMEDOUT;
+    constexpr int kExitLo = -64, kExitHi = 63;           /* 门号 (派发窗口) 的上下界 */
+    constexpr int kHyperHi = -65, kHyperLo = -512;       /* hyper / 用户私有 */
+    constexpr int kExportLo = 64, kExportHi = 511;       /* 库导出槽 (JALR 12 位立即数上限) */
+    constexpr std::uint32_t kLowTop = 0x800u;            /* pc <  0x800        => 低窗 */
+    constexpr std::uint32_t kHighBot = 0xFFFFF800u;      /* pc >= 0xFFFFF800   => 高窗 (4*(-512)) */
+    constexpr std::uint32_t kSentinel = 0xFEE1DEADu;     /* guest: kExitMagic */
+    constexpr std::uint32_t kMagic = static_cast<std::uint32_t>(rLANG_WORLD_MAGIC);
+
+    /* (a) 三段 id 无缝相接 + 两侧窗口槽数对得上 (纯算术, 不需要跑 VM) */
+    CHECK(kHyperHi + 1 == kExitLo && kExitHi + 1 == kExportLo && kExportHi == 511,
+          "三段无缝相接: [-512,-65] hyper | [-64,63] exit | [64,511] 库导出 (没有空档也没有重叠)");
+    CHECK(kExportHi * 4 + 4 <= static_cast<int>(kLowTop) && kExitHi * 4 + 4 <= static_cast<int>(kLowTop),
+          "低窗 (pc < 0x800) 共 512 槽 = id [0,511]: exit 占前 64 槽 (pc 0..252), 库导出接在 256 起");
+    CHECK(static_cast<std::uint32_t>(kHyperLo * 4) == kHighBot
+       && static_cast<std::uint32_t>(kExitLo * 4) == (kHighBot + 0x700u),
+          "高窗 (pc >= 0xFFFFF800) 共 512 槽 = id [-512,-1]: hyper 从 -512 (窗口起点) 起, exit 的 -64 落在 0xFFFFFF00");
+    CHECK(static_cast<std::uint32_t>(4 * -1) == 0xFFFFFFFCu && static_cast<int>(0xFFFFFFFCu) / 4 == -1,
+          "负门号靠 32 位回绕走高窗, 且 (int)pc/4 是精确整除 => id 与门号一一对应 (4*(-1) => id -1)");
+
+    /* 宿主侧判别规则 (要写进门实现的那段): 窗口内 + 三元组全中 => 正常退出; 否则**不当退出**
+       ⚠ 校验和必须按 **uint32** 加: 状态是任意 int, 有符号加在 INT_MIN 这类值上会溢出 (UB) */
+    enum { kExit = 0, kNotExitWindow = 1, kBadTriple = 2 };
+    auto hostClassify = [](int id, int a0, std::uint32_t a1, std::uint32_t a2, std::uint32_t a3) -> int {
+      if (id < kExitLo || id > kExitHi) return kNotExitWindow;   /* 整个 [-64,63] 都要查, 不只 id 0 */
+      if (a1 != kSentinel) return kBadTriple;
+      if (a2 != static_cast<std::uint32_t>(a0) + a1) return kBadTriple;   /* 无符号: 回绕定义良好 */
+      if (a3 != kMagic) return kBadTriple;
+      return kExit;
+    };
+    /* guest modules.cc:38 的三个实参 (按同一条公式复现) */
+    auto guestArgs = [](int v, int* a0, std::uint32_t* a1, std::uint32_t* a2, std::uint32_t* a3) {
+      *a0 = v;
+      *a1 = kSentinel;
+      *a2 = static_cast<std::uint32_t>(v) + kSentinel;
+      *a3 = kMagic;
+    };
+
+    /* (b) 端到端 (真解释器): 128 个门号逐个 "pc = 4*v + 三元组" => id == v 且判为正常退出 */
+    int badCases = 0;
+    for (int v = kExitLo; v <= kExitHi; ++v) {
+      Impl vm; Impl::hart_t h{};
+      int a0v = 0; std::uint32_t a1v = 0, a2v = 0, a3v = 0;
+      guestArgs(v, &a0v, &a1v, &a2v, &a3v);
+      h.regs_.a0.iv = a0v; h.regs_.a1.uv = a1v; h.regs_.a2.uv = a2v; h.regs_.a3.uv = a3v;
+      h.regs_.ra.uv = Mem::kBase;
+      h.Enable(static_cast<std::uint32_t>(4 * v));            /* 入口直接落在门窗口 => 门 v */
+      const int r = vm.Execv(&h, 1);
+      if (r != kTo2 || vm.gate_calls != 1 || vm.gate_last_id != v || h.cyc_ != 4) { ++badCases; continue; }
+      if (hostClassify(vm.gate_last_id, h.regs_.a0.iv, h.regs_.a1.uv, h.regs_.a2.uv, h.regs_.a3.uv) != kExit) ++badCases;
+      if (h.regs_.a0.iv != v) ++badCases;                     /* 状态必须原样带出 */
+    }
+    CHECK(badCases == 0,
+          "128 个门号全部实测: pc = 4*v 被认成**门 v**, 三元组匹配 => 宿主判正常退出且状态 == v (每例 4 拍)");
+
+    /* (c) **钳制只作用于门号**: 越界状态照旧从 a0 完整带出 (修正后的语义; 旧版把状态也钳成 7 位) */
+    const int kExtremes[] = {kExitHi + 1, kExitLo - 1, 1000, -1000, 0x7FFFFFFF,
+                             static_cast<int>(0x80000000u), -1, 0};
+    int clampBad = 0;
+    for (int v : kExtremes) {
+      const int expectId = v < kExitLo ? kExitLo : v > kExitHi ? kExitHi : v;   /* guest 的 kGate */
+      Impl vm; Impl::hart_t h{};
+      int a0v = 0; std::uint32_t a1v = 0, a2v = 0, a3v = 0;
+      guestArgs(v, &a0v, &a1v, &a2v, &a3v);
+      h.regs_.a0.iv = a0v; h.regs_.a1.uv = a1v; h.regs_.a2.uv = a2v; h.regs_.a3.uv = a3v;
+      h.regs_.ra.uv = Mem::kBase;
+      h.Enable(static_cast<std::uint32_t>(4 * expectId));     /* 钳制后的门号 */
+      const int r = vm.Execv(&h, 1);
+      if (r != kTo2 || vm.gate_calls != 1 || vm.gate_last_id != expectId || h.cyc_ != 4) { ++clampBad; continue; }
+      if (h.regs_.a0.iv != v) ++clampBad;                     /* a0 = **真值**, 未被钳 */
+      if (hostClassify(expectId, h.regs_.a0.iv, h.regs_.a1.uv, h.regs_.a2.uv, h.regs_.a3.uv) != kExit) ++clampBad;
+    }
+    CHECK(clampBad == 0,
+          "越界状态只影响门号 (钳到 63/-64), a0 仍是完整原值: 64/-65/1000/-1000/INT_MAX/INT_MIN 逐个验证");
+
+    /* (d) exit(0) 与真正的 (*nullptr)() —— 同 id 0, 靠**参数**区分 (用户 2026-09-18 的核心澄清) */
+    CHECK(hostClassify(0, 0, kSentinel, 0u + kSentinel, kMagic) == kExit,
+          "MatrixExit(0): id 0 + 三元组匹配 => 正常退出, 状态 0");
+    CHECK(hostClassify(0, 0, 0u, 0u, 0u) == kBadTriple,
+          "(*nullptr)() 且寄存器全 0: **同一个 id 0** 但三元组不匹配 => 判为故障, 不会伪装成 exit(0)");
+    CHECK(hostClassify(0, 12, kSentinel, kSentinel + 12u, 0x1234u) == kBadTriple,
+          "野生跳进门窗口且寄存器是垃圾 => 判为故障 (只看 id 的实现会把这两类混为一谈)");
+    CHECK(hostClassify(25, 7, kSentinel, 7u + kSentinel, kMagic) == kExit,
+          "注意: 窗口**内任意 id** 带对三元组都算退出 => 判别必须覆盖整个 [-64,63], 不能只查 id 0");
+    CHECK(hostClassify(kExitHi, kExitHi, kSentinel, static_cast<std::uint32_t>(kExitHi) + kSentinel, kMagic) == kExit
+       && hostClassify(kExitLo, kExitLo, kSentinel, static_cast<std::uint32_t>(kExitLo) + kSentinel, kMagic) == kExit,
+          "两个边界门号 63 / -64 都在窗口内, 状态原样带出");
+    CHECK(hostClassify(kExportLo, 0, kSentinel, kSentinel, kMagic) == kNotExitWindow,
+          "id 64 是库导出槽 => 即使参数凑巧一样也**不**当 exit (窗口判定在前)");
+    CHECK(hostClassify(0, 0, kSentinel, kSentinel + 1u, kMagic) == kBadTriple,
+          "校验和差 1 => 拒 (a2 是校验, 不是装饰)");
+    CHECK(hostClassify(0, 0, kSentinel, kSentinel, kMagic ^ 1u) == kBadTriple,
+          "世界魔数不符 => 拒 (顺带排除\"另一个世界的 exit 门\")");
+
+    /* (e) 校验和的**算术契约**: guest 用 uint32 加 (会回绕) ⇒ 宿主必须照抄, 不能用有符号 int */
+    int signedSum = 0;
+    const bool hostSignedOverflow =
+        __builtin_add_overflow(static_cast<int>(0x80000000u), static_cast<int>(kSentinel), &signedSum);
+    CHECK(hostSignedOverflow,
+          "状态可为任意 int => 宿主若用**有符号** int 算 a0 + a1, 在 INT_MIN 这类状态上就溢出 (UB) => 必须 uint32");
+    int wrapBad = 0;
+    for (int v : kExtremes) {
+      const std::uint32_t a2v = static_cast<std::uint32_t>(v) + kSentinel;   /* guest 的那条无符号加 */
+      if (hostClassify(0, v, kSentinel, a2v, kMagic) != kExit) ++wrapBad;
+    }
+    CHECK(wrapBad == 0,
+          "uint32 回绕加回验对**任意** 32 位状态都成立 (含 INT_MIN/INT_MAX/±1000) => 宿主照此实现即可");
+  }
   printf("\n%s (failures=%d)\n", failures ? "有失败" : "全部通过", failures);
   return failures;
 }

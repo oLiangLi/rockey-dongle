@@ -29,6 +29,12 @@ rLANG_DECLARE_MACHINE
 /**
  *!
  */
+rLANGIMPORT int MatrixExecv();
+rLANGEXPORT __attribute__((noreturn)) void MatrixExit(int v);
+
+/**
+ *!
+ */
 rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperCountGate(void);
 rLANGEXPORT const char* rLANGAPI rLANG_op_GATE_HyperWorldId(void);
 rLANGEXPORT const op_GATE_export_t* rLANGAPI rLANG_op_GATE_HyperExports(void);
@@ -41,9 +47,9 @@ rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperInitialize(const char* worldId, int 
 /**
  *!
  */
-#ifdef rLANG_CONFIG_ROCKEY_DONGLE_WORLD
+#ifdef rLANG_CONFIG_MATRIX_WORLD
 rLANGEXPORT void rLANGAPI rLANG_op_GATE_Initialize(void);
-#else /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
+#else /* rLANG_CONFIG_MATRIX_WORLD */
 #ifdef __cplusplus
 template <typename VM>
 inline int rLANGAPI rLANG_op_GATE_Initialize(VM* vmx) {
@@ -55,7 +61,7 @@ inline int rLANGAPI rLANG_op_GATE_Initialize(VM* vmx) {
   return rLANG_op_GATE_HyperInitialize(worldId, gates);
 }
 #endif /* __cplusplus */
-#endif /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
+#endif /* rLANG_CONFIG_MATRIX_WORLD */
 
 rLANG_DECLARE_END
 

@@ -26,15 +26,29 @@ rLANGEXPORT const op_GATE_export_t* rLANG_op_GATE_HyperExports(void) {
   return op_GATE__kExports;
 }
 
+rLANGEXPORT void MatrixExit(int v) {
+#ifndef rLANG_CONFIG_MATRIX_WORLD
+  exit(v);
+#else /* rLANG_CONFIG_MATRIX_WORLD */
+  constexpr uint32_t kExitMagic = 0xFEE1DEAD;
+  const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
+
+  auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int A0, uint32_t A1, uint32_t CHK, uint32_t magic)>(4 * kGate);
+  for(;;) {
+    op_GATE(v, kExitMagic, v + kExitMagic, rLANG_WORLD_MAGIC);
+  }
+#endif /* rLANG_CONFIG_MATRIX_WORLD */
+}
+
 /**
  *!
  */
-#ifdef rLANG_CONFIG_ROCKEY_DONGLE_WORLD
+#ifdef rLANG_CONFIG_MATRIX_WORLD
 rLANGEXPORT void rLANG_op_GATE_Initialize(void) {
   auto* op_GATE = reinterpret_cast<decltype(rLANG_op_GATE_HyperInitialize)*>(4 * rLANG_START_ATOMIC_HYPER_GATE);
   (*op_GATE)(op_GATE__kWorldId, op_GATE__kExportCount);
 }
-#else  /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
+#else  /* rLANG_CONFIG_MATRIX_WORLD */
 rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperInitialize(const char* worldId, int gates) {
   if (gates != op_GATE__kExportCount) {
     rlLOGX(rLANG_ATOMC_WORLD_MAGIC, "HyperCountGate mismatch %d / %d", gates, op_GATE__kExportCount);
@@ -46,6 +60,6 @@ rLANGEXPORT int rLANGAPI rLANG_op_GATE_HyperInitialize(const char* worldId, int 
   }
   return 0;
 }
-#endif /* rLANG_CONFIG_ROCKEY_DONGLE_WORLD */
+#endif /* rLANG_CONFIG_MATRIX_WORLD */
 
 rLANG_DECLARE_END
