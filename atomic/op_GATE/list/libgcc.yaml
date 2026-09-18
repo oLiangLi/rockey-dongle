@@ -1,0 +1,15 @@
+##
+## *** 注意 *** 修改导出函数列表将导致 id 发生变化
+##
+name: "atomic-rockey libgcc op_GATE declare file ..."
+
+##
+##
+##
+version: 1.0
+
+libgcc:
+  list:
+    - __addsf3  
+    - __adddf3 
+

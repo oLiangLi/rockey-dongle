@@ -1,4 +1,4 @@
-#include <Interface/dongle.h>
+﻿#include <Interface/dongle.h>
 #include <Interface/keygen.h>
 #include <Interface/modexp.h>
 #include <Interface/mr.h>
@@ -3050,16 +3050,18 @@ int Testing_RsaKeyGenTests(Dongle& rockey, void* Context, void* ExtendBuf) {
     } else {
       const int wf = RsaModexp::KeyBlob::FieldSize(bits);
       const int hf = RsaModexp::KeyBlob::HalfSize(bits);
-      const struct { uint32_t off; int len; } kFields[] = {
-          {0u, 16},
-          {RsaModexp::KeyBlob::NOffset(bits), wf},
-          {RsaModexp::KeyBlob::EOffset(bits), wf},
-          {RsaModexp::KeyBlob::DOffset(bits), wf},
-          {RsaModexp::KeyBlob::POffset(bits), hf},
-          {RsaModexp::KeyBlob::QOffset(bits), hf},
-          {RsaModexp::KeyBlob::Dmp1Offset(bits), hf},
-          {RsaModexp::KeyBlob::Dmq1Offset(bits), hf},
-          {RsaModexp::KeyBlob::IqmpOffset(bits), hf}};
+      const struct {
+        uint32_t off;
+        int len;
+      } kFields[] = {{0u, 16},
+                     {(uint32_t)RsaModexp::KeyBlob::NOffset(bits), wf},
+                     {(uint32_t)RsaModexp::KeyBlob::EOffset(bits), wf},
+                     {(uint32_t)RsaModexp::KeyBlob::DOffset(bits), wf},
+                     {(uint32_t)RsaModexp::KeyBlob::POffset(bits), hf},
+                     {(uint32_t)RsaModexp::KeyBlob::QOffset(bits), hf},
+                     {(uint32_t)RsaModexp::KeyBlob::Dmp1Offset(bits), hf},
+                     {(uint32_t)RsaModexp::KeyBlob::Dmq1Offset(bits), hf},
+                     {(uint32_t)RsaModexp::KeyBlob::IqmpOffset(bits), hf}};
       for (const auto& f : kFields) {
         if (0 != rockey.SM4ECB(cipherKeyId, blob + f.off, static_cast<size_t>(f.len), false)) {
           rlLOGE(TAG, "RsaGenKey(host): 字段解密失败 off=%u len=%d", (unsigned)f.off, f.len);
@@ -3523,16 +3525,18 @@ int Testing_RsaCrtTests(Dongle& rockey, void* Context, void* ExtendBuf) {
     }
     const int wf = RsaModexp::KeyBlob::FieldSize(bits);
     const int hf = RsaModexp::KeyBlob::HalfSize(bits);
-    const struct { uint32_t off; int len; } kFields[] = {
-        {0u, 16},
-        {RsaModexp::KeyBlob::NOffset(bits), wf},
-        {RsaModexp::KeyBlob::EOffset(bits), wf},
-        {RsaModexp::KeyBlob::DOffset(bits), wf},
-        {RsaModexp::KeyBlob::POffset(bits), hf},
-        {RsaModexp::KeyBlob::QOffset(bits), hf},
-        {RsaModexp::KeyBlob::Dmp1Offset(bits), hf},
-        {RsaModexp::KeyBlob::Dmq1Offset(bits), hf},
-        {RsaModexp::KeyBlob::IqmpOffset(bits), hf}};
+    const struct {
+      uint32_t off;
+      int len;
+    } kFields[] = {{0u, 16},
+                   {(uint32_t)RsaModexp::KeyBlob::NOffset(bits), wf},
+                   {(uint32_t)RsaModexp::KeyBlob::EOffset(bits), wf},
+                   {(uint32_t)RsaModexp::KeyBlob::DOffset(bits), wf},
+                   {(uint32_t)RsaModexp::KeyBlob::POffset(bits), hf},
+                   {(uint32_t)RsaModexp::KeyBlob::QOffset(bits), hf},
+                   {(uint32_t)RsaModexp::KeyBlob::Dmp1Offset(bits), hf},
+                   {(uint32_t)RsaModexp::KeyBlob::Dmq1Offset(bits), hf},
+                   {(uint32_t)RsaModexp::KeyBlob::IqmpOffset(bits), hf}};
     for (const auto& f : kFields) {
       if (0 != rockey.SM4ECB(cipherKeyId, blob + f.off, static_cast<size_t>(f.len), true)) {
         rlLOGE(TAG, "RsaCrt(host): 注入前加密失败 off=%u len=%d", (unsigned)f.off, f.len);

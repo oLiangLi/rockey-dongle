@@ -1,0 +1,14 @@
+﻿##
+## *** 注意 *** 修改导出函数列表将导致 id 发生变化
+##
+name: "atomic-rockey libbase op_GATE declare file ..."
+
+##
+##
+##
+version: 1.0
+
+libbase:
+  list:
+    - rLANG_GetVersion
+    - rlLoggingWriteEx_op_GATE_ap

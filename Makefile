@@ -1,4 +1,4 @@
-wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+﻿wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 ##
 ## 子模块守卫: base/ 与 Build/ 已改为 git submodule; 未初始化时给出可操作提示
 ## (非致命 —— 否则 install-hooks 等目标会被挡住; 真正的构建会在缺文件时报错)
@@ -20,7 +20,7 @@ TSC ?= $(if $(wildcard $(wORLD_ROOT)/node_modules/.bin/tsc),$(wORLD_ROOT)/node_m
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
 .PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check rockey-stack-check jsWrapper
-.PHONY : ci test install-hooks test-optmatrix test-web
+.PHONY : ci test install-hooks test-optmatrix test-web atomic
 
 ##
 ## default build Release version ...
@@ -51,6 +51,13 @@ install: ; $(MAKE) -C $(wORLD_ROOT) wORLD_CONFIG=linux install-platform
 wORLD_PLATFORM_CONFIG := linux
 endif
 endif
+
+##
+## HOST 环境依赖 atomic 定义的一些常数被确定, wasm没有MPU/MMU内存访问需要检查权限和越界 ...
+##
+windows linux aarch64-linux wasm: atomic
+atomic:
+	$(MAKE) -C $(wORLD_ROOT)/atomic
 
 ##
 ## 为程序注入一些外部的随机性 ...
