@@ -89,7 +89,7 @@ _MatrixStart:
 | --- | --- | --- |
 | `MatrixExecv` | `rLANGIMPORT __attribute__((noreturn)) void MatrixExecv();` (宿主/库侧, 不返回) | **`rLANGIMPORT int MatrixExecv();`** —— 它是**应用侧入口**, 应用用 `rLANGEXPORT int MatrixExecv() {...; return 0;}` 定义 (`Matrix/HelloWorld/main.cc:7`), 像 `main` 一样 return 状态 |
 | crt 收尾 | `tail MatrixExecv` (赌它不返回) | **`call MatrixExecv` → `tail MatrixExit`** = `MatrixExit(MatrixExecv())` |
-| `MatrixExit` | `noreturn`, 状态 = 门号 | **`noreturn`** (不变), 但**只钳门号**, `a0` 带完整状态 (§4.2) |
+| `MatrixExit` | `noreturn`, 状态 = 门号 | **`noreturn`** (不变), 但**只折叠门号**, `a0` 带完整状态 (§4.2) |
 
 ⇒ 现在**没有任何"赌它不返回"的地方**: 中间的 `call` 是正规调用, 末尾那个 `tail` 的目标 `MatrixExit` 由构造保证不返回 ⇒ **原建议撤回, 你的写法更自然** (顺带省掉一次寄存器中转)。
 `start.S` 已按此改写注释 (并说明"若哪天 `MatrixExit` 变成会返回, 这里必须跟着改")。
@@ -103,6 +103,13 @@ _MatrixStart:
 
 ### 4.2 ✅ exit GATE 协议 (用户 2026-09-18 实现, 同日修正语义) + 宿主侧契约
 
+> ⚠ **本节的"门号"公式已于 2026-09-18 稍后由用户改版**: 由**钳制** `v< -64 ? -64 : v> 63 ? 63 : v`
+> 改为**取模折叠** **`(v & 0x7f) - 64`** (两端同步改; 理由: 门号分布**更均匀**)。
+> 下面正文里凡是"钳制/clamp"的字样都按**折叠**读; "夹在取值里的旧公式"已就地更新为折叠式。
+> 折叠式的性质 (已写成 `atomic/tests/` 的可执行断言): 值域恒为 `[-64,63]` / 门号 = 状态**低 7 位** /
+> 周期 **128** (v 与 v+128 同门) / **128 个门号全部可达且均匀** —— 钳制版只有两端两个门号 (`-64`/`63`) 可达。
+> 协议其余部分 (三元组、状态在 `a0`、`kGate == gate` 校验、`INT_MIN` 回绕算 uint32) **一律不变**。
+
 用户原话: "我增加了 `MatrixExit` 实现, 既然 `-64 - 63` 的 op_GATE 没有使用, 我们刚好用它做 exit GATE, **不小心用 nullptr 调用函数指针就直接退出了**"; 随后: "**我略微修正了 `MatrixExecv` `MatrixExit` 的语义, 这样看起来更自然一些**"。
 
 实现 (`atomic/op_GATE/hyper/modules.cc:29-41`) 的读法:
@@ -113,7 +120,7 @@ rLANGEXPORT void MatrixExit(int v) {
   exit(v);                                              /* COSMO/转译成宿主程序: 普通 exit */
 #else
   constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;   /* hyper.h: 0xFEA1DEAD (单一来源) */
-  const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;    /* **只钳门号**, 不钳状态 */
+  const int kGate = (v & 0x7f) - 64;    /* **门号按低 7 位折叠** (2026-09-18 改版; 原为钳制), 状态不折叠 */
 
   auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int A0, uint32_t A1, uint32_t CHK, uint32_t magic)>(4 * kGate);
   for(;;) {
@@ -126,8 +133,8 @@ rLANGEXPORT void MatrixExit(int v) {
 | 设计点 | 说明 |
 | --- | --- |
 | **门号空间 = exit 窗口 `[-64, 63]`** | 正是 `id` 空间里"没被库导出 (`[64,511]`) 与 hyper (`[-512,-65]`) 占用"的两段: `0..63`(低) 与 `-64..-1`(高) ⇒ 128 个槽位 |
-| **只钳门号, `a0` 带完整 32 位状态** (修正后) | `kGate` 只用来**选门**; 传给宿主的 `A0` 是**原始 `v`** ⇒ `exit`-like 语义完整 (旧版把状态也钳成 7 位, 那才是"看起来不自然"的地方) |
-| **`MatrixExit(0)` ⇒ pc = 0 ⇒ id 0** | 于是"**`nullptr` 函数指针调用**"(`pc = 0`)天然落到 exit 窗口的 id 0 ⇒ 从"跳到未定义地址"变成"有确定语义的一次门调用" ✓ |
+| **门号按低 7 位折叠, `a0` 带完整 32 位状态** | `kGate` 只用来**选门**; 传给宿主的 `A0` 是**原始 `v`** ⇒ `exit`-like 语义完整 (更早那版把状态也钳成 7 位, 那才是"看起来不自然"的地方)。折叠 ⇒ 128 个门号**全部可达且均匀**; 代价是 `v` 与 `v±128` 落同一个门 (门号不再携带高位信息 —— 门号本来就只是派发槽位, 不承担状态传递) |
+| **`MatrixExit(0)` ⇒ 门号 `-64` ⇒ pc = `0xFFFFFF00`** | ⚠ **改折叠式后的行为变化**: 旧钳制式对 `v ∈ [-64,63]` 是**恒等**映射 (`v=0 → 门 0`), 于是"`nullptr` 函数指针调用"(`pc=0` = id 0)与 `MatrixExit(0)` 天然撞在同一处; 折叠式下 `MatrixExit(0)` 走 `pc = 4*(-64) = 0xFFFFFF00`, 而 `(*nullptr)()` 仍落 `pc = 0` (**id 0**) ⇒ **两者不再是同一个门**。安全结论不变甚至更清楚: id 0 落在 exit 窗口内 ⇒ 宿主仍按三元组判别 —— 垃圾寄存器不匹配 ⇒ 判故障 (`SIGILL`), 不会伪装成 exit |
 | **负门号 ⇒ 高窗** | `4 * (-64) = -256` ⇒ 32 位地址 `0xFFFFFF00` ⇒ 高窗 `id -64` ✓ (与 `id = (int)pc/4` 一致; 真机实测: `slli s0,s0,2` 一条搞定, 见下面的代码生成) |
 | **三个"防误撞"参数** | `a1 = kExitMagic`(`rLANG_CONFIG_EXIT_GATE_MAGIC` = `0xFEA1DEAD`; 这个值就是内存映射里**旧设备区填充图案**, 见 `hyper-vm-t-issues` §2.10 —— 现在设备区改用 `0x55AAFF00`, 两者不再相干) / `a2 = v + kExitMagic`(校验和, **uint32 加**) / `a3 = rLANG_WORLD_MAGIC` ⇒ 宿主据此确认"这确实是一次 exit 调用", 而不是别的代码误跳进这两段窗口 |
 | **`for(;;)` 重试** | 若宿主的 exit 门返回 0 (=继续执行), guest 会**反复**调用它 (而不是跑飞) ⇒ 安全网; 真正终止仍要靠宿主 |
@@ -136,23 +143,34 @@ rLANGEXPORT void MatrixExit(int v) {
 
 **⇒ 顺带说明**: 这两段"未使用"的 id 段原先是"每次编译可变"随机化的候选池 (README §3.1); 被 exit 门号占用**没有损失** —— "每次编译不兼容"已由 `gen.cjs` 对 `[64,511]` 的**洗牌**提供 ✓。
 
-**真机代码生成 (实测 `riscv32-unknown-elf-g++ -O2 -march=rv32im -mabi=ilp32 -S`; 把 `MatrixExit` 的算术原样抽出来编)**, 与上面逐条对应:
+**代码生成** —— ⚠ **门号公式改版后本节需要重跑取证**: 旧的比较/钳制序列 (`li 63 / bgt / li -64 / bge` 三条分支)
+已随公式一起作废, 折叠式 `(v & 0x7f) - 64` 是**无分支**的 (`andi` 一条取低 7 位 + `addi -64` 一条落进窗口),
+下面是**按公式推出的期望形态** (2026-09-18 未在本机实测 —— 本会话的 Cygwin 工具链起不来, 见文末限制):
 
 ```asm
-	mv	s2,a0                       # 保住真 v
-	li	a5,63 / bgt a0,a5,.L2 / mv s0,a0 / li a5,-64 / bge s0,a5,.L3 / mv s0,a5
-	slli	s0,s0,2                     # s0 = 4 * kGate  (门号; 负值 => 0xFFFFFF00 起的高窗)
+	# 期望: 门号部分只有两条指令 (旧版是 6 条含 2 条分支)
+	andi	s0,a0,0x7f                  # s0 = v 的低 7 位 (0..127)
+	addi	s0,s0,-64                   # s0 = kGate ∈ [-64,63]
+	slli	s0,s0,2                     # s0 = 4 * kGate  (负值 => 0xFFFFFF00 起的高窗)
 	li	s1,-22945792
 	addi	s1,s1,-339                  # s1 = 0xFEA1DEAD (kExitMagic)
-	add	s1,s2,s1                   # a2 = v + kExitMagic —— **单条 add, 不做溢出检查 (uint32 回绕是设计)**
+	add	s1,a0,s1                   # a2 = v + kExitMagic —— **单条 add, 不做溢出检查 (uint32 回绕是设计)**
 	li	a3,-926920704
 	addi	a3,a3,-481                  # a3 = 0xC8C04E1F (rLANG_WORLD_MAGIC)
 	li	a1,-22945792
 	addi	a1,a1,-339                  # a1 = kExitMagic
-	mv	a0,s2                       # a0 = **真 v** (状态不钳制)
+	mv	a0,s2                       # (可选) 若门号那两条指令动了 a0, 就把真 v 挪回来; 折叠式通常不需要
 	jalr	s0                          # 调门
 	j	.L4                         # for(;;)
 ```
+
+- ⚠ 注意 `a0` 的取值: 旧版必须先在 `s2` 里保住真 `v` 再 `mv a0,s2`; 折叠式里 `a0` 本身没被破坏时
+  (门号只写了 `s0`) 编译器可以直接用 `a0` ⇒ **实际序列以真机 `-S` 为准**;
+- 复核命令 (任一能用的 riscv32 工具链): 把 `modules.cc` 里 `MatrixExit` 的 `#else` 分支抽成一个 TU,
+  `riscv32-unknown-elf-g++ -O2 -march=rv32im -mabi=ilp32 -S` 后读 `MatrixExit` 的汇编;
+- `(v & 0x7f)` 对**负值**是"低 7 位"而不是数学取模 (C++ 里负数 `%` 会得负余数) ⇒ 不要改成 `v % 128`。
+  形式上也建议写成 `(int)((uint32_t)v & 0x7fu) - 64`: 先转无符号再掩码是**标准定义**的写法
+  (现行 `v & 0x7f` 依赖二进制补码, 在 GCC/clang + RV32IM 上结果相同, 但写成无符号更稳妥)。
 
 #### ⚠ 宿主侧契约 (用户 2026-09-18 已给出参考实现 `rLANG_op_GATE_HyperExit`, 见下面两节; 这里是它对应的"验收清单")
 
@@ -166,8 +184,9 @@ rLANGEXPORT void MatrixExit(int v) {
 
 用户: "**`exit(0)` 与真正的 `(*nullptr)()` 状态有差别, 调用 `MatrixExit` 会设置几个 magic number**" ⇒ 精确地说:
 
-- 两者**落在同一个 id (`0`)**, 但**参数不同**: 真的 `MatrixExit(0)` 一定带三元组 (`a1 = rLANG_CONFIG_EXIT_GATE_MAGIC`, `a2 = a0 + a1`, `a3 = rLANG_WORLD_MAGIC`); 而 `(*nullptr)()` 的 `a0..a3` 是**垃圾** ⇒ 宿主要能分辨;
-- ⇒ **只有"只看 id"的实现才会把两者混为一谈** —— 那正是要避免的写法。
+- `MatrixExit(0)` 改折叠式后落在**门 -64** (`pc = 0xFFFFFF00`), 而 `(*nullptr)()` 落在 **id 0** (`pc = 0`) —— 两者**连门号都不同**了 (旧钳制式下都是 id 0); 但**判别规则不依赖这一点**: 两段都在 exit 窗口内, 一看三元组就知道;
+- 真的 `MatrixExit(v)` 一定带三元组 (`a1 = rLANG_CONFIG_EXIT_GATE_MAGIC`, `a2 = a0 + a1`, `a3 = rLANG_WORLD_MAGIC`); 而 `(*nullptr)()` 的 `a0..a3` 是**垃圾** ⇒ 宿主要能分辨;
+- ⇒ **只有"只看 id"的实现才会把两者混为一谈** —— 那正是要避免的写法 (现在连"id 相同"这个巧合都不一定有了, 但**不能**因此就省掉三元组检查)。
 
 因此宿主在 `id ∈ [-64, 63]` 上要**分支**(保险起见整个区间都查, 不只 id 0 —— 野生跳转也可能落进这段窗口):
 
@@ -178,11 +197,12 @@ rLANGEXPORT void MatrixExit(int v) {
 
 ⇒ 建议把这张表写进门的注释 —— 它就是"同一 id 上两类调用"的判别规则。
 
-**✅ 已有可运行的验证** (`atomic/ai-doc/checks/interpreter-smoke.cc` **规程十**, 16 项断言, 全过):
+**✅ 已有可运行的验证** (`atomic/tests/interpreter-smoke.cc` **规程十**, 2026-09-18 门号改折叠后 **17 处 `CHECK`**; 改版前 15 处):
 
 - **三段 id 无缝相接**: `[-512,-65]` hyper/用户私有 448 个 + `[-64,63]` exit 128 个 + `[64,511]` 库导出 448 个 = **1024** ⇒ 恰好填满两个 512 槽窗口 (低窗 `pc < 0x800` = id `[0,511]`, 高窗 `pc ≥ 0xFFFFF800` = id `[-512,-1]`) ⇒ "exit 白拿 128 个 id"的真实代价是 0;
 - **128 个门号逐个跑真解释器**: 入口 `pc = 4*v` ⇒ 门号 `id == v` (含 -64/-1/0/63 边界与负数的 32 位回绕), 每例 4 拍;
-- **钳制只作用于门号** (修正后的关键点): `v = 64/-65/1000/-1000/INT_MAX/INT_MIN` 时门号钳到 `63/-64`, 而 **`a0` 仍是完整原值**, 三元组照样匹配;
+- **折叠只作用于门号** (改版后的关键点): `v = 64/-65/127/128/1000/-1000/INT_MAX/INT_MIN` 时门号 = `(v & 0x7f) - 64` (全部落在 `[-64,63]` 内), 而 **`a0` 仍是完整原值**, 三元组照样匹配;
+- **折叠的两条性质**: ① **周期 128** —— `v` 与 `v+128` 必落同一个门号; ② **128 个门号全部可达且均匀** (`v ∈ [-4096,4096]` 逐点验证无越窗; `gate-exit-compat.cc` 另按 8201 点核对每槽命中 `64±4` 次) ⇒ 这正是"更均匀"这条目的的可执行证据;
 - **判别规则本身被测**: 窗口内 + 三元组全中 ⇒ 退出; `(*nullptr)()` 且寄存器全 0 (**同 id 0**) ⇒ 判故障 ⇒ 与 `exit(0)` **确实可区分**; 校验和差 1 / 世界魔数不符 / 落在 id 64 (库导出槽) 都**不**当退出 ⇒ 窗口判定必须在前、且要覆盖整个 `[-64,63]` 而不是只查 id 0;
 - **算术契约被测**: guest 的 `v + kExitMagic` 是 **uint32 加 (会回绕)** ⇒ 宿主必须照抄; 有符号 `a0 + a1` 在 `INT_MIN` 上溢出 (`__builtin_add_overflow` 检出) ⇒ 已作为反面断言钉住。
 
@@ -196,7 +216,7 @@ inline int rLANGAPI rLANG_op_GATE_HyperExit(VM* vmx, int gate) {
   constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;
 
   const int v = vmx->hart_->regs_.a0.iv;
-  const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
+  const int kGate = (v & 0x7f) - 64;      /* 与 guest 同一条折叠式 (2026-09-18 改版) */
   const uint32_t A1 = vmx->hart_->regs_.a1.uv;
   const uint32_t CHK = vmx->hart_->regs_.a2.uv;
   const uint32_t magic = vmx->hart_->regs_.a3.uv;
@@ -214,7 +234,7 @@ inline int rLANGAPI rLANG_op_GATE_HyperExit(VM* vmx, int gate) {
 | 接触点 | guest (`MatrixExit`) | host (`HyperExit`) | 结论 |
 | --- | --- | --- | --- |
 | 哨兵常量 | `kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC` | 同一个宏 | ✓ **单一来源** (两个世界共用一个头, 不会各写一个数; 我上一版文档里手抄的 `0xFEE1DEAD` 已被这个宏取代 —— 见下面第 5 条) |
-| 门号钳制 | `v < -64 ? -64 : v > 63 ? 63 : v` | **同一条表达式**, 且要求 `kGate == gate` | ✓ 一致, 而且比"只查三元组"更严: 还核对了**派发槽位** |
+| 门号折叠 | `(v & 0x7f) - 64` | **同一条表达式**, 且要求 `kGate == gate` | ✓ 一致, 而且比"只查三元组"更严: 还核对了**派发槽位** (折叠后 128 个槽位全部可达, 这条检查因此**覆盖整个窗口**, 不再是"两端夹住"的弱化版) |
 | 校验和 | `v + kExitMagic` (**uint32 加**) | `CHK != v + kExitMagic` (`CHK` 是 `uint32_t` ⇒ `v` 被提升为无符号) | ✓ 同一条无符号算术, **无有符号溢出** |
 | 世界魔数 | `rLANG_WORLD_MAGIC` | 同一个宏 | ✓ |
 | 状态值 | `a0 = **原始 v**` (不钳) | `MatrixExit(v)` 传的也是**原始 v** | ✓ 完整 32 位状态一路到底 (`INT_MIN` 实测通过) |
@@ -239,18 +259,18 @@ inline int rLANGAPI rLANG_op_GATE_HyperExit(VM* vmx, int gate) {
 
 **结论: 可以作为宿主 `op_GATE` 在 `id ∈ [-64,63]` 上的实现直接使用** —— **单层世界**直接可用; **打算做嵌套**时把第 3、4 点里的"结束动作"抽成钩子 (最外层 `exit(v)`, 中间层记为"状态槽 + `0xC8C04E1E`")。建议顺带把门号钳制抽成一个共享的 `inline` (两端现在各写一遍同样的三元表达式), 消除未来各自漂移的可能。
 
-**✅ 相容性本身已有可运行验证**: `atomic/ai-doc/checks/gate-exit-compat.cc` (**20 项断言, 全过**)
+**✅ 相容性本身已有可运行验证**: `atomic/tests/gate-exit-compat.cc` (18 用例 + 门号折叠性质; 门号改折叠后已同步)
 
 ```
-g++ -std=c++17 -Wall -Werror -I <ATOMIC> -o gate-exit-compat.exe \
-    atomic/ai-doc/checks/gate-exit-compat.cc && ./gate-exit-compat.exe
+g++ -std=c++17 -Wall -Werror -I <ROOT> -I <ROOT>/atomic/include -o gate-exit-compat.exe \
+    atomic/tests/gate-exit-compat.cc && ./gate-exit-compat.exe
 ```
 
-做法: 用**真 `hart_t`** 按 **guest 的公式**填寄存器 (门号也按 guest 的钳制表达式算), 交给**真 host 模板**判; 宿主的 `MatrixExit` 用 `longjmp` 截住 (真宿主是 `exit()`, 会直接杀掉测试进程), `rlLoggingWrite` 用最小 stub 顶掉。覆盖:
+做法: 用**真 `hart_t`** 按 **guest 的公式**填寄存器 (门号按 guest 的**折叠表达式** `(v & 0x7f) - 64` 算), 交给**真 host 模板**判; 宿主的 `MatrixExit` 用 `longjmp` 截住 (真宿主是 `exit()`, 会直接杀掉测试进程), `rlLoggingWrite` 用最小 stub 顶掉。覆盖:
 
-- **8 例应退出**: `0 / 42 / -64 / 63` 边界、`1000`(`门号 63, 状态不钳`)、`-1000`(`门号 -64`)、`INT_MIN`(**校验和回绕**)、`INT_MAX`, 以及"状态 = -哨兵 ⇒ `a2` 恰为 `0`"这个易漏边界 (宿主若把 `a2 == 0` 当成"没设置"就会误判);
-- **8 例应判故障**: `(*nullptr)()` (全 0 / 只有哨兵对)、**门号与 `a0` 钳制不符**、负状态走正门号、哨兵错、校验和差 1、世界魔数错 —— 逐例确认返回 `SIGILL` 且**没有**调 `MatrixExit`、且**打了日志**;
-- **钳制表达式**在 `[-3000,3000]` 上与参考实现逐点一致;
+- **11 例应退出**: `0 / 42 / -64 / 63` 边界、`64 / 127 / 128`(折叠的接缝)、`1000`(门号 40)、`-1000`(门号 -40)、`INT_MIN`(低 7 位 0 ⇒ 门号 -64, **校验和回绕**)、`INT_MAX`(门号 63), 以及"状态 = -哨兵 ⇒ `a2` 恰为 `0`"这个易漏边界 (宿主若把 `a2 == 0` 当成"没设置"就会误判);
+- **7 例应判故障**: `(*nullptr)()` (全 0 / 只有哨兵对)、**门号与 `a0` 折叠出的门号不符**、负状态走正门号、哨兵错、校验和差 1、世界魔数错 —— 逐例确认返回 `SIGILL` 且**没有**调 `MatrixExit`、且**打了日志**;
+- **折叠式的三条性质** (2026-09-18 新增): ① 值域恒为 `[-64,63]`; ② 与参考表达式在 `[-4100,4100]` 上逐点一致; ③ **128 个门号全部可达且均匀** (8201 点 ⇒ 每槽 `64±4` 次命中);
 - **有符号校验和的 UB 反面断言** + `INT_MIN` 端到端通过。
 
 ⇒ 本 TU 与 `interpreter-smoke.cc` **规程十** 互补: 规程十验"解释器/门号映射 + 判别规则", 本 TU 验"**两端常量与算术真的对得上**"。两处都已改用 `rLANG_CONFIG_EXIT_GATE_MAGIC`, 不再出现手抄字面量。

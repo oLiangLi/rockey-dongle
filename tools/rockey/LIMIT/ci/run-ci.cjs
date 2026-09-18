@@ -91,6 +91,17 @@ run("x509ext", [harness, "x509ext", "0"]);
 //    注: G1/G3 找不到可用 gpg 时**计为失败**(gpg 缺失时 %G? 会把已签名提交也报成 N ⇒ 假绿), 不 skip。
 failed += require("./gates.cjs").runGates();
 
+// H) atomic (RV32IM 解释器世界) 的宿主侧检查 —— **默认跳过**(用户 2026-09-18 定: 挂在 make ci 但默认跳过;
+//    实现与理由见 tools/rockey/ATOMC/ci/atomic-tests.cjs 头注释):
+//    显式执行: `make test-atomic` 或 `CI_ATOMIC=1 node tools/rockey/ATOMC/ci/atomic-tests.cjs`。
+//    ⚠ 环境缺编译器时 runner 自己输出 SKIP 并返回 0(实测本机 Cygwin 的 g++ 起不来),
+//      所以这里"PASS"里也包含"因环境缺失而跳过"这一情形 —— 明细在该 runner 的输出里。
+if (process.env.CI_ATOMIC === "1") {
+  run("atomic(VM_t 解释器/exit 门/实例化)", [path.join(root, "tools", "rockey", "ATOMC", "ci", "atomic-tests.cjs"), "--force"]);
+} else {
+  console.log("[ci] 跳过 atomic(默认跳过; CI_ATOMIC=1 或 `make test-atomic` 强制执行)");
+}
+
 // 6) TRNG 失败注入自测(需平台构建;缺失则提示)
 const platDir = platformDirOf();
 const trngfailName = isWindowsDir(platDir) ? "__Testing__trngfail__.exe" : "__Testing__trngfail__";

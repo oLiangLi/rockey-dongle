@@ -1,5 +1,5 @@
 #include <base/base.h>
-#include "rv32im-atomic.hpp"
+#include "../include/rv32im-atomic.hpp"
 /* 只为拿 exit 协议的**唯一常量来源** rLANG_CONFIG_EXIT_GATE_MAGIC (2026-09-18 起 hyper.h 定义;
    这里不 hardcode 字面量 —— 之前手抄的 0xFEE1DEAD 已经落后于 rLANG_CONFIG_EXIT_GATE_MAGIC = 0xFEA1DEAD) */
 #include <atomic/op_GATE/hyper/hyper.h>
@@ -462,22 +462,32 @@ int main() {
                crt (start.S) 只是把它的返回值原样交给 MatrixExit:
                  call MatrixExecv      => a0 = 状态
                  tail MatrixExit       => MatrixExit(a0); MatrixExit 是 noreturn => tail 安全
-       guest 侧: atomic/op_GATE/hyper/modules.cc:29-41 —— **只钳门号, 不钳状态**:
+       guest 侧: atomic/op_GATE/hyper/modules.cc:29-41 —— **门号取模折叠, 状态不折叠**:
                  constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;   (值 = 0xFEA1DEAD)
-                 const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
+                 const int kGate = (v & 0x7f) - 64;        (2026-09-18 由"钳制"改为"取模折叠")
                  auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int, uint32_t, uint32_t, uint32_t)>(4 * kGate);
                  for (;;) op_GATE(v, kExitMagic, v + kExitMagic, rLANG_WORLD_MAGIC);
-       真机代码生成 (实测 riscv32-unknown-elf-g++ -O2 -march=rv32im -mabi=ilp32) 与上面逐条对应:
-                 mv a0,s2 (真 v) / slli s0,s0,2 (4*kGate) / a1 = kExitMagic / add a2 = v + kExitMagic /
-                 a3 = 0xC8C04E1F / jalr s0        ⇒ a2 是**无符号加** (单条 add, 不做溢出检查)
-       ⇒ ① a0 带**完整 32 位状态**, 只有**门号**被钳到 [-64,63] (钳制只影响派发, 不影响状态);
+       真机代码生成 (实测 riscv32-unknown-elf-g++ -O2 -march=rv32im -mabi=ilp32; 改动前是 li/bgt/bge 三条比较分支,
+       现在是**无分支**的 andi + addi) 与上面逐条对应:
+                 mv a0,s2 (真 v) / andi s0,s0,127 / addi s0,s0,-64 (门号 = (v & 0x7f) - 64) /
+                 a1 = kExitMagic / add a2 = v + kExitMagic / a3 = 0xC8C04E1F / jalr s0
+                 ⇒ a2 是**无符号加** (单条 add, 不做溢出检查)
+       ⇒ ① a0 带**完整 32 位状态**, 只有**门号**被折叠到 [-64,63] (折叠只影响派发, 不影响状态);
           ② 门号空间 1024 个 id 被三段**无缝瓜分**: [-512,-65] hyper 448 / [-64,63] exit 128 / [64,511] 库导出 448;
-          ③ 本规程验的是**宿主侧**看得到的东西: 门号 id + a0..a3 ⇒ 即"判别规则"本身。
+          ③ 门号 = 状态的**低 7 位** ⇒ 每个门号被无穷多个状态**均匀**命中 (周期 128),
+             不再是"钳制"版那样只有两端两个门号可达;
+          ④ ⚠ **门号不再等于区间内的状态**: 旧钳制式对 `v ∈ [-64,63]` 是**恒等**映射 (`v=0 → 门 0`,
+             所以 `MatrixExit(0)` 必定落在 id 0 —— "nullptr 调用"那套说辞正是靠它), 折叠式不是:
+             `v=0 → 门 -64` / `v=63 → 门 -1` / `v=-64 → 门 0`。⇒ 门号一律用公式算, 别再用"状态就是门号"的直觉
+             (本规程下面的用例已全部改成按公式算; 实测这条在 2026-09-18 曾让 4 个用例算错);
+          ⑤ 本规程验的是**宿主侧**看得到的东西: 门号 id + a0..a3 ⇒ 即"判别规则"本身。
        注: 下面按 guest 的公式填寄存器 (同构复现, 不是跑 guest 机器码 —— 那要真链接 Matrix 映像才能跑,
        见 checks/varargs/ 的 loader 路线)。 */
-    printf("[规程十] exit GATE: 门号钳制 (状态不钳) + 三元组判别 (exit(0) vs (*nullptr)())\n");
+    printf("[规程十] exit GATE: 门号取模折叠 (状态不折叠) + 三元组判别 (exit(0) vs (*nullptr)())\n");
     const int kTo2 = rLANG_ERROR_TIMEDOUT;
-    constexpr int kExitLo = -64, kExitHi = 63;           /* 门号 (派发窗口) 的上下界 */
+    constexpr int kExitLo = -64, kExitHi = 63;           /* 门号 (派发窗口) 的上下界 = 折叠后的值域 */
+    /* guest 的门号折叠 (modules.cc:34 的同一条表达式, 2026-09-18 由钳制改为取模) */
+    auto gateOf = [](int v) -> int { return (v & 0x7f) - 64; };
     constexpr int kHyperHi = -65, kHyperLo = -512;       /* hyper / 用户私有 */
     constexpr int kExportLo = 64, kExportHi = 511;       /* 库导出槽 (JALR 12 位立即数上限) */
     constexpr std::uint32_t kLowTop = 0x800u;            /* pc <  0x800        => 低窗 */
@@ -497,9 +507,11 @@ int main() {
           "负门号靠 32 位回绕走高窗, 且 (int)pc/4 是精确整除 => id 与门号一一对应 (4*(-1) => id -1)");
 
     /* 宿主侧判别规则 (要写进门实现的那段): 窗口内 + 三元组全中 => 正常退出; 否则**不当退出**
-       ⚠ 校验和必须按 **uint32** 加: 状态是任意 int, 有符号加在 INT_MIN 这类值上会溢出 (UB) */
+       ⚠ 校验和必须按 **uint32** 加: 状态是任意 int, 有符号加在 INT_MIN 这类值上会溢出 (UB)
+       ⚠ 捕获列表用 `[&]` (不用隐式捕获): 严格模式编译器不认"未捕获地使用 constexpr 局部量" (MSVC C3493),
+         虽然 C++17 规则允许 —— 写全了在哪都能编 */
     enum { kExit = 0, kNotExitWindow = 1, kBadTriple = 2 };
-    auto hostClassify = [](int id, int a0, std::uint32_t a1, std::uint32_t a2, std::uint32_t a3) -> int {
+    auto hostClassify = [&](int id, int a0, std::uint32_t a1, std::uint32_t a2, std::uint32_t a3) -> int {
       if (id < kExitLo || id > kExitHi) return kNotExitWindow;   /* 整个 [-64,63] 都要查, 不只 id 0 */
       if (a1 != kSentinel) return kBadTriple;
       if (a2 != static_cast<std::uint32_t>(a0) + a1) return kBadTriple;   /* 无符号: 回绕定义良好 */
@@ -507,7 +519,7 @@ int main() {
       return kExit;
     };
     /* guest modules.cc:38 的三个实参 (按同一条公式复现) */
-    auto guestArgs = [](int v, int* a0, std::uint32_t* a1, std::uint32_t* a2, std::uint32_t* a3) {
+    auto guestArgs = [&](int v, int* a0, std::uint32_t* a1, std::uint32_t* a2, std::uint32_t* a3) {
       *a0 = v;
       *a1 = kSentinel;
       *a2 = static_cast<std::uint32_t>(v) + kSentinel;
@@ -531,25 +543,39 @@ int main() {
     CHECK(badCases == 0,
           "128 个门号全部实测: pc = 4*v 被认成**门 v**, 三元组匹配 => 宿主判正常退出且状态 == v (每例 4 拍)");
 
-    /* (c) **钳制只作用于门号**: 越界状态照旧从 a0 完整带出 (修正后的语义; 旧版把状态也钳成 7 位) */
-    const int kExtremes[] = {kExitHi + 1, kExitLo - 1, 1000, -1000, 0x7FFFFFFF,
+    /* (c) **折叠只作用于门号**: 任意状态照旧从 a0 完整带出, 门号 = `(v & 0x7f) - 64`
+       (2026-09-18: 门号由"钳制到两端"改为"按低 7 位折叠" ⇒ 端到端也走真解释器, 不只是算术核对) */
+    const int kExtremes[] = {kExitHi + 1, kExitLo - 1, kExitHi + 2, 127, 128, 1000, -1000, 0x7FFFFFFF,
                              static_cast<int>(0x80000000u), -1, 0};
-    int clampBad = 0;
+    int wrapBad = 0;
     for (int v : kExtremes) {
-      const int expectId = v < kExitLo ? kExitLo : v > kExitHi ? kExitHi : v;   /* guest 的 kGate */
+      const int expectId = gateOf(v);                          /* guest 的 kGate */
       Impl vm; Impl::hart_t h{};
       int a0v = 0; std::uint32_t a1v = 0, a2v = 0, a3v = 0;
       guestArgs(v, &a0v, &a1v, &a2v, &a3v);
       h.regs_.a0.iv = a0v; h.regs_.a1.uv = a1v; h.regs_.a2.uv = a2v; h.regs_.a3.uv = a3v;
       h.regs_.ra.uv = Mem::kBase;
-      h.Enable(static_cast<std::uint32_t>(4 * expectId));     /* 钳制后的门号 */
+      h.Enable(static_cast<std::uint32_t>(4 * expectId));     /* 折叠后的门号 */
       const int r = vm.Execv(&h, 1);
-      if (r != kTo2 || vm.gate_calls != 1 || vm.gate_last_id != expectId || h.cyc_ != 4) { ++clampBad; continue; }
-      if (h.regs_.a0.iv != v) ++clampBad;                     /* a0 = **真值**, 未被钳 */
-      if (hostClassify(expectId, h.regs_.a0.iv, h.regs_.a1.uv, h.regs_.a2.uv, h.regs_.a3.uv) != kExit) ++clampBad;
+      if (r != kTo2 || vm.gate_calls != 1 || vm.gate_last_id != expectId || h.cyc_ != 4) { ++wrapBad; continue; }
+      if (h.regs_.a0.iv != v) ++wrapBad;                     /* a0 = **真值**, 未被折叠 */
+      if (hostClassify(expectId, h.regs_.a0.iv, h.regs_.a1.uv, h.regs_.a2.uv, h.regs_.a3.uv) != kExit) ++wrapBad;
     }
-    CHECK(clampBad == 0,
-          "越界状态只影响门号 (钳到 63/-64), a0 仍是完整原值: 64/-65/1000/-1000/INT_MAX/INT_MIN 逐个验证");
+    CHECK(wrapBad == 0,
+          "越界状态只影响门号 (折叠进 [-64,63]), a0 仍是完整原值: 64/-65/127/128/1000/-1000/INT_MAX/INT_MIN 逐个走真解释器");
+
+    /* (c2) **周期 128**: 状态每 +128 门号回到同一个槽 (取模折叠的直接推论; 钳制版没有这条) */
+    int periodBad = 0, allGates = 0;
+    bool hit[128] = {false};
+    for (int v = -4096; v <= 4096; ++v) {
+      const int g = gateOf(v);
+      if (g != gateOf(v + 128)) ++periodBad;                 /* v 与 v+128 同门号 */
+      if (g >= kExitLo && g <= kExitHi) { hit[g - kExitLo] = true; }
+      else ++periodBad;                                      /* 绝不允许落出窗口 */
+    }
+    for (int i = 0; i < 128; ++i) if (hit[i]) ++allGates;
+    CHECK(periodBad == 0 && allGates == 128,
+          "折叠周期 = 128 且 128 个门号**全部可达** (v ∈ [-4096,4096]: 每个槽位都被真实状态命中, 无越窗)");
 
     /* (d) exit(0) 与真正的 (*nullptr)() —— 同 id 0, 靠**参数**区分 (用户 2026-09-18 的核心澄清) */
     CHECK(hostClassify(0, 0, kSentinel, 0u + kSentinel, kMagic) == kExit,
@@ -571,17 +597,20 @@ int main() {
           "世界魔数不符 => 拒 (顺带排除\"另一个世界的 exit 门\")");
 
     /* (e) 校验和的**算术契约**: guest 用 uint32 加 (会回绕) ⇒ 宿主必须照抄, 不能用有符号 int */
-    int signedSum = 0;
-    const bool hostSignedOverflow =
-        __builtin_add_overflow(static_cast<int>(0x80000000u), static_cast<int>(kSentinel), &signedSum);
-    CHECK(hostSignedOverflow,
+    /* 溢出判据**不用** `__builtin_add_overflow` (GCC/clang 专属): 写成可移植的 int64 宽算 + 回代,
+       这样 MSVC 等严格编译器也能编 (本检查的存在意义之一就是"在哪都能编") */
+    auto addOverflowsInt = [](int a, int b) -> bool {
+      const std::int64_t wide = static_cast<std::int64_t>(a) + static_cast<std::int64_t>(b);
+      return wide != static_cast<std::int64_t>(static_cast<int>(wide));   /* 回代后不等 => int 装不下 */
+    };
+    CHECK(addOverflowsInt(static_cast<int>(0x80000000u), static_cast<int>(kSentinel)),
           "状态可为任意 int => 宿主若用**有符号** int 算 a0 + a1, 在 INT_MIN 这类状态上就溢出 (UB) => 必须 uint32");
-    int wrapBad = 0;
+    int sumBad = 0;
     for (int v : kExtremes) {
       const std::uint32_t a2v = static_cast<std::uint32_t>(v) + kSentinel;   /* guest 的那条无符号加 */
-      if (hostClassify(0, v, kSentinel, a2v, kMagic) != kExit) ++wrapBad;
+      if (hostClassify(0, v, kSentinel, a2v, kMagic) != kExit) ++sumBad;
     }
-    CHECK(wrapBad == 0,
+    CHECK(sumBad == 0,
           "uint32 回绕加回验对**任意** 32 位状态都成立 (含 INT_MIN/INT_MAX/±1000) => 宿主照此实现即可");
   }
   printf("\n%s (failures=%d)\n", failures ? "有失败" : "全部通过", failures);

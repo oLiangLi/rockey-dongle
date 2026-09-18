@@ -1,4 +1,4 @@
-﻿wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
+wORLD_ROOT := $(patsubst %/,%,$(dir $(lastword $(MAKEFILE_LIST))))
 ##
 ## 子模块守卫: base/ 与 Build/ 已改为 git submodule; 未初始化时给出可操作提示
 ## (非致命 —— 否则 install-hooks 等目标会被挡住; 真正的构建会在缺文件时报错)
@@ -20,7 +20,7 @@ TSC ?= $(if $(wildcard $(wORLD_ROOT)/node_modules/.bin/tsc),$(wORLD_ROOT)/node_m
 .PHONY : wasm cygwin linux aarch64-linux windows all-platform bootstrap install install-platform
 .PHONY : clean-wasm clean-cygwin clean-linux clean-aarch64-linux clean-windows clean-all-platform
 .PHONY : typescript typescript0 docker all-docker dongle clean-dongle foobar clean-foobar sec-bin stack-check rockey-stack-check jsWrapper
-.PHONY : ci test install-hooks test-optmatrix test-web atomic
+.PHONY : ci test install-hooks test-optmatrix test-web test-atomic atomic
 
 ##
 ## default build Release version ...
@@ -212,6 +212,17 @@ test-optmatrix:
 ##
 test-web:
 	$(X4C_NODE) tools/rockey/LIMIT/ci/web-emutests.cjs
+
+##
+## atomic (RV32IM 解释器世界) 的宿主侧检查 —— atomic/tests/{instantiate,interpreter-smoke,gate-exit-compat,exit-gate-map}.cc
+## 只依赖宿主 C++ 编译器 (g++ / clang++), **不需要** rv32im 交叉工具链; 见 tools/rockey/ATOMC/ci/atomic-tests.cjs
+## 本目标=**强制执行**(显式带上 --force, 即 CI_ATOMIC=1 的等价写法, 不受"make ci 默认跳过"影响);
+## 环境缺编译器时 runner 输出 SKIP 并返回 0(不算失败)。
+## 说明: `make ci` 里默认不跑(见 run-ci.cjs 的 H 段), 因为 .githooks 会在每次提交后自动跑 make ci。
+## 未接线的两项: ai-doc/checks/varargs (需 rv32im 交叉工具链) / doc/isa-check.cc (需宿主板级)。
+##
+test-atomic:
+	$(X4C_NODE) tools/rockey/ATOMC/ci/atomic-tests.cjs --force
 
 ##
 ##

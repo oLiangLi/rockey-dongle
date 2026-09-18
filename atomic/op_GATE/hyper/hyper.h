@@ -66,7 +66,7 @@ inline int rLANGAPI rLANG_op_GATE_HyperExit(VM* vmx, int gate) {
   constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;
 
   const int v = vmx->hart_->regs_.a0.iv;
-  const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
+  const int kGate = (int)((uint32_t)v & 0x7fu) - 64;
   const uint32_t A1 = vmx->hart_->regs_.a1.uv;
   const uint32_t CHK = vmx->hart_->regs_.a2.uv;
   const uint32_t magic = vmx->hart_->regs_.a3.uv;

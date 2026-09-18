@@ -31,7 +31,7 @@ rLANGEXPORTWEAK void MatrixExit(int v) {
   exit(v);
 #else /* rLANG_CONFIG_MATRIX_WORLD */
   constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;
-  const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
+  const int kGate = (int)((uint32_t)v & 0x7fu) - 64;
 
   auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int A0, uint32_t A1, uint32_t CHK, uint32_t magic)>(4 * kGate);
   for(;;) {
