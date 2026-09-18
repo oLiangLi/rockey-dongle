@@ -24,6 +24,8 @@ rLANG_DECLARE_MACHINE
 
 namespace dongle {
 
+using DWORD = Dongle::DWORD;
+
 #if !defined(__RockeyARM__)
 /*!
  * 精密时钟 / 实时优先级(测量"心跳误差"用; 由 RLANG_PRECISE_CLOCK=1 开启):
