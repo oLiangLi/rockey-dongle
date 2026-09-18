@@ -1,5 +1,8 @@
 #include <base/base.h>
 #include "rv32im-atomic.hpp"
+/* 只为拿 exit 协议的**唯一常量来源** rLANG_CONFIG_EXIT_GATE_MAGIC (2026-09-18 起 hyper.h 定义;
+   这里不 hardcode 字面量 —— 之前手抄的 0xFEE1DEAD 已经落后于 rLANG_CONFIG_EXIT_GATE_MAGIC = 0xFEA1DEAD) */
+#include <atomic/op_GATE/hyper/hyper.h>
 #include <cstdio>
 #include <cstdint>
 
@@ -460,12 +463,12 @@ int main() {
                  call MatrixExecv      => a0 = 状态
                  tail MatrixExit       => MatrixExit(a0); MatrixExit 是 noreturn => tail 安全
        guest 侧: atomic/op_GATE/hyper/modules.cc:29-41 —— **只钳门号, 不钳状态**:
-                 constexpr uint32_t kExitMagic = 0xFEE1DEAD;
+                 constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;   (值 = 0xFEA1DEAD)
                  const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
                  auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int, uint32_t, uint32_t, uint32_t)>(4 * kGate);
                  for (;;) op_GATE(v, kExitMagic, v + kExitMagic, rLANG_WORLD_MAGIC);
        真机代码生成 (实测 riscv32-unknown-elf-g++ -O2 -march=rv32im -mabi=ilp32) 与上面逐条对应:
-                 mv a0,s2 (真 v) / slli s0,s0,2 (4*kGate) / a1 = 0xFEE1DEAD / add a2 = v + 0xFEE1DEAD /
+                 mv a0,s2 (真 v) / slli s0,s0,2 (4*kGate) / a1 = kExitMagic / add a2 = v + kExitMagic /
                  a3 = 0xC8C04E1F / jalr s0        ⇒ a2 是**无符号加** (单条 add, 不做溢出检查)
        ⇒ ① a0 带**完整 32 位状态**, 只有**门号**被钳到 [-64,63] (钳制只影响派发, 不影响状态);
           ② 门号空间 1024 个 id 被三段**无缝瓜分**: [-512,-65] hyper 448 / [-64,63] exit 128 / [64,511] 库导出 448;
@@ -479,7 +482,7 @@ int main() {
     constexpr int kExportLo = 64, kExportHi = 511;       /* 库导出槽 (JALR 12 位立即数上限) */
     constexpr std::uint32_t kLowTop = 0x800u;            /* pc <  0x800        => 低窗 */
     constexpr std::uint32_t kHighBot = 0xFFFFF800u;      /* pc >= 0xFFFFF800   => 高窗 (4*(-512)) */
-    constexpr std::uint32_t kSentinel = 0xFEE1DEADu;     /* guest: kExitMagic */
+    constexpr std::uint32_t kSentinel = static_cast<std::uint32_t>(rLANG_CONFIG_EXIT_GATE_MAGIC);  /* guest: kExitMagic */
     constexpr std::uint32_t kMagic = static_cast<std::uint32_t>(rLANG_WORLD_MAGIC);
 
     /* (a) 三段 id 无缝相接 + 两侧窗口槽数对得上 (纯算术, 不需要跑 VM) */

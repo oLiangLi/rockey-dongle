@@ -750,7 +750,7 @@ int main(int argc, char* argv[]) {
    *! !!! 1) 任何出现在ukey之外的信息都是众所周知的, 即使是在可信设备下输入的PIN码, 都必须被日志记录
    *! !!!
    */
-  rlLOGI(TAG, "ZION.Execv argc: %d", argc);
+  rlLOGI(TAG, "ZION[0].Execv argc: %d", argc);
   for (int i = 0; i < argc; ++i) {
     rlLOGI(TAG, "  argv[%d/%d] : %s", i, argc, argv[i]);
   }

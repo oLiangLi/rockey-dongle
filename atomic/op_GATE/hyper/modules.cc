@@ -26,11 +26,11 @@ rLANGEXPORT const op_GATE_export_t* rLANG_op_GATE_HyperExports(void) {
   return op_GATE__kExports;
 }
 
-rLANGEXPORT void MatrixExit(int v) {
+rLANGEXPORTWEAK void MatrixExit(int v) {
 #ifndef rLANG_CONFIG_MATRIX_WORLD
   exit(v);
 #else /* rLANG_CONFIG_MATRIX_WORLD */
-  constexpr uint32_t kExitMagic = 0xFEE1DEAD;
+  constexpr uint32_t kExitMagic = rLANG_CONFIG_EXIT_GATE_MAGIC;
   const int kGate = v < -64 ? -64 : v > 63 ? 63 : v;
 
   auto* op_GATE = reinterpret_cast<void(rLANGAPI*)(int A0, uint32_t A1, uint32_t CHK, uint32_t magic)>(4 * kGate);
