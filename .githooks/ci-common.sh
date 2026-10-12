@@ -18,6 +18,15 @@ last=".git/rlang-ci-last"
 head="$(git rev-parse HEAD 2>/dev/null)"
 [ "$(cat "$last" 2>/dev/null)" = "$head" ] && { echo "[ci-hook] $head 已跑过, 跳过"; exit 0; }
 
+## 关键(GNUPGHOME 的形态, 2026-10-12 定位): MSYS2 会把 POSIX 形态的 GNUPGHOME(本机 /c/Users/liangli/.gnupg)
+## 转成 Windows 形态 C:/Users/liangli/.gnupg 再交给原生 node, 而 Git 自带的 gpg 会把后者当**相对路径**:
+##   gpg: Fatal: can't create directory '<cwd>/C:/Users/liangli/.gnupg'    (退出码 2)
+## ⇒ G1 报"执行失败"; %G? 对全部提交报 N(实测 311 条, 其中 110 条带 gpgsig) ⇒ G3 的防假绿判据命中
+## ⇒ 钩子自动 CI 假红 failed=2(从普通 PowerShell 跑 make ci 则全绿)。排除本变量即保持 POSIX 形态。
+## 实测: 不排除 5/5 失败; 排除后 5/5 通过(单独只加本行 3/3 通过); 只把 RKEY_GPG 固定成 Git 的 gpg 无效(3/3 仍失败)。
+## 保留调用方已有的排除项。
+export MSYS2_ENV_CONV_EXCL="${MSYS2_ENV_CONV_EXCL:+$MSYS2_ENV_CONV_EXCL;}GNUPGHOME"
+
 echo "[ci-hook] post-merge/post-commit: 自动 CI 快速回归 @ $head ..."
 node tools/rockey/LIMIT/ci/run-ci.cjs
 rc=$?

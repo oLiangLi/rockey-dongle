@@ -115,9 +115,18 @@ rfkill list; ip -brief link; lsblk -o NAME,TYPE,TRAN,MOUNTPOINT; ls /dev/ttyUSB*
     历史 8 条（2026-09-03~07）在册保留，不回填。**本文件也在扫描范围内。**
   - **G3** 带签名的提交必须为 `Good`；在册例外 1 条（2024-08-30 Gitee 代提交，本地缺上游 RSA 公钥）。
   - **G4** `Interface/aginx.h` 的署名行**恰出现 1 次**，无 `TODO: 待用户提供…` 占位，C / C++ 两分支宏齐备。
-- 自动钩子：`.githooks/post-commit`（及 `post-merge`）只在信息以 `Squashed commit of the following:` 开头时跑 CI，
-  按 HEAD 去重（`.git/rlang-ci-last`），**默认非阻塞**（`CI_STRICT=1` 才非零退出）；`CI_SKIP_RUN=1` 跳过。
-  `make install-hooks` 设 `core.hooksPath=.githooks`。
+- 自动钩子：`post-commit` 只在信息以 `Squashed commit of the following:` 开头时跑 CI；**`post-merge` 无条件跑**
+  （任何 merge，含 `--ff-only`）。两者都按 HEAD 去重（`.git/rlang-ci-last`）、**默认非阻塞**（`CI_STRICT=1` 才非零退出）；
+  `CI_SKIP_RUN=1` 跳过；`make install-hooks` 设 `core.hooksPath=.githooks`。
+- **钩子环境下 G1/G3 假红（2026-10-12 定位，实测修法）**：从 Git 的 `sh` 触发钩子时，MSYS2 会把 `GNUPGHOME`
+  （本机为 `/c/Users/liangli/.gnupg`）**转换成 Windows 形态** `C:/Users/liangli/.gnupg` 后再传给原生 `node`；
+  Git 自带的 gpg 随后把它当**相对路径** ⇒ `gpg: Fatal: can't create directory '<cwd>/C:/Users/liangli/.gnupg'`、
+  退出码 2 ⇒ `G1` 报"执行失败"；`%G?` 由此对 311 条全报 `N`（其中 110 条带 `gpgsig`）⇒ `G3` 的防假绿判据命中而
+  FAIL（`failed=2`）。**从普通 PowerShell 跑 `make ci` 一切正常**（值保持 POSIX 形态），所以这是钩子路径的
+  **环境缺陷，不是内容回归** —— 按"在哪一侧跑"给结论，不要据此改源码。
+  最小修法（实测：基线 5/5 失败 ⇒ 加此项 5/5 通过；单独只加此项 3/3 通过）：
+  在 `.githooks/ci-common.sh` 里 `export MSYS2_ENV_CONV_EXCL=GNUPGHOME`。
+  单独把 `RKEY_GPG` 固定成 Git 的 gpg **无效**（3/3 仍失败）—— 要治的是 `GNUPGHOME` 的形态，不是选哪个 gpg。
 - 常用目标：`make test-optmatrix`（-O0..-O3 密码学门禁，慢）、`make test-web`（需本机 Chrome）、
   `make test-atomic`（宿主 C++ 检查，缺编译器则 SKIP）、`make stack-check` / `make rockey-stack-check BUDGET=4096`、
   `make jsWrapper`、`make dongle`、`make windows|linux|wasm`。
