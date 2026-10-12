@@ -14,4 +14,6 @@ $(call build-library)
 ##
 ifeq ("$(X4C_ARCH)-$(X4C_BUILD)","rv32im-rockey")
 -include $(LOCAL_PATH)/*/xModule.mk
+else  ## rv32im-rockey
+include $(LOCAL_PATH)/op_GATE/xModule.mk
 endif ## rv32im-rockey

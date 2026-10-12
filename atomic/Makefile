@@ -71,8 +71,8 @@ wORLD_BOARD_MAKE := \
 ## 手工添加需要编译到 atomic 的模块 ...
 ##
 X4C_BUILD_MODULE := \
-	$(wORLD_REAL_ROOT)/base/xModule.mk \
-	$(wORLD_REAL_ROOT)/atomic/xModule.mk
+	$(wORLD_ROOT)/base/xModule.mk \
+	$(wORLD_ROOT)/atomic/xModule.mk
 
 ##
 ##

@@ -1,18 +1,21 @@
-ifeq ("$(X4C_BUILD)","emscripten")
+﻿ifeq ("$(X4C_BUILD)","emscripten")
 
 LOCAL_PATH := $(my-dir)
 
 $(call clear-local-vars)
 LOCAL_MODULE := Script
 
-SCRIPT_SCENARIO_DECLARE := $(LOCAL_PATH)/grammar/dongle.sc
-SCRIPT_SCENARIO_SOURCE  := $(LOCAL_PATH)/grammar/dongle.ts
+##
+##SCRIPT_SCENARIO_DECLARE := $(LOCAL_PATH)/grammar/dongle.sc
+##SCRIPT_SCENARIO_SOURCE  := $(LOCAL_PATH)/grammar/dongle.ts
+##$(eval $$(LOCAL_MODULE)-prepare : $$(SCRIPT_SCENARIO_SOURCE))
+##$(SCRIPT_SCENARIO_SOURCE): $(SCRIPT_SCENARIO_DECLARE)
+##	$(hide) $(X4C_NODE) $(wORLD_ROOT)/Build/tools/script/scenario.cjs $<  \
+##	  --output-ts-file=$(SCRIPT_SCENARIO_SOURCE)
+##	$(hide) touch $@
+##
 
-$(eval $$(LOCAL_MODULE)-prepare : $$(SCRIPT_SCENARIO_SOURCE))
-$(SCRIPT_SCENARIO_SOURCE): $(SCRIPT_SCENARIO_DECLARE)
-	$(hide) $(X4C_NODE) $(wORLD_ROOT)/Build/tools/script/scenario.cjs $<  \
-	  --output-ts-file=$(SCRIPT_SCENARIO_SOURCE)
-	$(hide) touch $@
+LOCAL_SCENARIO_TS_FILE := $(LOCAL_PATH)/grammar/dongle.ts
 
 LOCAL_BUILD_OPTIMIZE_FLAGS := -Oz
 
