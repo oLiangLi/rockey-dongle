@@ -21,7 +21,10 @@ function run(name, args, opts = {}) {
   const env = { ...process.env, ...(opts.env || {}) };
   const r = spawnSync(process.execPath, args, { cwd: root, encoding: "utf8", env, timeout: opts.timeout || 1200000 });
   const ok = r.status === 0 && !r.error;
-  console.log(`[ci] ${ok ? "PASS" : "FAIL"} ${name}${r.status === null ? " (timeout/killed)" : ""}`);
+  /* "起不来"(r.error: ENOENT/EACCES/EPERM…)与"真超时"(status===null 且无 error)必须分开报,
+   * 否则真因被 "(timeout/killed)" 掩盖 —— 实测 trngfail 因 ENOENT 在 2ms 内被判"超时"。 */
+  const why = r.error ? ` (${r.error.code})` : r.status === null ? " (timeout/killed)" : "";
+  console.log(`[ci] ${ok ? "PASS" : "FAIL"} ${name}${why}`);
   if (!ok) {
     ++failed;
     const tail = ((r.stdout || "") + (r.stderr || "")).split(/\r?\n/).filter(Boolean).slice(-14).join("\n  ");
@@ -102,21 +105,27 @@ if (process.env.CI_ATOMIC === "1") {
   console.log("[ci] 跳过 atomic(默认跳过; CI_ATOMIC=1 或 `make test-atomic` 强制执行)");
 }
 
-// 6) TRNG 失败注入自测(需平台构建;缺失则提示)
+// 6) TRNG 失败注入自测(需**宿主平台**构建;缺失则提示)
+// 可执行名与构建提示一律按**宿主**判定, 不按产物目录名 —— Windows 只能跑 .exe, Linux 只能跑无扩展名。
+// 目录名判据一旦与宿主不符(如 CI_PLATFORM 指到异构产物目录), 就会拿 ELF 当 .exe spawn ⇒ ENOENT 假红。
+const hostWindows = process.platform === "win32";
 const platDir = platformDirOf();
-const trngfailName = isWindowsDir(platDir) ? "__Testing__trngfail__.exe" : "__Testing__trngfail__";
+const trngfailName = hostWindows ? "__Testing__trngfail__.exe" : "__Testing__trngfail__";
 const trngfail = path.join(root, ".bin", platDir, trngfailName);
 if (fs.existsSync(trngfail)) {
   const r = spawnSync(trngfail, [], { cwd: root, encoding: "utf8", timeout: 120000 });
   const ok = r.status === 0 && !r.error;
-  console.log(`[ci] ${ok ? "PASS" : "FAIL"} trngfail${r.status === null ? " (timeout)" : ""}`);
+  /* 区分"起不来"(r.error)与"真超时"(status===null 且无 error) */
+  const why = r.error ? ` (${r.error.code})` : r.status === null ? " (timeout)" : "";
+  console.log(`[ci] ${ok ? "PASS" : "FAIL"} trngfail${why}`);
   if (!ok) {
     ++failed;
     const tail = ((r.stdout || "") + (r.stderr || "")).split(/\r?\n/).filter(Boolean).slice(-8).join("\n  ");
     if (tail) console.log(`[ci]   ...${tail}`);
+    if (r.error) console.log(`[ci]   spawn 失败: ${r.error.message}`);
   }
 } else {
-  const buildCmd = isWindowsDir(platDir) ? "make windows" : "make linux";
+  const buildCmd = hostWindows ? "make windows" : "make linux";
   const m = `[ci] 跳过 trngfail: 未构建(${path.relative(root, trngfail)}), 先 ${buildCmd}`;
   if (strict) {
     console.error(m);
@@ -124,10 +133,6 @@ if (fs.existsSync(trngfail)) {
   } else {
     console.log(m);
   }
-}
-
-function isWindowsDir(dir) {
-  return /windows/.test(dir || "");
 }
 
 function platformDirOf() {
@@ -139,13 +144,16 @@ function platformDirOf() {
     : [];
   const want = process.env.CI_PLATFORM;
   if (want && dirs.includes(want)) return want;
-  // 优先"本机架构 + 宿主平台", 其次宿主平台, 再退回任一 windows/linux 产物
+  /* 只接受"宿主平台"的产物目录 —— 目录名形如 <arch>[-<board>]-<platform>-<conf>(Build/core/common.mk:
+   * X4C_MAKE_SUBDIR)。兜底**必须带宿主守卫**: 否则 Windows 宿主在只有 linux 产物时会挑中
+   * amd64-linux-release, 再把 ELF 当 .exe 去 spawn(实测 ENOENT) ⇒ trngfail 假红;
+   * 而按设计那本该走"未构建 ⇒ 跳过/提示 make windows"。 */
+  const ofHost = (d) => d.split("-").includes(host);
+  // 优先"本机架构 + 宿主平台", 其次宿主平台的 release, 再次任一宿主平台产物, 最后空(⇒ 走"未构建"分支)
   return (
     dirs.find((d) => d.startsWith(`${arch}-${host}-`)) ||
-    dirs.find((d) => new RegExp(`-${host}-release$`).test(d)) ||
-    dirs.find((d) => /windows-release$/.test(d)) ||
-    dirs.find((d) => /linux-release$/.test(d)) ||
-    dirs[0] ||
+    dirs.find((d) => ofHost(d) && d.endsWith("-release")) ||
+    dirs.find(ofHost) ||
     ""
   );
 }
