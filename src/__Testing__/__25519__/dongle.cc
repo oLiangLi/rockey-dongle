@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <base/base.h>
 
 rLANG_DECLARE_MACHINE
@@ -1092,6 +1092,20 @@ static void fe_cswap(fe f, fe g, unsigned int b) {
   }
 }
 
+/* Replace f with g if b == 1;
+ * leave f unchanged if b == 0.
+ *
+ * Preconditions: b in {0,1}. 与 fe_cswap 同一写法(全按位运算, 无秘密相关分支/访存)。 */
+static void fe_cmov(fe f, const fe g, unsigned int b) {
+  size_t i;
+  b = 0 - b;
+  for (i = 0; i < 10; i++) {
+    int32_t x = f[i] ^ g[i];
+    x &= b;
+    f[i] ^= x;
+  }
+}
+
 
 /* h = f * 121666
  * Can overlap h with f.
@@ -1364,27 +1378,34 @@ static void ge_1(ge_p3* r) {
   FE_INIT(r->T, 28827062, -6116119, -27349572, 244363, 8635006, 11264893, 19351346, 13413597, 16611511, -6414980);
 }
 
+/* 常数时间标量乘(M-01, 2026-10-29, 与 Interface/curve25519.cc 同步): 旧实现逐位 `if (bit)` 分支,
+ * 且 `if (!init)` 的空转次数 = k 的前导零个数 ⇒ 泄露标量最高置位位位置。现改为"恒算 R+A 到 T,
+ * 再按 0/1 掩码条件搬运"; 运算量不变(每步仍 1 次 ge_add), 因此不再需要 init。
+ * R 与 point 允许同一(ge_scalarmult_base 的 ge_scalarmult(h, a, h) 用法) ⇒ 先把 point 快照下来。
+ * 本模块只跑 RFC8032 公开向量, 但保持与生产实现一致, 免得上限审计再报同一处。 */
 static void ge_scalarmult(ge_p3* R, const uint8_t k[32], const ge_p3* point) {
-  bool init = false;
-  ge_p3 T = *point, A = *point;
+  ge_p3 T, A;
+
+  A = *point; /* 先快照: R 可能与 point 相同 */
+
+  /* R 起点 = 中性元(合法点: X=0, Y=1, Z=1, T=0) */
+  fe_0(R->X);
+  fe_1(R->Y);
+  fe_1(R->Z);
+  fe_0(R->T);
 
   for (int i = 0;; ++i) {
-    const bool bit = k[i / 8] & (1 << (i % 8));
-    if (bit) {
-      if (!init) {
-        *R = A;
-        init = true;
-      } else {
-        ge_add(R, R, &A);
-      }
-    } else {
-      ge_add(&T, &T, &A);
-    }
+    const unsigned int bit = (unsigned int)((k[i >> 3] >> (i & 7)) & 1);
+    ge_add(&T, R, &A); /* 每一位都算, 不走秘密分支 */
+    fe_cmov(R->X, T.X, bit);
+    fe_cmov(R->Y, T.Y, bit);
+    fe_cmov(R->Z, T.Z, bit);
+    fe_cmov(R->T, T.T, bit);
 
     if (i == 254)
       break;
     ge_dbl(&A, &A);
-  }  
+  }
 }
 
 /* h = a * B

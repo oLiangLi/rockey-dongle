@@ -148,6 +148,11 @@ rfkill list; ip -brief link; lsblk -o NAME,TYPE,TRAN,MOUNTPOINT; ls /dev/ttyUSB*
   `amd64-linux-release/__Testing__trngfail__`（ELF，无 `.exe`），Windows 上 `spawnSync` 2ms 内
   `status=null + ENOENT`，被上层写成 `(timeout)` ⇒ `make ci` 报 `failed=1` 的**假红**；
   同一 HEAD 在 WSL 下该文件是原生可执行的 ⇒ `failed=0`。
+- **`.bin/<config>` 产物目录不能跨宿主混用（`.d` 依赖文件不可移植，2026-10-29 实测）**：Windows/Cygwin 下的编译器
+  把 `.d` 的前置依赖写成 `atomic\op_GATE\hyper\modules.cc`（反斜杠），POSIX 侧 make 会把整串当成**一个文件名**
+  ⇒ 报 `No rule to make target 'atomic\op_GATE\hyper\modules.cc'` 这类**假缺失**（文件其实在、而且已跟踪）；
+  反向亦然（WSL 构建的 `.d` 里带 `/mnt/x/...` 绝对路径，Cygwin 侧同样报假缺失）。
+  **换宿主构建同一 config 之前必须先 `make clean-<config>`**（如 `make clean-wasm`），否则会把增量状态当代码错误查。
 - **受限沙箱 / 无 TTY 环境下**：Cygwin 的 `make`/`bash` 可能起不来（`NtCreateDirectoryObject ... 0xC0000022`），
   Node 的 `child_process` 管道式 `spawn` 可能 `EPERM`。表现为**整批 `FAIL (timeout/killed)`** ——
   这是环境假象，不是代码问题。处理：提权后运行，或改跑底层 node 入口 / 用 `stdio: inherit` 拆分；

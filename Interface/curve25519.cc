@@ -1,4 +1,4 @@
-﻿#include <Interface/dongle.h>
+#include <Interface/dongle.h>
 #include <base/base.h>
 
 rLANG_DECLARE_MACHINE
@@ -1092,6 +1092,20 @@ static void fe_cswap(fe f, fe g, unsigned int b) {
   }
 }
 
+/* Replace f with g if b == 1;
+ * leave f unchanged if b == 0.
+ *
+ * Preconditions: b in {0,1}.
+ *
+ * 与 fe_cswap 同一写法(全按位运算, 无秘密相关分支/访存), 供常数时间标量乘做点位条件搬运。 */
+static void fe_cmov(fe f, const fe g, unsigned int b) {
+  size_t i;
+  b = 0 - b;
+  for (i = 0; i < 10; i++) {
+    f[i] ^= b & (f[i] ^ g[i]);
+  }
+}
+
 /* h = f * 121666
  * Can overlap h with f.
  *
@@ -1530,6 +1544,15 @@ struct Helper {
     ge_p1p1_to_p3(r, &p1p1);
   }
 
+  /* r = (b == 1) ? p : r  (常数时间; r 与 p 可同一)
+   * Preconditions: b in {0,1} */
+  void ge_cmov(ge_p3* r, const ge_p3* p, unsigned int b) {
+    fe_cmov(r->X, p->X, b);
+    fe_cmov(r->Y, p->Y, b);
+    fe_cmov(r->Z, p->Z, b);
+    fe_cmov(r->T, p->T, b);
+  }
+
   /* G */
   void ge_1(ge_p3* r) {
     FE_INIT(r->X, -14297830, -7645148, 16144683, -16471763, 27570974, -2696100, -26142465, 8378389, 20764389, 8758491);
@@ -1539,27 +1562,32 @@ struct Helper {
     FE_INIT(r->T, 28827062, -6116119, -27349572, 244363, 8635006, 11264893, 19351346, 13413597, 16611511, -6414980);
   }
 
+  /**
+   *! 常数时间标量乘(M-01, 2026-10-12): 旧实现逐位 `if (bit)` 分支, 且 `if (!init)` 的空转次数
+   *! 恰等于 k 的前导零个数 ⇒ **泄露最高置位位位置**。Sign 的 nonce 与 ComputePubkey 的 az 都走
+   *! 这条 base 点路径, nonce 的任意位泄露都可经格攻击恢复私钥 ⇒ 必须消掉秘密相关分支。
+   *! 现改为"恒算 R+A 到 T, 再按 0/1 掩码条件搬运": 每步仍 1 次 ge_add、共 255 步(旧实现零位走
+   *! dummy 累加器也是 1 次 ge_add ⇒ 运算量一致), 分支与访存都不再依赖秘密; 旧 dummy 累加器 T
+   *! 改作真和的暂存, 于是不再需要 init 标志。附带修正: k == 0 时旧实现返回**未初始化**的 R,
+   *! 现正确返回中性元。
+   *! R 与 point 允许同一(Verify 的 ge_scalarmult(&A, h, &A) 用法) ⇒ 先把 point 快照进成员 A。
+   *! 栈: 不新增局部量(T/A 均为 Helper 成员), 帧与改前一致。
+   *! 未直接采用 base/src/crypto.cc 的常量时间 ge_scalarmult_base: 它依赖 ~30KB 的 k25519Precomp
+   *! 表(设备 64KB 固件装不下)且只支持 base 点, 而 Verify 需要变基。
+   */
   void ge_scalarmult(ge_p3* R, const uint8_t k[32], const ge_p3* point) {
-    bool init = false;
+    A = *point; /* 先快照: R 可能与 point 相同 */
 
-    /* T is the dummy accumulator — start from the neutral point, never from uninitialized memory */
-    fe_0(T.X);
-    fe_1(T.Y);
-    fe_1(T.Z);
-    fe_0(T.T);
-    A = *point;
+    /* R 起点 = 中性元(合法点, 不读未初始化内存: X=0, Y=1, Z=1, T=0) */
+    fe_0(R->X);
+    fe_1(R->Y);
+    fe_1(R->Z);
+    fe_0(R->T);
+
     for (int i = 0;; ++i) {
-      const bool bit = k[i / 8] & (1 << (i % 8));
-      if (bit) {
-        if (!init) {
-          *R = A;
-          init = true;
-        } else {
-          ge_add(R, R, &A);
-        }
-      } else {
-        ge_add(&T, &T, &A);
-      }
+      const unsigned int bit = (unsigned int)((k[i >> 3] >> (i & 7)) & 1);
+      ge_add(&T, R, &A); /* 每一位都算, 不走秘密分支 */
+      ge_cmov(R, &T, bit);
 
       if (i == 254)
         break;
